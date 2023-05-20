@@ -1,0 +1,154 @@
+body, div, h4, p, input, select {
+    margin: 0;
+    padding: 0;
+}
+
+/* body {
+    background-color: rgb(20,30, 1);
+} */
+
+img {
+    margin: 0 2px;
+}
+
+#ga {
+    display: none;
+}
+
+#feedbackOuter {
+    margin: 5px;
+    display: none;
+    width: 415px;
+    text-align: center;
+}
+
+.img-yellow-message-top-cap, .img-yellow-message-bottom-cap {
+    height: 4px;
+    font-size: 0;
+}
+
+.img-yellow-message-top-cap {
+    background: transparent url(iv/images/icons.png) no-repeat 0 -32px;
+}
+
+.left-right-border-yellow {
+    border-left: 1px solid #F5E082;
+    border-right: 1px solid #F5E082;
+    background-color: #FFFFE5;
+}
+
+.img-yellow-message-bottom-cap {
+    background: transparent url(iv/images/icons.png) no-repeat 0 -36px;
+}
+
+#feedbackInner {
+    padding: 5px;
+    text-align: left;
+}
+
+h4 {
+    padding-left: 17px;
+    background: transparent url(iv/images/icons.png) no-repeat -401px 1px;
+}
+
+.bd {
+    margin: 5px 0;
+}
+
+.ft {
+    text-align: center;
+}
+
+.email {
+    background: transparent url(iv/images/icons.png) no-repeat 0 0;
+}
+
+fieldset {
+    padding: 5px;
+    border: none;
+    display: block;
+    width: 750px;
+}
+
+p {
+    margin: 0;
+    padding: 0;
+}
+
+.ctrlGrp {
+    border-top: 1px solid #808080;
+    clear: both;
+}
+
+.ctrlSubgrp {
+    padding: 5px;
+    border-left: 1px solid #808080;
+    float: left;
+}
+
+.firstCtrlGrp, .firstCtrlSubgrp {
+    border: none;
+}
+
+.debug {
+    font-size: xx-small;
+}
+
+.repeat {
+    float: left;
+    height: 3.6em;
+}
+
+button, input {
+    width: 5em;
+}
+
+.checkbox {
+    width: auto;
+}
+
+select, #extractName {
+    width: 15em;
+}
+
+a span {
+    height: 16px;
+    width: 16px;
+    font-size: 0;
+}
+
+.ctrlGrp label {
+    display: block;
+    width: auto;
+    background: transparent url(iv/images/icons.png) no-repeat -254px 0;
+}
+
+.imgBtn {
+    border: 0;
+    width: 16px;
+    vertical-align: text-top;
+}
+
+.rewind {
+    background: transparent url(iv/images/icons.png) no-repeat -16px 0;
+}
+
+.forward {
+    background: transparent url(iv/images/icons.png) no-repeat -32px 0;
+}
+
+.goTo {
+    background: transparent url(iv/images/icons.png) no-repeat -48px 0;
+}
+
+.restoreStartAt {
+    background: transparent url(iv/images/icons.png) no-repeat -64px 0;
+}
+
+.restoreStopAt {
+    background: transparent url(iv/images/icons.png) no-repeat -80px 0;
+}
+
+.removeCurrentExtract {
+    background: transparent url(iv/images/icons.png) no-repeat -96px 0;
+}

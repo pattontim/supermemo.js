@@ -1,0 +1,9 @@
+{
+  "presets": [
+    [
+      "@babel/preset-env",
+      { "debug": true, "useBuiltIns": "usage", "corejs": { "version": 3.8, "proposals": true }, "targets": {"ie": "11"} }
+    ],
+    "@babel/preset-react"
+  ]
+}
