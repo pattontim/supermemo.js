@@ -35,6 +35,6 @@ module.exports = {
   devtool: 'cheap-module-source-map',
   devServer: {
     static: './dist',
-    port: 3000
+    port: 3001
   }
 };

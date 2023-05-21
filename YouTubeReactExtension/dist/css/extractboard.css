@@ -28,7 +28,7 @@ img {
 }
 
 .img-yellow-message-top-cap {
-    background: transparent url(iv/images/icons.png) no-repeat 0 -32px;
+    background: transparent url(../iv/images/icons.png) no-repeat 0 -32px;
 }
 
 .left-right-border-yellow {
@@ -38,7 +38,7 @@ img {
 }
 
 .img-yellow-message-bottom-cap {
-    background: transparent url(iv/images/icons.png) no-repeat 0 -36px;
+    background: transparent url(../iv/images/icons.png) no-repeat 0 -36px;
 }
 
 #feedbackInner {
@@ -48,7 +48,7 @@ img {
 
 h4 {
     padding-left: 17px;
-    background: transparent url(iv/images/icons.png) no-repeat -401px 1px;
+    background: transparent url(../iv/images/icons.png) no-repeat -401px 1px;
 }
 
 .bd {
@@ -60,7 +60,7 @@ h4 {
 }
 
 .email {
-    background: transparent url(iv/images/icons.png) no-repeat 0 0;
+    background: transparent url(../iv/images/icons.png) no-repeat 0 0;
 }
 
 fieldset {
@@ -120,7 +120,7 @@ a span {
 .ctrlGrp label {
     display: block;
     width: auto;
-    background: transparent url(iv/images/icons.png) no-repeat -254px 0;
+    background: transparent url(../iv/images/icons.png) no-repeat -254px 0;
 }
 
 .imgBtn {
@@ -130,25 +130,25 @@ a span {
 }
 
 .rewind {
-    background: transparent url(iv/images/icons.png) no-repeat -16px 0;
+    background: transparent url(../iv/images/icons.png) no-repeat -16px 0;
 }
 
 .forward {
-    background: transparent url(iv/images/icons.png) no-repeat -32px 0;
+    background: transparent url(../iv/images/icons.png) no-repeat -32px 0;
 }
 
 .goTo {
-    background: transparent url(iv/images/icons.png) no-repeat -48px 0;
+    background: transparent url(../iv/images/icons.png) no-repeat -48px 0;
 }
 
 .restoreStartAt {
-    background: transparent url(iv/images/icons.png) no-repeat -64px 0;
+    background: transparent url(../iv/images/icons.png) no-repeat -64px 0;
 }
 
 .restoreStopAt {
-    background: transparent url(iv/images/icons.png) no-repeat -80px 0;
+    background: transparent url(../iv/images/icons.png) no-repeat -80px 0;
 }
 
 .removeCurrentExtract {
-    background: transparent url(iv/images/icons.png) no-repeat -96px 0;
+    background: transparent url(../iv/images/icons.png) no-repeat -96px 0;
 }

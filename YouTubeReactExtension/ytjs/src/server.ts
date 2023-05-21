@@ -5,6 +5,8 @@ import corsAnywhere from 'cors-anywhere';
 const app = express();
 const port = 3000; // You can change the port number if needed
 
+let dashCache = {};
+
 const proxy = corsAnywhere.createServer({
     originWhitelist: [], // Allow all origins
     requireHeaders: [], // Do not require any headers.
@@ -35,7 +37,7 @@ const getBrowserName = (userAgent: string) => {
 
 let youtube: Innertube;
 const youtubePromise = Innertube.create({
-    cache: new UniversalCache(true)
+    cache: new UniversalCache(true, './.cache')
 });
 
 youtubePromise.then((yt) => {
@@ -43,21 +45,26 @@ youtubePromise.then((yt) => {
     youtube = yt;
 });
 
+app.use(express.static('dist'));
+
 /* Attach our cors proxy to the existing API on the /proxy endpoint. */
 app.get('/proxy/:proxyUrl*', (req, res) => {
     req.url = req.url.replace('/proxy/', '/'); // Strip '/proxy' from the front of the URL, else the proxy won't work.
     proxy.emit('request', req, res);
 });
 
-app.get('/', (req: Request, res: Response) => {
-  res.send('Hello, World!');
-});
-
-app.get('/mpd/:v_id', async (req, res) => {    
-    const { v_id } = req.params;
+app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {    
+    const v_id = req.params[0]
     console.log('mpd request for ' + v_id);
     // const youtube = await Innertube.create();
-    const videoInfo = await youtube.getInfo(v_id);
+
+    if(dashCache[v_id]) {
+        console.log('serving from cache');
+        res.send(dashCache[v_id]);
+        return;
+    }
+
+    const videoInfo = await youtube.getBasicInfo(v_id);
     
     // TODO better match the format to the browser
     // const browserName = getBrowserName(req.headers['user-agent'] as string);
@@ -65,6 +72,8 @@ app.get('/mpd/:v_id', async (req, res) => {
     const manifest = await videoInfo.toDash((url) => new URL(`http://localhost:${port}/proxy/${url}`)
     , (format) => !format.mime_type.includes('avc1.4d401e') && !format.mime_type.includes('mp4a.40.2'));
     // , (format) => format.itag != 134 && format.itag != 140);
+
+    dashCache[v_id] = manifest;
     res.send(manifest);
 });
 

@@ -1,6 +1,6 @@
 import React from "react";
 
-export default function ClipExtractor({resume, start, stop, setStart}) {
+export default function ClipExtractor({resume, start, stop, played, duration}) {
     return (
         <div>
             <div id="customPrompt">
@@ -28,7 +28,7 @@ export default function ClipExtractor({resume, start, stop, setStart}) {
                 <div class="ctrlGrp firstCtrlGrp">
                     <div class="ctrlSubgrp firstCtrlSubgrp">
                         <p>
-                            <button type="button" id="mark" > [ Mark ]</button>
+                            <button type="button" id="mark"> [ Mark ]</button>
                             <img src="iv/images/transparent.png" alt="" id="rewindResume" class="imgBtn rewind"/>
                             <img src="iv/images/transparent.png" alt="Go to" title="Go to" id="resume" class="imgBtn goTo"/>
                             <img src="iv/images/transparent.png" alt="" id="forwardResume" class="imgBtn forward"/>
@@ -37,7 +37,7 @@ export default function ClipExtractor({resume, start, stop, setStart}) {
                         </p>
                     </div>
                     <div class="ctrlSubgrp secondCtrlSubgrp">
-                        <button type="button" id="start" title="Set clip start" onClick={setStart}>[</button>
+                        <button type="button" id="start" title="Set clip start">[</button>
                         <img src="iv/images/transparent.png" alt="" id="rewindStart" class="imgBtn rewind"/>
                         <img src="iv/images/transparent.png" alt="Go to" title="Go to" id="goToStart" class="imgBtn goTo"/>
                         <img src="iv/images/transparent.png" alt="" id="forwardStart" class="imgBtn forward"/>
