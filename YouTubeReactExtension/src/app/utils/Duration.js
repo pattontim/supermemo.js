@@ -1,4 +1,4 @@
-  function convertHHMMSS2Duration(hhmmss) {
+  export function convertHHMMSS2Seconds(hhmmss) {
     var a = hhmmss.split(':'); // split it at the colons
     var seconds = 0;
     
@@ -16,7 +16,7 @@
     return seconds;
   }
 
-  function convertDuration2HHMMSS(duration) {
+  export function convertSeconds2HHMMSS(duration) {
     var sec_num = parseInt(duration, 10); // don't forget the second param
     var hours   = Math.floor(sec_num / 3600);
     var minutes = Math.floor((sec_num - (hours * 3600)) / 60);
@@ -28,7 +28,7 @@
     return hours + ':' + minutes + ':' + seconds;
   }
 
-  function constrainToRange(value, min, max) {
+  export function constrainToRange(value, min, max) {
     if (value < min) {
         return min;
     } else if (value > max) {
@@ -38,4 +38,10 @@
     }
   }
 
-export { convertHHMMSS2Duration, convertDuration2HHMMSS, constrainToRange };
+  export const formatTime = (seconds, limitDurationSec) => {
+    return convertSeconds2HHMMSS(constrainToRange(seconds, 0, limitDurationSec)).replace(/^0{0,3}:/, '');
+  }
+
+  export const formatTimestamp = (timeStamp, limitDurationSec) => {
+    return convertSeconds2HHMMSS(constrainToRange(convertHHMMSS2Seconds(timeStamp), 0, limitDurationSec)).replace(/^0{0,3}:/, '');
+  }

@@ -1,6 +1,32 @@
 import React from "react";
+import { useState } from "react";
+import { convertHHMMSS2Seconds, formatTime } from "../../utils/Duration";
 
-export default function ClipExtractor({resume, start, stop, played, duration}) {
+export default function ClipExtractor({resume, start, stop, boundaries, played, duration, 
+    setAt, setAtAbs, resetAt, goTo, offset }) {
+    
+    const [options, setOptions] = useState([]);
+    // const [selectedOption, setSelectedOption] = useState('');
+
+    const addOption = () => {
+        const newOption = prompt('Enter an extract name:');
+        if (newOption) {
+            const formattedOption = formatTime(convertHHMMSS2Seconds(start), duration) + ' - ' + formatTime(convertHHMMSS2Seconds(stop), duration);
+            setOptions([...options, { value: formattedOption, label: newOption }]);
+            resetAt('stop');
+        }
+    };
+
+    const handleSelectChange = (event) => {
+        const selectedOption = event.target.value;
+        if(selectedOption){
+            const [selStart, selStop] = selectedOption.split(' - ');
+            setAtAbs('start', convertHHMMSS2Seconds(selStart));
+            setAtAbs('stop', convertHHMMSS2Seconds(selStop));
+            goTo('start');
+        }
+    };
+
     return (
         <div>
             <div id="customPrompt">
@@ -23,33 +49,33 @@ export default function ClipExtractor({resume, start, stop, played, duration}) {
                 <div id="bideo"></div>
             </div>
             <input type="hidden" value="zzzYT-IDzzz" id="videoid" />
-            <input type="hidden" value="1" id="imposeboundries" />
-            <fieldset>      
+            <input type="hidden" value={boundaries} id="imposeboundries" />
+            <fieldset>
                 <div class="ctrlGrp firstCtrlGrp">
                     <div class="ctrlSubgrp firstCtrlSubgrp">
                         <p>
-                            <button type="button" id="mark"> [ Mark ]</button>
-                            <img src="iv/images/transparent.png" alt="" id="rewindResume" class="imgBtn rewind"/>
-                            <img src="iv/images/transparent.png" alt="Go to" title="Go to" id="resume" class="imgBtn goTo"/>
-                            <img src="iv/images/transparent.png" alt="" id="forwardResume" class="imgBtn forward"/>
-                            <input type="text" value={resume} id="resumevideoat"/>
-                            <img src="iv/images/transparent.png" alt="Restore default" id="restoreResumeAt" class="imgBtn restoreStartAt"/> 
+                            <button type="button" id="mark" onClick={() => setAt('resume', 0)}> [ Mark ]</button>
+                            <img src="iv/images/transparent.png" alt="" id="rewindResume" onClick={() => offset('resume', -1)} class="imgBtn rewind"/>
+                            <img src="iv/images/transparent.png" alt="Go to" title="Go to" id="resume" onClick={() => goTo('resume')} class="imgBtn goTo"/>
+                            <img src="iv/images/transparent.png" alt="" id="forwardResume" class="imgBtn forward" onClick={() => offset('resume', 1)}/>
+                            <input type="text" value={resume} id="resumevideoat" onClick={() => setAt('resume', 0)}/>
+                            <img src="iv/images/transparent.png" alt="Restore default" id="restoreResumeAt" onClick={() => resetAt('resume')} class="imgBtn restoreStartAt"/> 
                         </p>
                     </div>
                     <div class="ctrlSubgrp secondCtrlSubgrp">
-                        <button type="button" id="start" title="Set clip start">[</button>
-                        <img src="iv/images/transparent.png" alt="" id="rewindStart" class="imgBtn rewind"/>
-                        <img src="iv/images/transparent.png" alt="Go to" title="Go to" id="goToStart" class="imgBtn goTo"/>
-                        <img src="iv/images/transparent.png" alt="" id="forwardStart" class="imgBtn forward"/>
-                        <input type="text" value={start} id="startvideoat"/>
-                        <img src="iv/images/transparent.png" alt="Restore default" title="Restore default" id="restoreStartAt" class="imgBtn restoreStartAt"/>
+                        <button type="button" id="start" onClick={() => setAt('start', 0)} title="Set clip start">[</button>
+                        <img src="iv/images/transparent.png" alt="" id="rewindStart" onClick={() => offset('start', -1)} class="imgBtn rewind"/>
+                        <img src="iv/images/transparent.png" alt="Go to" title="Go to" id="goToStart" onClick={() => goTo('start')} class="imgBtn goTo"/>
+                        <img src="iv/images/transparent.png" alt="" id="forwardStart" onClick={() => offset('start', 1)} class="imgBtn forward"/>
+                        <input type="text" value={start} id="startvideoat" onClick={() => setAt('start', 0)}/>
+                        <img src="iv/images/transparent.png" alt="Restore default" title="Restore default" id="restoreStartAt" onClick={() => resetAt('start')} class="imgBtn restoreStartAt"/>
                         ~
-                        <img src="iv/images/transparent.png" alt="Restore default" title="Restore default" id="restoreStopAt" class="imgBtn restoreStopAt"/>
-                        <input type="text" value={stop} id="stopvideoat"/>
-                        <img src="iv/images/transparent.png" alt="" id="rewindStop" class="imgBtn rewind"/>
-                        <img src="iv/images/transparent.png" alt="Go to" title="Go to" id="goToStop" class="imgBtn goTo"/>
-                        <img src="iv/images/transparent.png" alt="" id="forwardStop" class="imgBtn forward"/>
-                        <button type="button" id="stop" title="Set clip end">]</button>
+                        <img src="iv/images/transparent.png" alt="Restore default" title="Restore default" id="restoreStopAt" onClick={() => resetAt('stop')} class="imgBtn restoreStopAt"/>
+                        <input type="text" value={stop} id="stopvideoat" onClick={() => setAt('stop', 0)}/>
+                        <img src="iv/images/transparent.png" alt="" id="rewindStop" onClick={() => offset('stop', -1)} class="imgBtn rewind"/>
+                        <img src="iv/images/transparent.png" alt="Go to" title="Go to" id="goToStop" onClick={() => goTo('stop')} class="imgBtn goTo"/>
+                        <img src="iv/images/transparent.png" alt="" id="forwardStop" onClick={() => offset('stop', 1)} class="imgBtn forward"/>
+                        <button type="button" id="stop" onClick={() => setAt('stop', 0)} title="Set clip end">]</button>
                     </div>
                 </div>
                 <div class="ctrlGrp secondCtrlGrp">
@@ -61,10 +87,16 @@ export default function ClipExtractor({resume, start, stop, played, duration}) {
                     </div>
                     <div class="ctrlSubgrp secondCtrlSubgrp">
                         <p>
-                            <button type="button" id="test">Test</button>
+                            <button type="button" id="test" onClick={() => goTo('start')}>Test</button>
                             <button type="button" id="reset">Reset</button>
-                            <button type="button" id="extract">Extract</button>
-                            <select id="extracts"></select>
+                            <button type="button" id="extract" onClick={addOption}>Extract</button>
+                            <select id="extracts" multiple='true' value={options} onChange={handleSelectChange}>
+                                {options.map((option, index) => (
+                                    <option value={option.value}>
+                                        {option.label}
+                                    </option>
+                                ))}
+                            </select>
                             <img src="iv/images/transparent.png" alt="Remove the currently selected extract" id="removeCurrentExtract" class="imgBtn removeCurrentExtract"/>
                         </p>
                     </div>

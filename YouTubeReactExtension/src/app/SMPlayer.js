@@ -1,32 +1,32 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 // import ReactPlayer from 'react-player/lazy';
-import ReactPlayer from 'react-player/lazy'
+import ReactPlayer from 'react-player/lazy';
 // import ReactExtension from './react-extension.js';
 // import ExtractBoard from './features/clip/ExtractBoard.js'; 
 import ClipExtractor from './features/clip/ClipExtractor.js';
 // import Counter from './features/counter/Counter.js';
 // import Subtitles from './features/language/Subtitles.js';
 
-import { convertHHMMSS2Duration, convertDuration2HHMMSS, constrainToRange } from './utils/Duration.js';
+import { convertHHMMSS2Seconds, convertSeconds2HHMMSS, constrainToRange, formatTime } from './utils/Duration.js';
 
 
 import { useState, useRef } from 'react';
 
 function App() {
   const queryParameters = new URLSearchParams(window.location.search)
-  // const [url, setUrl] = useState("http://youtube.com/watch?v=" + queryParameters.get('videoid')) 
 
   const [resume, setResume] = React.useState(queryParameters.get('resume'));
   const [start, setStart] = React.useState(queryParameters.get('start'));
   const [stop, setStop] = React.useState(queryParameters.get('stop'));
-  const [imposeBoundries, setImposeBoundries] = React.useState(0);
+  const [imposeBoundaries, setImposeBoundaries] = React.useState(1);
 
   // const [url, setUrl] = useState('https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4');
   // const [url, setUrl] = useState("https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps_640x360_800k.mpd");
+  // const [url, setUrl] = useState("http://youtube.com/watch?v=" + queryParameters.get('videoid')) 
   const [url, setUrl] = useState("http://localhost:3000/mpd/" + queryParameters.get('videoid') + ".mpd");
   
   const [pip, setPip] = useState(false);
-  const [playing, setPlaying] = useState(true);
+  const [playing, setPlaying] = useState(false);
   const [controls, setControls] = useState(true);
   const [light, setLight] = useState(false);
   const [volume, setVolume] = useState(0.8);
@@ -50,6 +50,13 @@ function App() {
     setPlaying(false)
   }
 
+  const handleSeek = (destSec) => {
+    if(destSec < convertHHMMSS2Seconds(start) - 3 || destSec > convertHHMMSS2Seconds(stop) + 3) {
+      setImposeBoundaries(0);
+    }
+    setPlayed(destSec)
+  }
+
   const handleOnPlaybackRateChange = (playbackRate) => {
     console.log('onPlaybackRateChange', playbackRate)
     setPlaybackRate(playbackRate)
@@ -62,9 +69,8 @@ function App() {
 
   const handleProgress = (state) => {
     console.log('onProgress', state)
-    // We only want to update time slider if we are not currently seeking
-    if (!seeking) {
-      setPlayed(state.playedSeconds)
+    setPlayed(state.playedSeconds)
+    if (!seeking && imposeBoundaries) {
       checkBoundaries()
     }
   }
@@ -76,43 +82,59 @@ function App() {
 
   function seekVideo(to) {
     if (ref.current) {
-        //console.log('seeking from ' + ytplayer.getCurrentTime() + ' to ' + convertHHMMSS2Duration(document.getElementById(to + "videoat").value))
-        ref.current.seekTo(convertHHMMSS2Duration(document.getElementById(to + "videoat").value), 'seconds');
+        //console.log('seeking from ' + ref.current.getCurrentTime() + ' to ' + to + ' (' + convertHHMMSS2Seconds(to) + ')')
+        ref.current.seekTo(convertHHMMSS2Seconds(to));
     }
   }
 
   function checkBoundaries() {
     if (ref.current) {
         //console.log('checking boundaries')
-        if (ref.current.getCurrentTime() < convertHHMMSS2Duration(start)) {
+        if (ref.current.getCurrentTime() < convertHHMMSS2Seconds(start)) {
             //console.log('before start')
-            ref.current.seekTo(convertHHMMSS2Duration(start), 'seconds');
-        } else if (ref.current.getCurrentTime() > convertHHMMSS2Duration(stop)) {
+            ref.current.seekTo(convertHHMMSS2Seconds(start));
+        } else if (ref.current.getCurrentTime() > convertHHMMSS2Seconds(stop)) {
             //console.log('after stop')
-            ref.current.seekTo(convertHHMMSS2Duration(start), 'seconds');
+            ref.current.seekTo(convertHHMMSS2Seconds(start));
         }
     }
   }
 
   function handlePlayerReady( player ) {
+    setPlaying(true);
     console.log('player ready');
   }
+
   function handlePlayerStart(player) {
     console.log('player start');
 
-    seekVideo("start");
+    seekVideo(start);
     checkBoundaries();
   }
 
-  // function setStart() {
-  //   setStart(convertDuration2HHMMSS(ref.current.getCurrentTime()));
-  // }
+  function handleResetAt(type) {
+    if (type === "resume") {
+        setResume("0:00");
+    } else if (type === "start") {
+        setStart(formatTime(0, 0));
+    } else if (type === "stop") {
+        setStop(formatTime(duration, duration));
+    }
+  }
 
-  // TODO HHMMSS, call with -999999999 and 999999999
-  // TODO not needed, use set directly
-  function setAt(type, offset) {
-    // TODO conform to duration whenever it is set using react
-    let new_val = constrainToRange(played + offset, 0, duration);
+  function handleSetAbs(type, abs) {
+    let new_val = formatTime(abs, duration);
+    if (type === "resume") {
+        setResume(new_val);
+    } else if (type === "start") {
+        setStart(new_val);
+    } else if (type === "stop") {
+        setStop(new_val);
+    }
+  }
+
+  function handleSetAt(type, offset) {
+    let new_val = formatTime(played + offset, duration);
     if (type === "resume") {
         setResume(new_val);
     } else if (type === "start") {
@@ -122,13 +144,32 @@ function App() {
     } 
   }
 
-  function goTo(type) {
+  function handleGoTo(type) {
+    let type_val;
+    if(type === 'start') {
+      type_val = start;
+      setImposeBoundaries(1);
+    } else if (type === 'stop') {
+      type_val = stop;
+      setImposeBoundaries(0);
+    } else if (type === 'resume') {
+      type_val = resume;
+      setImposeBoundaries(0);
+    } else {
+      return;
+    }
+
+    setPlayed(type_val);
+    seekVideo(type_val);
+  }
+
+  function handleOffset(type, offset) {
     if (type === "resume") {
-        setPlayed(resume);
+        setResume(formatTime(convertHHMMSS2Seconds(resume) + offset, duration));
     } else if (type === "start") {
-        setPlayed(start);
+        setStart(formatTime(convertHHMMSS2Seconds(start) + offset, duration));
     } else if (type === "stop") {
-        setPlayed(stop);
+        setStop(formatTime(convertHHMMSS2Seconds(stop) + offset, duration));
     }
   }
 
@@ -143,8 +184,8 @@ function App() {
                     dashVersion: '4.5.2', //last version supporting IE
                     attributes: {
                       crossOrigin: true,
-                      autoplay: true,
-                      poster: "/iv/images/sm.png",
+                      autoplay: false,
+                      poster: "/iv/images/sm.gif",
                     }
                   }
               }}
@@ -165,7 +206,7 @@ function App() {
               onPause={handlePause}
               onBuffer={() => console.log('onBuffer')}
               onPlaybackRateChange={handleOnPlaybackRateChange}
-              onSeek={e => console.log('onSeek', e)}
+              onSeek={handleSeek}
               onEnded={handleEnded}
               onError={e => console.log('onError', e)}
               onProgress={handleProgress}
@@ -175,8 +216,14 @@ function App() {
       resume={resume} 
       start={start} 
       stop={stop}
+      boundaries={imposeBoundaries}
       played={played}
       duration={duration}
+      setAt={handleSetAt}
+      setAtAbs={handleSetAbs}
+      resetAt={handleResetAt}
+      goTo={handleGoTo}
+      offset={handleOffset}
       />
       {/* <ExtractBoard/> */}
       {/* <Counter /> */}
