@@ -3,6 +3,7 @@ import { Innertube, UniversalCache, Utils, FormatOptions } from 'youtubei.js';
 import corsAnywhere from 'cors-anywhere';
 import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, createWriteStream, writeFileSync } from 'fs';
 import path from 'path';
+import { Format } from 'youtubei.js/dist/src/parser/misc';
 
 const app = express();
 const port = 3000; // You can change the port number if needed
@@ -13,6 +14,7 @@ let archiveDir = './dist/archive';
 let version = '0.0.0';
 let youtube: Innertube;
 let archive = {} as Archive;
+let archive_container = 'mp4';
 
 const proxy = corsAnywhere.createServer({
   originWhitelist: [], // Allow all origins
@@ -33,7 +35,7 @@ interface ArchiveInfo {
   
   game_info?: any;
   yti_version: string;
-  file_formats: { [filename: string]: FormatOptions };
+  file_formats: { [filename: string]: Format };
 }
 
 interface Archive {
@@ -110,14 +112,15 @@ app.get('/mpd/invalidate/:v_id', async (req, res) => {
 
 app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
   const v_id = req.params[0]
+  const target = req.query.target as string;
   console.log('mpd request for ' + v_id);
 
   if (archive[v_id]?.file_formats) {
-	// TODO generalize
+	// TODO serve from archive
   }
 
   // TODO heuristic, for now it seems to generally be 6 hours
-  if (dashCache[v_id] && (Date.now() - dashCache[v_id].timestamp < 1000 * 60 * 60 * 6)) {
+  if (dashCache[v_id] && (Date.now() - dashCache[v_id].timestamp < 1000 * 60 * 60 * 6) && dashCache[v_id].target == target) {
 	console.log('serving from cache');
 	res.send(dashCache[v_id].manifest);
 	return;
@@ -126,15 +129,18 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
   const videoInfo = await youtube.getBasicInfo(v_id);
 
   // TODO better match the format to the browser
-  // const browserName = getBrowserName(req.headers['user-agent'] as string);
-  // const format = formatMap[browserName];
   try {
-	const manifest = await videoInfo.toDash((url) => new URL(`http://localhost:${port}/proxy/${url}`)
-	  , (format) => !format.mime_type.includes('avc1.4d401e') && !format.mime_type.includes('mp4a.40.2')
-		&& !format.mime_type.includes('avc1.4d401f') && !format.mime_type.includes('avc1.4d4020')
-		&& !format.mime_type.includes('avc1.64002a'));
-
-	dashCache[v_id] = { "manifest": manifest, "timestamp": Date.now() };
+	let manifest: string;
+	  if (target == "IE") {
+		  manifest = await videoInfo.toDash((url) => new URL(`http://localhost:${port}/proxy/${url}`)
+			  , (format) => !format.mime_type.includes('avc1.4d401e') && !format.mime_type.includes('mp4a.40.2')
+				  && !format.mime_type.includes('avc1.4d401f') && !format.mime_type.includes('avc1.4d4020')
+				  && !format.mime_type.includes('avc1.64002a'));
+	  } else {
+		  manifest = await videoInfo.toDash((url) => new URL(`http://localhost:${port}/proxy/${url}`));
+	  }
+	
+	dashCache[v_id] = { "manifest": manifest, "timestamp": Date.now(), "target": target };
 	res.send(manifest);
   } catch (InnertubeError) {
 	console.log('error: ' + InnertubeError);
@@ -164,7 +170,12 @@ app.get('/archive/:v_id', async (req, res) => {
 	  format: 'mp4' // media container format 
 	} as FormatOptions;
 
+	// assume chooseFormat is used internally deterministically
+	const format = await videoInfoFull.chooseFormat(best_format);
+	const fileNameItag = format.itag + '.' + archive_container; // for now
 	const stream = await videoInfoFull.download(best_format);
+	const fileFormats = {};
+	fileFormats[format.itag + '.' + archive_container] = format;
 
 	console.log('downloading video')
 	const dir = path.join(archiveDir, v_id);
@@ -172,7 +183,7 @@ app.get('/archive/:v_id', async (req, res) => {
 	  mkdirSync(dir);
 	}
 
-	const file = createWriteStream(path.join(dir, 'best.mp4'));
+	const file = createWriteStream(path.join(dir, fileNameItag));
 	for await (const chunk of Utils.streamToIterable(stream)) {
 	  file.write(chunk);
 	}
@@ -189,7 +200,7 @@ app.get('/archive/:v_id', async (req, res) => {
 	  "author_channel_url": videoInfoFull.secondary_info.owner.author.url,
 	  "description": videoInfoFull.secondary_info.description.text,
 
-	  "file_formats": { "best.mp4": best_format },
+	  "file_formats": fileFormats,
 	  "yti_version": version
 	};
 	// write to info.json
