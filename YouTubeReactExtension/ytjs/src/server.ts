@@ -4,11 +4,14 @@ import corsAnywhere from 'cors-anywhere';
 import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, createWriteStream, writeFileSync } from 'fs';
 import path from 'path';
 import { Format } from 'youtubei.js/dist/src/parser/misc';
+import { PlayerCaptionsTracklist } from 'youtubei.js/dist/src/parser/nodes';
+import fetch from 'node-fetch';
 
 const app = express();
 const port = 3000; // You can change the port number if needed
 
 let dashCache = {};
+let captionCache: { [id: string] : PlayerCaptionsTracklist; } = {};
 let cacheDir = './.cache';
 let archiveDir = './dist/archive';
 let version = '0.0.0';
@@ -23,6 +26,8 @@ const proxy = corsAnywhere.createServer({
 });
 
 interface ArchiveInfo {
+  captions?: PlayerCaptionsTracklist;  
+  game_info?: any;
   // primary_info
   title: string;
   published: string;
@@ -32,8 +37,7 @@ interface ArchiveInfo {
   author_channel_id: string; // owner.author.id
   author_channel_url: string; // owner.author.url
   description: string; // description
-  
-  game_info?: any;
+
   yti_version: string;
   file_formats: { [filename: string]: Format };
 }
@@ -86,6 +90,11 @@ function loadJsonFilesIntoArchive(archiveDir: string, archive: Archive) {
 	  }
 	}
   });
+}
+
+function transformWebVTT(vtt: string) {
+	const kindlangRegex = /Kind: (.*)\nLanguage: (.*)\n/;
+	return vtt.replace(kindlangRegex, '');
 }
 
 // app.use((req, res, next) => {
@@ -145,8 +154,48 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
   } catch (InnertubeError) {
 	console.log('error: ' + InnertubeError);
 	res.send('Error: ' + InnertubeError);
+	return;
   }
 
+	captionCache[v_id] = videoInfo.captions;
+});
+
+app.get('/subtitles/:v_id/:lang', async (req, res) => {
+	const v_id = req.params.v_id;
+	const lang = req.params.lang;
+	console.log('subtitle request for ' + v_id + ' in ' + lang);
+
+	// TODO check if en = auto-generated captions
+	if (archive[v_id]?.captions) {
+		const captPath = path.join(archiveDir, v_id, 'captions', lang + '.vtt');
+		if (existsSync(captPath)) {
+			console.log('serving from archive existing caption file');
+			res.json({
+				"itag": "text/vtt",
+				"url": `http://localhost:${port}/archive/${v_id}/captions/${lang}.vtt`
+			});
+		} else {
+			console.log('does not exist in archive');
+			res.send('Error: caption not found');
+		}
+	} else if (captionCache[v_id]) {
+		const caption = captionCache[v_id].caption_tracks.find((track) => track.language_code == lang);
+		if (caption) {
+			console.log('serving from cache fetch');
+			// res.send(`${caption.base_url}&fmt=vtt`);
+			const ytResponse = await fetch(`${caption.base_url}&fmt=vtt`);
+			const vtt = await ytResponse.text();
+			// fix content type
+			res.set('Content-Type', 'text/vtt');
+			res.send(transformWebVTT(vtt));
+		} else {
+			console.log('does not exist in cache');
+			res.send('Error: caption not found');
+		}
+	} else {
+		console.log('does not exist in cache');
+		res.send('Error: caption not found');
+	}
 });
 
 app.get('/archive/:v_id', async (req, res) => {
@@ -191,6 +240,9 @@ app.get('/archive/:v_id', async (req, res) => {
 
 	// TODO write JSON
 	const newInfo: ArchiveInfo = {
+	  "captions": videoInfoFull?.captions,
+      "game_info": videoInfoFull?.game_info,
+
 	  "title": videoInfoFull.primary_info.title.text,
 	  "published": videoInfoFull.primary_info.published.text,
 	  "relative_date": videoInfoFull.primary_info.relative_date.text,
@@ -206,21 +258,44 @@ app.get('/archive/:v_id', async (req, res) => {
 	// write to info.json
 	writeFileSync(path.join(dir, 'info.json'), JSON.stringify(newInfo, null, 2));
 
-	archive[v_id] = newInfo;
+	if(newInfo.captions) {
+	  const captionsDir = path.join(dir, 'captions');
+	  if (!existsSync(captionsDir)) {
+		mkdirSync(captionsDir);
+	  }
 
+	  // fetch via base_url
+	  for (const captionTrack of newInfo.captions.caption_tracks) {
+		// URL request
+		const captionUrl = captionTrack.base_url;
+		const captionFile = createWriteStream(path.join(captionsDir, captionTrack.language_code + '.vtt'));
+		const captionStream = await fetch(captionUrl + '&fmt=vtt');
+
+		await new Promise((resolve, reject) => {
+		  captionStream.body.pipe(captionFile);
+		  captionStream.body.on('error', reject);
+		  captionStream.body.on('end', resolve);
+		});
+			
+		captionFile.close();
+	  }
+	}    
+
+	archive[v_id] = newInfo;
 	res.send('OK');
   }
 });
 
-app.listen(port, async () => {
+app.listen(port, async () => {  
+  if (!existsSync(cacheDir)) {
+	mkdirSync(cacheDir);
+  }
+
   youtube = await Innertube.create({
 	cache: new UniversalCache(true, cacheDir),
 	generate_session_locally: true,
   });
 
-  if (!existsSync(cacheDir)) {
-	mkdirSync(cacheDir);
-  }
 
   if (!existsSync(archiveDir)) {
 	mkdirSync(archiveDir);
