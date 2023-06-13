@@ -5,6 +5,7 @@ YouTubeReactExtension/build/Release
 YouTubeReactExtension/server/yt_old.htm
 YouTubeReactExtension/dist/main*.js*
 YouTubeReactExtension/dist/reactPlayer*.js*
+YouTubeReactExtension/dist/archive
 
 #### !MANUAL EDITS HERE
 

@@ -4,6 +4,7 @@ import ReactPlayer from 'react-player/lazy';
 // import ReactExtension from './react-extension.js';
 // import ExtractBoard from './features/clip/ExtractBoard.js'; 
 import ClipExtractor from './features/clip/ClipExtractor.js';
+import CaptionsTracks from './features/language/CaptionsTracks.js';
 // import Counter from './features/counter/Counter.js';
 // import Subtitles from './features/language/Subtitles.js';
 
@@ -15,15 +16,21 @@ import { useState, useRef } from 'react';
 function App() {
   const queryParameters = new URLSearchParams(window.location.search)
 
+  // TODO component passed as prop?
   const [resume, setResume] = React.useState(queryParameters.get('resume'));
+  // const [resumeStyle, setResumeStyle] = React.useState({ border: `2px solid ${borderCl}` });
   const [start, setStart] = React.useState(queryParameters.get('start'));
+  // const [startStyle, setStartStyle] = React.useState({ border: `2px solid ${borderCl}` });
   const [stop, setStop] = React.useState(queryParameters.get('stop'));
+  // const [stopStyle, setStopStyle] = React.useState({ border: `2px solid ${borderCl}` });
   const [imposeBoundaries, setImposeBoundaries] = React.useState(1);
+  const [videoid, setVideoid] = React.useState(queryParameters.get('videoid'));
 
   // const [url, setUrl] = useState('https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4');
   // const [url, setUrl] = useState("https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps_640x360_800k.mpd");
   // const [url, setUrl] = useState("http://youtube.com/watch?v=" + queryParameters.get('videoid')) 
-  const [url, setUrl] = useState("http://localhost:3000/mpd/" + queryParameters.get('videoid') + ".mpd");
+  const [url, setUrl] = useState("http://localhost:3000/mpd/" + queryParameters.get('videoid') + ".mpd?target=IE");
+  const [subtitleUrl, setSubtitleUrl] = useState("");
   
   const [pip, setPip] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -40,6 +47,24 @@ function App() {
 
   const ref = useRef(null);
 
+  // // SM browser as remote component
+  // useEffect(() => {
+  //   setResume(queryParameters.get('resume'));
+  //   setStart(queryParameters.get('start'));
+  //   setStop(queryParameters.get('stop'));
+  //   setVideoid(queryParameters.get('videoid'));
+  // }, []);
+
+  useEffect(() => {
+    // if (ref.current) {
+      console.log('atttachSubtitles after 10s')
+      setTimeout(() => {
+        // attachSubtitles(subtitleUrl)
+        setSubtitleUrl("http://localhost:3000/captions/" + queryParameters.get('videoid'));
+      }, 10000);
+    // }
+  }, []);
+
   const handlePlay = () => {
     console.log('onPlay')
     setPlaying(true)
@@ -54,6 +79,7 @@ function App() {
     if(destSec < convertHHMMSS2Seconds(start) - 3 || destSec > convertHHMMSS2Seconds(stop) + 3) {
       setImposeBoundaries(0);
     }
+    console.log('onSeek to ', destSec)
     setPlayed(destSec)
   }
 
@@ -73,11 +99,32 @@ function App() {
     if (!seeking && imposeBoundaries) {
       checkBoundaries()
     }
+    // TODO quality selector
+    // const dashjs = ref.current.getInternalPlayer('dash')
+    // if (dashjs) {
+    //   console.log('dashjs', dashjs)
+    //   console.log('dashjs.getBitrateInfoListFor(' + dashjs.getActiveStream().getId() + ')', dashjs.getBitrateInfoListFor(dashjs.getActiveStream().getId()))
+    // }
   }
 
   const handleDuration = (duration) => {
     console.log('onDuration', duration)
     setDuration(duration)
+  }
+
+  function attachSubtitles(url) {
+    if(ref.current) {
+      // Create a new HTMLTrackElement
+      const trackElement = document.createElement('track');
+
+      trackElement.src = subtitleUrl;
+      trackElement.kind = 'captions';
+      trackElement.label = 'en';
+      trackElement.srclang = 'en'; // Replace 'en' with the appropriate language code
+
+      // TODO ref
+      document.getElementsByTagName('video')[0].appendChild(trackElement);
+    }
   }
 
   function seekVideo(to) {
@@ -133,8 +180,9 @@ function App() {
     }
   }
 
-  function handleSetAt(type, offset) {
-    let new_val = formatTime(played + offset, duration);
+  function handleSetAt(type, offsetSec) {
+    console.log('handleSetAt', type, offsetSec, played, duration, played + offsetSec)
+    let new_val = formatTime(played + offsetSec, duration);
     if (type === "resume") {
         setResume(new_val);
     } else if (type === "start") {
@@ -170,6 +218,39 @@ function App() {
         setStart(formatTime(convertHHMMSS2Seconds(start) + offset, duration));
     } else if (type === "stop") {
         setStop(formatTime(convertHHMMSS2Seconds(stop) + offset, duration));
+    }
+  }
+
+  //cosmetic
+  function updateBorder(inputText) {
+    let sBorderCl = ""
+    let iNewVal = convertHHMMSS2Duration(inputText.value);
+
+    switch (inputText.id.replace(/videoat/, "")) {
+      case "start":
+        if (iNewVal > 0) {
+          sBorderCl = "blue";
+        }
+        break;
+
+      case "stop":
+        // TODO use of internal player discouraged
+        if (ytplayer.getInternalPlayer()) {
+          if (ytplayer.getInternalPlayer().getPlayerState() >= 1) {
+            if (iNewVal < parseInt(ytplayer.getDuration())) {
+              sBorderCl = "blue";
+            }
+          }
+        }
+        break;
+    }
+
+    if (sBorderCl.length) {
+      inputText.style.border = "2px solid " + sBorderCl;
+      proxySync('syncBorder', [inputText.id, "2px solid " + sBorderCl]);
+    } else {
+      inputText.style.border = "2px inset";
+      proxySync('syncBorder', [inputText.id, "2px inset"]);
     }
   }
 
@@ -210,13 +291,14 @@ function App() {
               onEnded={handleEnded}
               onError={e => console.log('onError', e)}
               onProgress={handleProgress}
-              onDuration={handleDuration}
-            />
+              onDuration={handleDuration}/>
+                <CaptionsTracks url={subtitleUrl}/>
       <ClipExtractor 
       resume={resume} 
       start={start} 
       stop={stop}
       boundaries={imposeBoundaries}
+      videoid = {videoid}
       played={played}
       duration={duration}
       setAt={handleSetAt}
@@ -224,6 +306,7 @@ function App() {
       resetAt={handleResetAt}
       goTo={handleGoTo}
       offset={handleOffset}
+      setPlaying={setPlaying}
       />
       {/* <ExtractBoard/> */}
       {/* <Counter /> */}

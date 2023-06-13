@@ -93,8 +93,26 @@ function loadJsonFilesIntoArchive(archiveDir: string, archive: Archive) {
 }
 
 function transformWebVTT(vtt: string) {
-	const kindlangRegex = /Kind: (.*)\nLanguage: (.*)\n/;
-	return vtt.replace(kindlangRegex, '');
+	const kindRegex = /Kind: (.*)\n/;
+	const langKindRegex = /Language: (.*)\n/;
+	return vtt.replace(kindRegex, '').replace(langKindRegex, '');
+}
+
+function getCaptionCache(v_id: string) {
+ if (captionCache[v_id]) {
+   return captionCache[v_id];
+ } else if (archive[v_id] && archive[v_id].captions) {		
+   return archive[v_id].captions;
+ }
+}
+
+function fetchTransformedVTT(url: URL) {
+  const baseUrl = new URL(url.href);
+  baseUrl.searchParams.set('fmt', 'vtt');
+
+  return fetch(baseUrl.href)
+	.then(res => res.text())
+	.then(text => transformWebVTT(text));
 }
 
 // app.use((req, res, next) => {
@@ -157,45 +175,31 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 	return;
   }
 
-	captionCache[v_id] = videoInfo.captions;
+  for (const caption of videoInfo.captions?.caption_tracks) {
+    caption.base_url = `http://localhost:${port}/fixvtt/${caption.base_url}`;
+  }
+  captionCache[v_id] = videoInfo.captions;
 });
 
-app.get('/subtitles/:v_id/:lang', async (req, res) => {
+app.get('/captions/:v_id', async (req, res) => {
 	const v_id = req.params.v_id;
-	const lang = req.params.lang;
-	console.log('subtitle request for ' + v_id + ' in ' + lang);
+	const captionTracks = getCaptionCache(v_id);
 
-	// TODO check if en = auto-generated captions
-	if (archive[v_id]?.captions) {
-		const captPath = path.join(archiveDir, v_id, 'captions', lang + '.vtt');
-		if (existsSync(captPath)) {
-			console.log('serving from archive existing caption file');
-			res.json({
-				"itag": "text/vtt",
-				"url": `http://localhost:${port}/archive/${v_id}/captions/${lang}.vtt`
-			});
-		} else {
-			console.log('does not exist in archive');
-			res.send('Error: caption not found');
-		}
-	} else if (captionCache[v_id]) {
-		const caption = captionCache[v_id].caption_tracks.find((track) => track.language_code == lang);
-		if (caption) {
-			console.log('serving from cache fetch');
-			// res.send(`${caption.base_url}&fmt=vtt`);
-			const ytResponse = await fetch(`${caption.base_url}&fmt=vtt`);
-			const vtt = await ytResponse.text();
-			// fix content type
-			res.set('Content-Type', 'text/vtt');
-			res.send(transformWebVTT(vtt));
-		} else {
-			console.log('does not exist in cache');
-			res.send('Error: caption not found');
-		}
+	if (captionTracks) {
+		console.log('serving caption from cache');
+		res.json(captionTracks.caption_tracks);
+		return;
 	} else {
-		console.log('does not exist in cache');
-		res.send('Error: caption not found');
+		console.log('caption tracks not found');
 	}
+});
+
+app.get('/fixvtt/*', async (req, res) => {
+	const url = new URL(req.url.replace('/fixvtt/', ''));
+	const vtt = await fetchTransformedVTT(url);
+
+	res.set('Content-Type', 'text/vtt');
+	res.send(vtt);
 });
 
 app.get('/archive/:v_id', async (req, res) => {
@@ -255,8 +259,6 @@ app.get('/archive/:v_id', async (req, res) => {
 	  "file_formats": fileFormats,
 	  "yti_version": version
 	};
-	// write to info.json
-	writeFileSync(path.join(dir, 'info.json'), JSON.stringify(newInfo, null, 2));
 
 	if(newInfo.captions) {
 	  const captionsDir = path.join(dir, 'captions');
@@ -267,9 +269,10 @@ app.get('/archive/:v_id', async (req, res) => {
 	  // fetch via base_url
 	  for (const captionTrack of newInfo.captions.caption_tracks) {
 		// URL request
-		const captionUrl = captionTrack.base_url;
+		const captionUrl = new URL(captionTrack.base_url);
+		captionUrl.searchParams.set('fmt', 'vtt');
 		const captionFile = createWriteStream(path.join(captionsDir, captionTrack.language_code + '.vtt'));
-		const captionStream = await fetch(captionUrl + '&fmt=vtt');
+		const captionStream = await fetch(captionUrl.href);
 
 		await new Promise((resolve, reject) => {
 		  captionStream.body.pipe(captionFile);
@@ -278,9 +281,15 @@ app.get('/archive/:v_id', async (req, res) => {
 		});
 			
 		captionFile.close();
+		const preFix = "http://localhost:" + port + "/fixvtt/";		
+		const fsUrl = `http://localhost:${port}/archive/${v_id}/captions/${captionTrack.language_code}.vtt`;
+		captionTrack.base_url = preFix + fsUrl;
 	  }
 	}    
 
+	writeFileSync(path.join(dir, 'info.json'), JSON.stringify(newInfo, null, 2));
+
+	captionCache[v_id] = newInfo.captions;
 	archive[v_id] = newInfo;
 	res.send('OK');
   }

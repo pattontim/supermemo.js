@@ -2,18 +2,31 @@ import React from "react";
 import { useState } from "react";
 import { convertHHMMSS2Seconds, formatTime } from "../../utils/Duration";
 
-export default function ClipExtractor({resume, start, stop, boundaries, played, duration, 
-    setAt, setAtAbs, resetAt, goTo, offset }) {
+export default function ClipExtractor({resume, start, stop, boundaries, videoid, played, duration, 
+    setAt, setAtAbs, resetAt, goTo, offset, setPlaying }) {
     
     const [options, setOptions] = useState([]);
-    // const [selectedOption, setSelectedOption] = useState('');
 
-    const addOption = () => {
-        const newOption = prompt('Enter an extract name:');
+    const addOption = (offsetSec) => {
+        setPlaying(false);
+        const defaultName = "Extract #" + (options.length + 1);
+        const newOption = prompt('Enter an extract name:', defaultName);
         if (newOption) {
-            const formattedOption = formatTime(convertHHMMSS2Seconds(start), duration) + ' - ' + formatTime(convertHHMMSS2Seconds(stop), duration);
+            let selStart = formatTime(convertHHMMSS2Seconds(start), duration)
+            let selStop = formatTime(convertHHMMSS2Seconds(stop), duration)
+            if (offsetSec < 0) {
+                selStart = formatTime(played + offsetSec, duration)
+                selStop = formatTime(played, duration);
+            } else if (offsetSec > 0) {
+                selStart = formatTime(offsetSec, duration);
+                selStop = formatTime(played + offsetSec, duration)
+            }
+
+            const formattedOption = selStart + ' - ' + selStop;
             setOptions([...options, { value: formattedOption, label: newOption }]);
+            // setAtAbs('start', convertHHMMSS2Seconds(stop));
             resetAt('stop');
+            setPlaying(true);
         }
     };
 
@@ -29,7 +42,7 @@ export default function ClipExtractor({resume, start, stop, boundaries, played, 
 
     return (
         <div>
-            <div id="customPrompt">
+            <div id="customPrompt" hidden>
                 <div class="hd">Save As</div>
                 <div class="bd">
                     <form name="promptForm" id="promptForm">
@@ -48,7 +61,7 @@ export default function ClipExtractor({resume, start, stop, boundaries, played, 
             <div class="videoWrapper">
                 <div id="bideo"></div>
             </div>
-            <input type="hidden" value="zzzYT-IDzzz" id="videoid" />
+            <input type="hidden" value={videoid} id="videoid" />
             <input type="hidden" value={boundaries} id="imposeboundries" />
             <fieldset>
                 <div class="ctrlGrp firstCtrlGrp">
@@ -90,7 +103,7 @@ export default function ClipExtractor({resume, start, stop, boundaries, played, 
                             <button type="button" id="test" onClick={() => goTo('start')}>Test</button>
                             <button type="button" id="reset">Reset</button>
                             <button type="button" id="extract" onClick={addOption}>Extract</button>
-                            <select id="extracts" multiple='true' value={options} onChange={handleSelectChange}>
+                            <select id="extracts" multiple="true" value={options} onChange={handleSelectChange}>
                                 {options.map((option, index) => (
                                     <option value={option.value}>
                                         {option.label}
@@ -98,8 +111,29 @@ export default function ClipExtractor({resume, start, stop, boundaries, played, 
                                 ))}
                             </select>
                             <img src="iv/images/transparent.png" alt="Remove the currently selected extract" id="removeCurrentExtract" class="imgBtn removeCurrentExtract"/>
+                            <input type="hidden" value="0" id="customPromptVisible" />
                         </p>
                     </div>
+                </div>
+                <div class="ctrlGrp">
+                <div class="ctrlSubgrp">
+                    <p>
+                        <button type="button" class="" id="extractm5" onClick={() => addOption(-5)}>Extr. &lt;-5</button>
+                        <button type="button" class="" id="extract5"  onClick={() => addOption(5)}>Extr. 5+&gt;</button>
+                    </p>
+                </div>
+                <div class="ctrlSubgrp">
+                    <p>
+                        <button type="button" id="copyBtn" onclick="copyVideoDetails();">YT Copy Details</button>
+                        <button type="button" id="screenshotBtn" onclick="screenshotVideo();">YT Screenshot</button> 
+                    </p>
+                </div>
+            </div>  
+                <div class="ctrlGrp">
+                    <textarea id="log" style={{width: "100%"}}></textarea>
+                </div>
+                <div class="ctrlGrp">
+                    <div class="ctrlSubgrp firstCtrlSubgrp debug">Date: May 24, 2023</div>
                 </div>
             </fieldset>
         </div>
