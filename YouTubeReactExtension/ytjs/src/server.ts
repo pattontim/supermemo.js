@@ -125,7 +125,7 @@ function fetchTransformedVTT(url: URL) {
 app.use(express.static('dist'));
 
 /* Attach our cors proxy to the existing API on the /proxy endpoint. */
-app.get('/proxy/:proxyUrl*', (req, res) => {
+app.get('/proxy/:proxyUrl*', async (req, res) => {
   req.url = req.url.replace('/proxy/', '/'); // Strip '/proxy' from the front of the URL, else the proxy won't work.
   proxy.emit('request', req, res);
 });
@@ -175,7 +175,7 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 	return;
   }
 
-  for (const caption of videoInfo.captions?.caption_tracks) {
+  for (const caption of videoInfo?.captions?.caption_tracks) {
     caption.base_url = `http://localhost:${port}/fixvtt/${caption.base_url}`;
   }
   captionCache[v_id] = videoInfo.captions;

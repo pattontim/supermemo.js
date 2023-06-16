@@ -40,6 +40,26 @@ export default function ClipExtractor({resume, start, stop, boundaries, videoid,
         }
     };
 
+    const handleCaptionCopyBtnClick = () => {
+        const videoElement = document.getElementsByTagName('video')[0];
+
+        const activeTextTrack = Array.from(videoElement.textTracks)
+            .find(track => track.mode === 'showing');
+
+        const activeCue = Array.from(activeTextTrack.cues)
+            .find(cue => cue.startTime <= videoElement.currentTime && cue.endTime >= videoElement.currentTime);
+
+        const activeCueText = activeCue.text;
+
+        const textArea = document.createElement('textarea');
+        textArea.value = activeCueText;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+    };
+
+
     return (
         <div>
             <div id="customPrompt" hidden>
@@ -47,7 +67,7 @@ export default function ClipExtractor({resume, start, stop, boundaries, videoid,
                 <div class="bd">
                     <form name="promptForm" id="promptForm">
                         <label for="extractName">Extract name: </label>
-                        <input type="text" name="extractName" id="extractName" onfocus="this.select();" onblur="oCustomPrompt.focusFirstButton();" />
+                        <input type="text" name="extractName" id="extractName" onFocus="this.select();" />
                     </form>
                 </div>
             </div>
@@ -124,8 +144,9 @@ export default function ClipExtractor({resume, start, stop, boundaries, videoid,
                 </div>
                 <div class="ctrlSubgrp">
                     <p>
-                        <button type="button" id="copyBtn" onclick="copyVideoDetails();">YT Copy Details</button>
-                        <button type="button" id="screenshotBtn" onclick="screenshotVideo();">YT Screenshot</button> 
+                        <button type="button" id="copyBtn" onClick="copyVideoDetails();">YT Copy Details</button>
+                        <button type="button" id="screenshotBtn" onClick="screenshotVideo();">YT Screenshot</button> 
+                        <button type="button" id="copyCaptionBtn" onClick={handleCaptionCopyBtnClick}>Copy Cap</button> 
                     </p>
                 </div>
             </div>  

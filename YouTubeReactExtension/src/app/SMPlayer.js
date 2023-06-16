@@ -30,7 +30,7 @@ function App() {
   // const [url, setUrl] = useState("https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps_640x360_800k.mpd");
   // const [url, setUrl] = useState("http://youtube.com/watch?v=" + queryParameters.get('videoid')) 
   const [url, setUrl] = useState("http://localhost:3000/mpd/" + queryParameters.get('videoid') + ".mpd?target=IE");
-  const [subtitleUrl, setSubtitleUrl] = useState("");
+  const [subtitleUrl, setSubtitleUrl] = useState("http://localhost:3000/captions/" + queryParameters.get('videoid'));
   
   const [pip, setPip] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -44,6 +44,7 @@ function App() {
   const [playbackRate, setPlaybackRate] = useState(1.0);
   const [loop, setLoop] = useState(false);
   const [seeking, setSeeking] = useState(false);
+  const [tracks, setTracks] = useState([]);
 
   const ref = useRef(null);
 
@@ -54,16 +55,6 @@ function App() {
   //   setStop(queryParameters.get('stop'));
   //   setVideoid(queryParameters.get('videoid'));
   // }, []);
-
-  useEffect(() => {
-    // if (ref.current) {
-      console.log('atttachSubtitles after 10s')
-      setTimeout(() => {
-        // attachSubtitles(subtitleUrl)
-        setSubtitleUrl("http://localhost:3000/captions/" + queryParameters.get('videoid'));
-      }, 10000);
-    // }
-  }, []);
 
   const handlePlay = () => {
     console.log('onPlay')
@@ -112,21 +103,6 @@ function App() {
     setDuration(duration)
   }
 
-  function attachSubtitles(url) {
-    if(ref.current) {
-      // Create a new HTMLTrackElement
-      const trackElement = document.createElement('track');
-
-      trackElement.src = subtitleUrl;
-      trackElement.kind = 'captions';
-      trackElement.label = 'en';
-      trackElement.srclang = 'en'; // Replace 'en' with the appropriate language code
-
-      // TODO ref
-      document.getElementsByTagName('video')[0].appendChild(trackElement);
-    }
-  }
-
   function seekVideo(to) {
     if (ref.current) {
         //console.log('seeking from ' + ref.current.getCurrentTime() + ' to ' + to + ' (' + convertHHMMSS2Seconds(to) + ')')
@@ -148,15 +124,24 @@ function App() {
   }
 
   function handlePlayerReady( player ) {
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', subtitleUrl, true);
+    xhr.send();
+    xhr.onreadystatechange = function () {
+        if (this.readyState === 4 && this.status === 200) {
+            console.log(this.responseText);
+            const tracks = JSON.parse(this.responseText);
+            setTracks(tracks);
+        }
+    }
+
+    seekVideo(start);
     setPlaying(true);
     console.log('player ready');
   }
 
   function handlePlayerStart(player) {
     console.log('player start');
-
-    seekVideo(start);
-    checkBoundaries();
   }
 
   function handleResetAt(type) {
@@ -221,39 +206,6 @@ function App() {
     }
   }
 
-  //cosmetic
-  function updateBorder(inputText) {
-    let sBorderCl = ""
-    let iNewVal = convertHHMMSS2Duration(inputText.value);
-
-    switch (inputText.id.replace(/videoat/, "")) {
-      case "start":
-        if (iNewVal > 0) {
-          sBorderCl = "blue";
-        }
-        break;
-
-      case "stop":
-        // TODO use of internal player discouraged
-        if (ytplayer.getInternalPlayer()) {
-          if (ytplayer.getInternalPlayer().getPlayerState() >= 1) {
-            if (iNewVal < parseInt(ytplayer.getDuration())) {
-              sBorderCl = "blue";
-            }
-          }
-        }
-        break;
-    }
-
-    if (sBorderCl.length) {
-      inputText.style.border = "2px solid " + sBorderCl;
-      proxySync('syncBorder', [inputText.id, "2px solid " + sBorderCl]);
-    } else {
-      inputText.style.border = "2px inset";
-      proxySync('syncBorder', [inputText.id, "2px inset"]);
-    }
-  }
-
   return (
     <div className="app">
 
@@ -291,8 +243,8 @@ function App() {
               onEnded={handleEnded}
               onError={e => console.log('onError', e)}
               onProgress={handleProgress}
-              onDuration={handleDuration}/>
-                <CaptionsTracks url={subtitleUrl}/>
+              onDuration={handleDuration}
+            />
       <ClipExtractor 
       resume={resume} 
       start={start} 
@@ -312,6 +264,15 @@ function App() {
       {/* <Counter /> */}
       {/* <Subtitles /> */}
       {/* <ReactExtension /> */}
+      {tracks.length > 0 ?
+        <CaptionsTracks
+          url={subtitleUrl}
+          tracks={tracks}
+          seek={seekVideo}
+          videoRef = {ref}
+        />
+        : null
+      }
     </div>
   );
 }
