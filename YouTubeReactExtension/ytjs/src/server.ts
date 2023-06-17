@@ -142,8 +142,18 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
   const target = req.query.target as string;
   console.log('mpd request for ' + v_id);
 
-  if (archive[v_id]?.file_formats) {
-	// TODO serve from archive
+  const archiveFormats = archive[v_id]?.file_formats;
+  if (false && archiveFormats) {
+	
+	// const bestFormat = Array.from(Object.values(archive[v_id].file_formats)).sort((a, b) => b.bitrate - a.bitrate)[0]; 
+	const bestKey = Object.keys(archive[v_id].file_formats).sort((a, b) => archiveFormats[a].bitrate - archiveFormats[b].bitrate)[0];
+	const bestFormat = archiveFormats[bestKey];
+
+	if (bestFormat) {
+		const url = new URL(`http://localhost:${port}/archive/${v_id}/${bestKey}`);
+		res.send(url.href);
+		return;
+	}
   }
 
   // TODO heuristic, for now it seems to generally be 6 hours
@@ -162,7 +172,10 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 		  manifest = await videoInfo.toDash((url) => new URL(`http://localhost:${port}/proxy/${url}`)
 			  , (format) => !format.mime_type.includes('avc1.4d401e') && !format.mime_type.includes('mp4a.40.2')
 				  && !format.mime_type.includes('avc1.4d401f') && !format.mime_type.includes('avc1.4d4020')
-				  && !format.mime_type.includes('avc1.64002a'));
+				  && !format.mime_type.includes('avc1.64002a')
+				  && !format.mime_type.includes('avc1.64001f')
+				  && !format.mime_type.includes('avc1.640028')
+				  );
 	  } else {
 		  manifest = await videoInfo.toDash((url) => new URL(`http://localhost:${port}/proxy/${url}`));
 	  }
@@ -175,10 +188,20 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 	return;
   }
 
-  for (const caption of videoInfo?.captions?.caption_tracks) {
-    caption.base_url = `http://localhost:${port}/fixvtt/${caption.base_url}`;
+  try {
+  	for (const caption of videoInfo?.captions?.caption_tracks) {
+    	caption.base_url = `http://localhost:${port}/fixvtt/${caption.base_url}`;
+  	}
+	// TypeError possible
+  } catch (error) {
+	if (error instanceof TypeError) {
+	  console.log('TypeError, very likely captions disabled.' );
+	} else {
+	  console.log('error: ' + error);
+	}
+  } finally {
+	captionCache[v_id] = videoInfo.captions;
   }
-  captionCache[v_id] = videoInfo.captions;
 });
 
 app.get('/captions/:v_id', async (req, res) => {
@@ -192,6 +215,7 @@ app.get('/captions/:v_id', async (req, res) => {
 	} else {
 		console.log('caption tracks not found');
 	}
+	res.json({});
 });
 
 app.get('/fixvtt/*', async (req, res) => {

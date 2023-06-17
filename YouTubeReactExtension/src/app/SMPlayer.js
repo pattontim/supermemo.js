@@ -217,7 +217,7 @@ function App() {
                     dashVersion: '4.5.2', //last version supporting IE
                     attributes: {
                       crossOrigin: true,
-                      autoplay: false,
+                      autoPlay: false,
                       poster: "/iv/images/sm.gif",
                     }
                   }

@@ -33,6 +33,7 @@ export default function CaptionsTracks({ url, tracks, seek, videoRef }) {
 
         return () => {
             // Clean up the dynamically added tracks when the component is unmounted
+            // TODO state update cascade?
             tracks.forEach((_, index) => {
                 const trackElement = videoElement.querySelector(`[src="${tracks[index].base_url}"]`);
                 if (trackElement) {
