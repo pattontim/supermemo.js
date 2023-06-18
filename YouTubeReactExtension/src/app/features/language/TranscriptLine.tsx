@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 
-export default function TranscriptLine({ cue, seek, query }) {
+export default function TranscriptLine<T extends unknown>({ cue, 
+  seek, query }: TranscriptLineProps<T>) {
   const [isActive, setIsActive] = useState(false);
 
-  const style = query && cue && cue.text.match(new RegExp(query, 'i')) ? 'match' : isActive ? 'active' : '';
+  const style = query && cue && (cue as VTTCue).text.match(new RegExp(query, 'i')) ? 'match' : isActive ? 'active' : '';
 
 	if(cue){
     cue.onenter = () => { setIsActive(true); };
@@ -12,8 +13,10 @@ export default function TranscriptLine({ cue, seek, query }) {
 	}
 
   const handleClick = () => {
-	if (!cue) return;
-    seek(startTime())
+    if (!cue) return;
+    const startTimeString = startTime();
+    if (!startTimeString) return;
+    seek(startTimeString as string);
   }
 
   const startTime = () => {
@@ -27,18 +30,12 @@ export default function TranscriptLine({ cue, seek, query }) {
   }
 
   // TODO HH support or use utils
-  const formatSeconds = (t) => {
+  const formatSeconds = (t: number) => {
     let mins = Math.floor(t / 60)
-    if (mins < 10) {
-      mins = `0${mins}`
-    }
-
     let secs = Math.floor(t % 60)
-    if (secs < 10) {
-      secs = `0${secs}`
-    }
 
-    return `${mins}:${secs}`
+    return `${mins < 10 ? `0${mins}`
+     : mins}:${secs < 10 ? `0${secs}` : secs}`
   }
 
 	// note: dangerouslySetInnerHTML is used because the text may contain HTML
@@ -49,7 +46,7 @@ export default function TranscriptLine({ cue, seek, query }) {
 			</div>
 			<div
 				className={`${style} text`}
-				dangerouslySetInnerHTML={{ __html: cue ? cue.text : "" }} 
+				dangerouslySetInnerHTML={{ __html: cue ? (cue as VTTCue).text : "" }} 
         />
 		</div>
 	)

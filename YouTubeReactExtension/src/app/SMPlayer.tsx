@@ -1,30 +1,28 @@
-import React, { useEffect } from 'react';
+import React from 'react';
+import { useEffect, useState, useRef } from 'react';
 // import ReactPlayer from 'react-player/lazy';
 import ReactPlayer from 'react-player/lazy';
 // import ReactExtension from './react-extension.js';
 // import ExtractBoard from './features/clip/ExtractBoard.js'; 
-import ClipExtractor from './features/clip/ClipExtractor.js';
-import CaptionsTracks from './features/language/CaptionsTracks.js';
+import ClipExtractor from './features/clip/ClipExtractor';
+import CaptionsTracks from './features/language/CaptionsTracks';
 // import Counter from './features/counter/Counter.js';
 // import Subtitles from './features/language/Subtitles.js';
 
 import { convertHHMMSS2Seconds, convertSeconds2HHMMSS, constrainToRange, formatTime } from './utils/Duration.js';
 
-
-import { useState, useRef } from 'react';
-
 function App() {
   const queryParameters = new URLSearchParams(window.location.search)
 
   // TODO component passed as prop?
-  const [resume, setResume] = React.useState(queryParameters.get('resume'));
+  const [resume, setResume] = useState(queryParameters.get('resume'));
   // const [resumeStyle, setResumeStyle] = React.useState({ border: `2px solid ${borderCl}` });
-  const [start, setStart] = React.useState(queryParameters.get('start'));
+  const [start, setStart] = useState(queryParameters.get('start'));
   // const [startStyle, setStartStyle] = React.useState({ border: `2px solid ${borderCl}` });
-  const [stop, setStop] = React.useState(queryParameters.get('stop'));
+  const [stop, setStop] = useState(queryParameters.get('stop'));
   // const [stopStyle, setStopStyle] = React.useState({ border: `2px solid ${borderCl}` });
-  const [imposeBoundaries, setImposeBoundaries] = React.useState(1);
-  const [videoid, setVideoid] = React.useState(queryParameters.get('videoid'));
+  const [imposeBoundaries, setImposeBoundaries] = useState(1);
+  const [videoid, setVideoid] = useState(queryParameters.get('videoid'));
 
   // const [url, setUrl] = useState('https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4');
   // const [url, setUrl] = useState("https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps_640x360_800k.mpd");
@@ -44,9 +42,9 @@ function App() {
   const [playbackRate, setPlaybackRate] = useState(1.0);
   const [loop, setLoop] = useState(false);
   const [seeking, setSeeking] = useState(false);
-  const [tracks, setTracks] = useState([]);
+  const [tracks, setTracks] = useState<CaptionTrack[]>([]);
 
-  const ref = useRef(null);
+  const ref = useRef<ReactPlayer>(null)
 
   // // SM browser as remote component
   // useEffect(() => {
@@ -66,7 +64,7 @@ function App() {
     setPlaying(false)
   }
 
-  const handleSeek = (destSec) => {
+  const handleSeek = (destSec: number) => {
     if(destSec < convertHHMMSS2Seconds(start) - 3 || destSec > convertHHMMSS2Seconds(stop) + 3) {
       setImposeBoundaries(0);
     }
@@ -74,7 +72,7 @@ function App() {
     setPlayed(destSec)
   }
 
-  const handleOnPlaybackRateChange = (playbackRate) => {
+  const handleOnPlaybackRateChange = (playbackRate: number) => {
     console.log('onPlaybackRateChange', playbackRate)
     setPlaybackRate(playbackRate)
   }
@@ -84,7 +82,8 @@ function App() {
     setPlaying(loop)
   }
 
-  const handleProgress = (state) => {
+  // TODO state 
+  const handleProgress = (state: any) => {
     console.log('onProgress', state)
     setPlayed(state.playedSeconds)
     if (!seeking && imposeBoundaries) {
@@ -98,12 +97,12 @@ function App() {
     // }
   }
 
-  const handleDuration = (duration) => {
+  const handleDuration = (duration: number) => {
     console.log('onDuration', duration)
     setDuration(duration)
   }
 
-  function seekVideo(to) {
+  function seekVideo(to: string | null) {
     if (ref.current) {
         //console.log('seeking from ' + ref.current.getCurrentTime() + ' to ' + to + ' (' + convertHHMMSS2Seconds(to) + ')')
         ref.current.seekTo(convertHHMMSS2Seconds(to));
@@ -123,7 +122,7 @@ function App() {
     }
   }
 
-  function handlePlayerReady( player ) {
+  function handlePlayerReady( player: any ) {
     const xhr = new XMLHttpRequest();
     xhr.open('GET', subtitleUrl, true);
     xhr.send();
@@ -140,11 +139,11 @@ function App() {
     console.log('player ready');
   }
 
-  function handlePlayerStart(player) {
+  function handlePlayerStart() {
     console.log('player start');
   }
 
-  function handleResetAt(type) {
+  function handleResetAt(type: string) {
     if (type === "resume") {
         setResume("0:00");
     } else if (type === "start") {
@@ -154,7 +153,7 @@ function App() {
     }
   }
 
-  function handleSetAbs(type, abs) {
+  function handleSetAbs(type: string, abs: number) {
     let new_val = formatTime(abs, duration);
     if (type === "resume") {
         setResume(new_val);
@@ -165,7 +164,7 @@ function App() {
     }
   }
 
-  function handleSetAt(type, offsetSec) {
+  function handleSetAt(type: string, offsetSec: number) {
     console.log('handleSetAt', type, offsetSec, played, duration, played + offsetSec)
     let new_val = formatTime(played + offsetSec, duration);
     if (type === "resume") {
@@ -177,7 +176,7 @@ function App() {
     } 
   }
 
-  function handleGoTo(type) {
+  function handleGoTo(type: string) {
     let type_val;
     if(type === 'start') {
       type_val = start;
@@ -192,11 +191,11 @@ function App() {
       return;
     }
 
-    setPlayed(type_val);
+    setPlayed(convertHHMMSS2Seconds(type_val));
     seekVideo(type_val);
   }
 
-  function handleOffset(type, offset) {
+  function handleOffset(type: string, offset: number) {
     if (type === "resume") {
         setResume(formatTime(convertHHMMSS2Seconds(resume) + offset, duration));
     } else if (type === "start") {
@@ -269,7 +268,6 @@ function App() {
           url={subtitleUrl}
           tracks={tracks}
           seek={seekVideo}
-          videoRef = {ref}
         />
         : null
       }

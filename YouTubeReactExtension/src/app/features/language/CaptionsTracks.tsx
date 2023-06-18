@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react'
 import Transcript from './Transcript.js' 
 
-export default function CaptionsTracks({ url, tracks, seek, videoRef }) {
-    const [activeTrack, setActiveTrack] = useState();
+export default function CaptionsTracks<T extends unknown>({ 
+    url, tracks, seek }: CaptionPlayerProps<T>) {
+    const [activeTrack, setActiveTrack] = useState<TextTrack>();
 
     // ReactPlayer does not support nested elements AND
     // tracks can't be set dynamically in config
@@ -12,7 +13,7 @@ export default function CaptionsTracks({ url, tracks, seek, videoRef }) {
 
             trackElement.src = tracks[i].base_url;
             trackElement.kind = 'captions';
-            trackElement.label = tracks[i].name.text;
+            trackElement.label = tracks[i].name.text ?? '';
             trackElement.srclang = tracks[i].language_code;
             trackElement.onload = () => {
                 console.log("track loaded (handler), setting active track, trackElement = " + trackElement);
@@ -34,6 +35,7 @@ export default function CaptionsTracks({ url, tracks, seek, videoRef }) {
         return () => {
             // Clean up the dynamically added tracks when the component is unmounted
             // TODO state update cascade?
+            const videoElement = document.getElementsByTagName('video')[0];
             tracks.forEach((_, index) => {
                 const trackElement = videoElement.querySelector(`[src="${tracks[index].base_url}"]`);
                 if (trackElement) {

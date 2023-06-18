@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react'
 import TranscriptLine from './TranscriptLine.js'
 // import './Track.css'
 
-export default function Transcript({ track, url, seek, query }) {
+export default function Transcript<T extends unknown>({ track, url, 
+    seek, query } : TranscriptProps<T>) {
     const [isActive, setIsActive] = useState(false);
 
     return (
@@ -18,7 +19,7 @@ export default function Transcript({ track, url, seek, query }) {
                         <div className="track">
                             {track && track.cues && track.cues.length > 0 ?
                                 Array.from(track.cues).map((cue, index) =>
-                                    cue.text.includes("<c>") ? null :
+                                    (cue as VTTCue).text.includes("<c>") ? null :
                                         <TranscriptLine
                                             key={`line-${index}`}
                                             cue={cue}
