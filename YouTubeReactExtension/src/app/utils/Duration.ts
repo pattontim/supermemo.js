@@ -20,7 +20,7 @@
   }
 
   export function convertSeconds2HHMMSS(duration: number | string) {
-    var sec_num = typeof(duration) == "number" ? duration : parseInt(duration as string, 10);
+    var sec_num = typeof(duration) == "number" ? Math.floor(duration) : parseInt(duration as string, 10);
     var hours: string | number = Math.floor(sec_num / 3600);
     var minutes: string | number = Math.floor((sec_num - (hours as number * 3600)) / 60);
     var seconds: string | number = sec_num - (hours as number * 3600) - (minutes as number * 60);

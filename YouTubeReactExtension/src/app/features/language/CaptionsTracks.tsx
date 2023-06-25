@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import Transcript from './Transcript.js' 
+import Transcript from './Transcript' 
 
 export default function CaptionsTracks<T extends unknown>({ 
     url, tracks, seek }: CaptionPlayerProps<T>) {

@@ -9,7 +9,7 @@ import CaptionsTracks from './features/language/CaptionsTracks';
 // import Counter from './features/counter/Counter.js';
 // import Subtitles from './features/language/Subtitles.js';
 
-import { convertHHMMSS2Seconds, convertSeconds2HHMMSS, constrainToRange, formatTime } from './utils/Duration.js';
+import { convertHHMMSS2Seconds, convertSeconds2HHMMSS, constrainToRange, formatTime } from './utils/Duration';
 
 function App() {
   const queryParameters = new URLSearchParams(window.location.search)
@@ -27,7 +27,7 @@ function App() {
   // const [url, setUrl] = useState('https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4');
   // const [url, setUrl] = useState("https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps_640x360_800k.mpd");
   // const [url, setUrl] = useState("http://youtube.com/watch?v=" + queryParameters.get('videoid')) 
-  const [url, setUrl] = useState("http://localhost:3000/mpd/" + queryParameters.get('videoid') + ".mpd?target=IE");
+  const [url, setUrl] = useState("");
   const [subtitleUrl, setSubtitleUrl] = useState("http://localhost:3000/captions/" + queryParameters.get('videoid'));
   
   const [pip, setPip] = useState(false);
@@ -36,7 +36,7 @@ function App() {
   const [light, setLight] = useState(false);
   const [volume, setVolume] = useState(0.8);
   const [muted, setMuted] = useState(false);
-  const [played, setPlayed] = useState(0);
+  const [played, setPlayed] = useState(start ? convertHHMMSS2Seconds(start) : 0);
   const [loaded, setLoaded] = useState(0);
   const [duration, setDuration] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1.0);
@@ -53,6 +53,30 @@ function App() {
   //   setStop(queryParameters.get('stop'));
   //   setVideoid(queryParameters.get('videoid'));
   // }, []);
+
+  useEffect(() => {
+    // setUrl("http://localhost:3000/mpd/" + queryParameters.get('videoid') + ".mpd?target=IE#t=" + convertHHMMSS2Seconds(start) + "," + convertHHMMSS2Seconds(stop));
+
+    // TODO
+    const url = new URL("http://localhost:3000/streamUrl/" + queryParameters.get('videoid'));
+    url.searchParams.append('startSec', convertHHMMSS2Seconds(start).toString());
+    url.searchParams.append('stopSec', convertHHMMSS2Seconds(stop).toString());
+    url.searchParams.append('target', 'IE');
+
+    const req = new XMLHttpRequest();
+    req.open('GET', url.toString(), true);
+    req.responseType = 'json';
+    req.onload = function() {
+      if (req.status !== 200) {
+        console.log('Error: ' + req.status);
+        return;
+      }
+      console.log(req.response);
+      setUrl(req.response);
+    }
+    req.send();  
+
+  }, []);
 
   const handlePlay = () => {
     console.log('onPlay')
@@ -128,7 +152,7 @@ function App() {
     xhr.send();
     xhr.onreadystatechange = function () {
         if (this.readyState === 4 && this.status === 200) {
-            console.log(this.responseText);
+            console.log("Subtitle url: " + this.responseText);
             const tracks = JSON.parse(this.responseText);
             setTracks(tracks);
         }
@@ -208,6 +232,7 @@ function App() {
   return (
     <div className="app">
 
+    { url != "" && 
       <ReactPlayer 
               ref={ref}
               className='react-player'
@@ -215,7 +240,7 @@ function App() {
                   file: {
                     dashVersion: '4.5.2', //last version supporting IE
                     attributes: {
-                      crossOrigin: true,
+                      crossOrigin: "true",
                       autoPlay: false,
                       poster: "/iv/images/sm.gif",
                     }
@@ -244,6 +269,7 @@ function App() {
               onProgress={handleProgress}
               onDuration={handleDuration}
             />
+      }
       <ClipExtractor 
       resume={resume} 
       start={start} 

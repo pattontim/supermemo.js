@@ -4,9 +4,10 @@ const mode = process.env.NODE_ENV || 'development';
 // const target = process.env.NODE_ENV === 'production' ? 'browserslist' : 'web';
 
 const path = require('path');
+const ForkTsCheckerWebpackPlugin = require('fork-ts-checker-webpack-plugin');
 
 module.exports = {
-  entry : './src/index.js',
+  entry : './src/index.tsx',
   mode: mode,
   module: {
     rules: [
@@ -15,7 +16,12 @@ module.exports = {
         exclude: path.resolve(__dirname, 'node_modules'),
         use: {
           loader: 'babel-loader',
-        }
+        },
+      },
+      {
+        test: /\.(ts|tsx)$/,
+        exclude: path.resolve(__dirname, 'node_modules'),
+        use: ['babel-loader', 'ts-loader'],
       },
       {  
         test: /\.css$/,
@@ -30,6 +36,12 @@ module.exports = {
       }
     ]
   },
+  resolve: {
+    extensions: ['.js', '.jsx', '.ts', '.tsx']
+  },
+  plugins: [
+    new ForkTsCheckerWebpackPlugin()
+  ],
   // target: target,
   target: ['web', 'es5'],
   devtool: 'cheap-module-source-map',

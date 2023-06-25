@@ -4,6 +4,7 @@ export default function TranscriptLine<T extends unknown>({ cue,
   seek, query }: TranscriptLineProps<T>) {
   const [isActive, setIsActive] = useState(false);
 
+  // TODO check that this changes
   const style = query && cue && (cue as VTTCue).text.match(new RegExp(query, 'i')) ? 'match' : isActive ? 'active' : '';
 
 	if(cue){

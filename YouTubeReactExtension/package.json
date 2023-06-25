@@ -29,7 +29,9 @@
     "babel-loader": "^9.1.2",
     "cross-env": "^7.0.3",
     "css-loader": "^6.7.3",
+    "fork-ts-checker-webpack-plugin": "^8.0.0",
     "style-loader": "^3.3.2",
+    "ts-loader": "^9.4.3",
     "webpack": "^5.82.1",
     "webpack-cli": "^5.1.1",
     "webpack-dev-server": "^4.15.0"

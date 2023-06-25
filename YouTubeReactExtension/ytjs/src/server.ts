@@ -137,13 +137,19 @@ app.get('/mpd/invalidate/:v_id', async (req, res) => {
   res.send('OK');
 });
 
-app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
-  const v_id = req.params[0]
-  const target = req.query.target as string;
-  console.log('mpd request for ' + v_id);
+// TODO quality selection
+app.get('/streamUrl/:v_id', async (req, res) => {
+  const v_id = req.params.v_id;
+  const start = req.query.startSec;
+  const stop = req.query.stopSec;
+  const target = req.query.target;
+  if (!start || !stop || !target) {
+	res.status(400).send('Missing start, stop, or target');
+	return;
+  }
 
   const archiveFormats = archive[v_id]?.file_formats;
-  if (false && archiveFormats) {
+  if (archiveFormats) {
 	
 	// const bestFormat = Array.from(Object.values(archive[v_id].file_formats)).sort((a, b) => b.bitrate - a.bitrate)[0]; 
 	const bestKey = Object.keys(archive[v_id].file_formats).sort((a, b) => archiveFormats[a].bitrate - archiveFormats[b].bitrate)[0];
@@ -154,7 +160,17 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 		res.send(url.href);
 		return;
 	}
+  } else {
+	const url = new URL(`http://localhost:${port}/mpd/${v_id}.mpd`);
+	url.searchParams.set('target', target as string);
+	res.send(url.href + "#" + start + "," + stop);
   }
+});
+
+app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
+  const v_id = req.params[0]
+  const target = req.query.target as string;
+  console.log('mpd request for ' + v_id);
 
   // TODO heuristic, for now it seems to generally be 6 hours
   if (dashCache[v_id] && (Date.now() - dashCache[v_id].timestamp < 1000 * 60 * 60 * 6) && dashCache[v_id].target == target) {

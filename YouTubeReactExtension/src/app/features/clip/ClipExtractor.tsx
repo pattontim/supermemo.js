@@ -80,7 +80,7 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
             return;
         }
 
-        const activeCueText = activeCue.text;
+        const activeCueText = activeCue.text.replace(/<\/?[^>]+(>|$)/g, '');
 
         const textArea = document.createElement('textarea');
         textArea.value = activeCueText;
@@ -130,7 +130,7 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
                             <img src="iv/images/transparent.png" alt="" id="rewindResume" onClick={() => offset('resume', -1)} className="imgBtn rewind"/>
                             <img src="iv/images/transparent.png" alt="Go to" title="Go to" id="resume" onClick={() => goTo('resume')} className="imgBtn goTo"/>
                             <img src="iv/images/transparent.png" alt="" id="forwardResume" className="imgBtn forward" onClick={() => offset('resume', 1)}/>
-                            <input type="text" value={resume ?? ''} id="resumevideoat" onClick={() => setAt('resume', 0)}/>
+                            <input type="text" value={resume ?? ''} id="resumevideoat" onClick={() => setAt('resume', 0)} onChange={() => {}} />
                             <img src="iv/images/transparent.png" alt="Restore default" id="restoreResumeAt" onClick={() => resetAt('resume')} className="imgBtn restoreStartAt"/> 
                         </p>
                     </div>
@@ -139,11 +139,11 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
                         <img src="iv/images/transparent.png" alt="" id="rewindStart" onClick={() => offset('start', -1)} className="imgBtn rewind"/>
                         <img src="iv/images/transparent.png" alt="Go to" title="Go to" id="goToStart" onClick={() => goTo('start')} className="imgBtn goTo"/>
                         <img src="iv/images/transparent.png" alt="" id="forwardStart" onClick={() => offset('start', 1)} className="imgBtn forward"/>
-                        <input type="text" value={start ?? ''} id="startvideoat" onClick={() => setAt('start', 0)}/>
+                        <input type="text" value={start ?? ''} id="startvideoat" onClick={() => setAt('start', 0)} onChange={() => {}}/>
                         <img src="iv/images/transparent.png" alt="Restore default" title="Restore default" id="restoreStartAt" onClick={() => resetAt('start')} className="imgBtn restoreStartAt"/>
                         ~
                         <img src="iv/images/transparent.png" alt="Restore default" title="Restore default" id="restoreStopAt" onClick={() => resetAt('stop')} className="imgBtn restoreStopAt"/>
-                        <input type="text" value={stop ?? ''} id="stopvideoat" onClick={() => setAt('stop', 0)}/>
+                        <input type="text" value={stop ?? ''} id="stopvideoat" onClick={() => setAt('stop', 0)} onChange={() => {}}/>
                         <img src="iv/images/transparent.png" alt="" id="rewindStop" onClick={() => offset('stop', -1)} className="imgBtn rewind"/>
                         <img src="iv/images/transparent.png" alt="Go to" title="Go to" id="goToStop" onClick={() => goTo('stop')} className="imgBtn goTo"/>
                         <img src="iv/images/transparent.png" alt="" id="forwardStop" onClick={() => offset('stop', 1)} className="imgBtn forward"/>
@@ -153,7 +153,7 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
                 <div className="ctrlGrp secondCtrlGrp">
                     <div className="ctrlSubgrp firstCtrlSubgrp">
                         <p>
-                            <input type="checkbox" checked={true} id="repeat" className="checkbox" />
+                            <input type="checkbox" checked={true} id="repeat" className="checkbox" onChange={() => {}}/>
                             <label htmlFor="repeat" id="repeat" title="Repeat (R)">&nbsp;</label>
                         </p>
                     </div>

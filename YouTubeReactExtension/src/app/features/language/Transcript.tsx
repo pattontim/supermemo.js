@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import TranscriptLine from './TranscriptLine.js'
+import TranscriptLine from './TranscriptLine'
 // import './Track.css'
 
 export default function Transcript<T extends unknown>({ track, url, 
