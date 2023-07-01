@@ -6,17 +6,17 @@ import path from 'path';
 import { Format } from 'youtubei.js/dist/src/parser/misc';
 import { PlayerCaptionsTracklist } from 'youtubei.js/dist/src/parser/nodes';
 import fetch from 'node-fetch';
+import { VideoInfo } from 'youtubei.js/dist/src/parser/youtube';
 
 const app = express();
 const port = 3000; // You can change the port number if needed
 
-let dashCache = {};
-let captionCache: { [id: string] : PlayerCaptionsTracklist; } = {};
 let cacheDir = './.cache';
 let archiveDir = './dist/archive';
 let version = '0.0.0';
 let youtube: Innertube;
 let archive = {} as Archive;
+let cache = {} as Cache;
 let archive_container = 'mp4';
 
 const proxy = corsAnywhere.createServer({
@@ -25,7 +25,7 @@ const proxy = corsAnywhere.createServer({
   removeHeaders: [] // Do not remove any headers.
 });
 
-interface ArchiveInfo {
+class ArchiveInfo {
   captions?: PlayerCaptionsTracklist;  
   game_info?: any;
   // primary_info
@@ -39,11 +39,44 @@ interface ArchiveInfo {
   description: string; // description
 
   yti_version: string;
+  archived_on: string;
   file_formats: { [filename: string]: Format };
+
+  constructor(videoInfo: VideoInfo) {
+    this.captions = videoInfo?.captions;
+    this.game_info = videoInfo?.game_info;
+    this.title = videoInfo?.primary_info.title.text;
+    this.published = videoInfo?.primary_info.published.text;
+    this.relative_date = videoInfo?.primary_info.relative_date.text;
+    this.author_name = videoInfo?.secondary_info.owner.author.name;
+    this.author_channel_id = videoInfo?.secondary_info.owner.author.id;
+    this.author_channel_url = videoInfo?.secondary_info.owner.author.url;
+    this.description = videoInfo?.secondary_info.description.text;
+    this.archived_on = new Date().toISOString();
+    this.file_formats = {};
+    this.yti_version = version;
+  }
+}
+
+class CacheInfo extends ArchiveInfo {
+	mpd_manifest: string;
+	cached_on_ms: number;
+	browser_target: string;
+
+	constructor(videoInfo: VideoInfo, mpd_manifest: string, browser_target: string) {
+		super(videoInfo);
+		this.mpd_manifest = mpd_manifest;
+		this.cached_on_ms = Date.now();
+		this.browser_target = browser_target;
+	}
 }
 
 interface Archive {
   [key: string]: ArchiveInfo;
+}
+
+interface Cache {
+  [key: string]: CacheInfo;
 }
 
 // TODO better match the format to the browser
@@ -99,10 +132,10 @@ function transformWebVTT(vtt: string) {
 }
 
 function getCaptionCache(v_id: string) {
- if (captionCache[v_id]) {
-   return captionCache[v_id];
- } else if (archive[v_id] && archive[v_id].captions) {		
+ if (archive[v_id] && archive[v_id].captions) {		
    return archive[v_id].captions;
+ } else if (cache[v_id] && cache[v_id].captions) {
+	return cache[v_id].captions;
  }
 }
 
@@ -132,8 +165,8 @@ app.get('/proxy/:proxyUrl*', async (req, res) => {
 
 app.get('/mpd/invalidate/:v_id', async (req, res) => {
   const v_id = req.params.v_id;
-  console.log('invalidating cache for ' + v_id);
-  delete dashCache[v_id];
+  console.log('invalidating mpd cache for ' + v_id);
+  cache[v_id].mpd_manifest = null;
   res.send('OK');
 });
 
@@ -173,17 +206,17 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
   console.log('mpd request for ' + v_id);
 
   // TODO heuristic, for now it seems to generally be 6 hours
-  if (dashCache[v_id] && (Date.now() - dashCache[v_id].timestamp < 1000 * 60 * 60 * 6) && dashCache[v_id].target == target) {
+  if (cache[v_id] && cache[v_id].mpd_manifest && (Date.now() - cache[v_id].cached_on_ms < 1000 * 60 * 60 * 6) && cache[v_id].browser_target == target) {
 	console.log('serving from cache');
-	res.send(dashCache[v_id].manifest);
+	res.send(cache[v_id].mpd_manifest);
 	return;
   }
 
   const videoInfo = await youtube.getBasicInfo(v_id);
+  let manifest: string;
 
   // TODO better match the format to the browser
   try {
-	let manifest: string;
 	  if (target == "IE") {
 		  manifest = await videoInfo.toDash((url) => new URL(`http://localhost:${port}/proxy/${url}`)
 			  , (format) => !format.mime_type.includes('avc1.4d401e') && !format.mime_type.includes('mp4a.40.2')
@@ -196,7 +229,6 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 		  manifest = await videoInfo.toDash((url) => new URL(`http://localhost:${port}/proxy/${url}`));
 	  }
 	
-	dashCache[v_id] = { "manifest": manifest, "timestamp": Date.now(), "target": target };
 	res.send(manifest);
   } catch (InnertubeError) {
 	console.log('error: ' + InnertubeError);
@@ -216,20 +248,39 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 	  console.log('error: ' + error);
 	}
   } finally {
-	captionCache[v_id] = videoInfo.captions;
+	// wait 2000ms before caching the full video info
+	await new Promise(r => setTimeout(r, 2000));
+	const videoInfoFull = await youtube.getInfo(v_id);
+	videoInfoFull.captions = videoInfo.captions;
+	cache[v_id] = new CacheInfo(videoInfoFull, manifest, target);
   }
 });
 
 app.get('/captions/:v_id', async (req, res) => {
 	const v_id = req.params.v_id;
-	const captionTracks = getCaptionCache(v_id);
+	let captionTracks = getCaptionCache(v_id);
 
 	if (captionTracks) {
-		console.log('serving caption from cache');
+		console.log('serving caption from cache or archive');
 		res.json(captionTracks.caption_tracks);
 		return;
 	} else {
-		console.log('caption tracks not found');
+		console.log('caption tracks not found, retrying');
+		const timeout = 10000;
+		const start = Date.now();
+		while (!captionTracks && Date.now() - start < timeout) {
+			await new Promise(r => setTimeout(r, 100));
+			captionTracks = getCaptionCache(v_id);
+		}
+		if (captionTracks) {
+			console.log('serving caption from cache or archive');
+			res.json(captionTracks.caption_tracks);
+			return;
+		} else {
+			console.log('caption tracks not found, returning empty');
+			res.json({});
+			return;
+		}
 	}
 	res.json({});
 });
@@ -282,23 +333,7 @@ app.get('/archive/:v_id', async (req, res) => {
 	}
 	file.close();
 
-	// TODO write JSON
-	const newInfo: ArchiveInfo = {
-	  "captions": videoInfoFull?.captions,
-      "game_info": videoInfoFull?.game_info,
-
-	  "title": videoInfoFull.primary_info.title.text,
-	  "published": videoInfoFull.primary_info.published.text,
-	  "relative_date": videoInfoFull.primary_info.relative_date.text,
-
-	  "author_name": videoInfoFull.secondary_info.owner.author.name,
-	  "author_channel_id": videoInfoFull.secondary_info.owner.author.id,
-	  "author_channel_url": videoInfoFull.secondary_info.owner.author.url,
-	  "description": videoInfoFull.secondary_info.description.text,
-
-	  "file_formats": fileFormats,
-	  "yti_version": version
-	};
+	const newInfo = new ArchiveInfo(videoInfoFull); 
 
 	if(newInfo.captions) {
 	  const captionsDir = path.join(dir, 'captions');
@@ -329,7 +364,6 @@ app.get('/archive/:v_id', async (req, res) => {
 
 	writeFileSync(path.join(dir, 'info.json'), JSON.stringify(newInfo, null, 2));
 
-	captionCache[v_id] = newInfo.captions;
 	archive[v_id] = newInfo;
 	res.send('OK');
   }
