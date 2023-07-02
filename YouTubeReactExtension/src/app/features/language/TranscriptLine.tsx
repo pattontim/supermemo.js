@@ -1,5 +1,11 @@
 import React, { useState } from 'react';
 
+interface TranscriptLineProps<T> {
+    cue: TextTrackCue;
+    seek: (time: string) => void;
+    query: null;
+}
+
 export default function TranscriptLine<T extends unknown>({ cue, 
   seek, query }: TranscriptLineProps<T>) {
   const [isActive, setIsActive] = useState(false);

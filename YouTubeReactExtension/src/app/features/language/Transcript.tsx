@@ -2,6 +2,13 @@ import React, { useEffect, useState } from 'react'
 import TranscriptLine from './TranscriptLine'
 // import './Track.css'
 
+interface TranscriptProps<T> {
+    track: TextTrack | undefined;
+    url: string;
+    seek: (time: string) => void;
+    query: null;
+}
+
 export default function Transcript<T extends unknown>({ track, url, 
     seek, query } : TranscriptProps<T>) {
     const [isActive, setIsActive] = useState(false);

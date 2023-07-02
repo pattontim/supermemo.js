@@ -8,6 +8,8 @@ import ClipExtractor from './features/clip/ClipExtractor';
 import CaptionsTracks from './features/language/CaptionsTracks';
 // import Counter from './features/counter/Counter.js';
 // import Subtitles from './features/language/Subtitles.js';
+import { ArchiveInfoV1 } from '../../ytjs/src/utils/archive';
+type ArchiveInfo = ArchiveInfoV1 // | ArchiveInfoV2; // totally extensible
 
 import { convertHHMMSS2Seconds, convertSeconds2HHMMSS, constrainToRange, formatTime } from './utils/Duration';
 
@@ -42,7 +44,7 @@ function App() {
   const [playbackRate, setPlaybackRate] = useState(1.0);
   const [loop, setLoop] = useState(false);
   const [seeking, setSeeking] = useState(false);
-  const [tracks, setTracks] = useState<CaptionTrack[]>([]);
+  const [archiveInfo, setArchiveInfo] = useState<ArchiveInfo>();
 
   const ref = useRef<ReactPlayer>(null)
 
@@ -147,16 +149,18 @@ function App() {
   }
 
   function handlePlayerReady( player: any ) {
-    const xhr = new XMLHttpRequest();
-    xhr.open('GET', subtitleUrl, true);
-    xhr.send();
-    xhr.onreadystatechange = function () {
-        if (this.readyState === 4 && this.status === 200) {
-            console.log("Subtitle url: " + this.responseText);
-            const tracks = JSON.parse(this.responseText);
-            setTracks(tracks);
-        }
+    const archiveReq = new XMLHttpRequest();
+    archiveReq.open('GET', "http://localhost:3000/archiveInfo/" + queryParameters.get('videoid'));
+    archiveReq.responseType = 'json';
+    archiveReq.onload = function() {
+      if (archiveReq.status !== 200) {
+        console.log('Error: ' + archiveReq.status);
+        return;
+      }
+      console.log("Metadata:" + archiveReq.response);
+      setArchiveInfo(JSON.parse(archiveReq.response) as ArchiveInfo);
     }
+    archiveReq.send();
 
     seekVideo(start);
     setPlaying(true);
@@ -232,6 +236,13 @@ function App() {
   return (
     <div className="app">
 
+    { archiveInfo &&
+      <div className="archive-info">
+        <div className="archive-info-title">
+          {archiveInfo.title}
+        </div>
+      </div>
+    }
     { url != "" && 
       <ReactPlayer 
               ref={ref}
@@ -289,10 +300,11 @@ function App() {
       {/* <Counter /> */}
       {/* <Subtitles /> */}
       {/* <ReactExtension /> */}
-      {tracks.length > 0 ?
+      { archiveInfo?.captions?.caption_tracks &&
+      archiveInfo.captions.caption_tracks.length > 0 ?
         <CaptionsTracks
           url={subtitleUrl}
-          tracks={tracks}
+          tracks={archiveInfo.captions.caption_tracks}
           seek={seekVideo}
         />
         : null

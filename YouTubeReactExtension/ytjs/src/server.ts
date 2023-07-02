@@ -3,17 +3,16 @@ import { Innertube, UniversalCache, Utils, FormatOptions } from 'youtubei.js';
 import corsAnywhere from 'cors-anywhere';
 import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, createWriteStream, writeFileSync } from 'fs';
 import path from 'path';
-import { Format } from 'youtubei.js/dist/src/parser/misc';
-import { PlayerCaptionsTracklist } from 'youtubei.js/dist/src/parser/nodes';
 import fetch from 'node-fetch';
-import { VideoInfo } from 'youtubei.js/dist/src/parser/youtube';
+
+import { Archive, ArchiveInfoV1, Cache, CacheInfoV1 } from './utils/archive';
 
 const app = express();
 const port = 3000; // You can change the port number if needed
 
 let cacheDir = './.cache';
 let archiveDir = './dist/archive';
-let version = '0.0.0';
+let yti_version = '0.0.0';
 let youtube: Innertube;
 let archive = {} as Archive;
 let cache = {} as Cache;
@@ -24,60 +23,6 @@ const proxy = corsAnywhere.createServer({
   requireHeaders: [], // Do not require any headers.
   removeHeaders: [] // Do not remove any headers.
 });
-
-class ArchiveInfo {
-  captions?: PlayerCaptionsTracklist;  
-  game_info?: any;
-  // primary_info
-  title: string;
-  published: string;
-  relative_date: string;
-  // secondary_info
-  author_name: string; // owner.author.name
-  author_channel_id: string; // owner.author.id
-  author_channel_url: string; // owner.author.url
-  description: string; // description
-
-  yti_version: string;
-  archived_on: string;
-  file_formats: { [filename: string]: Format };
-
-  constructor(videoInfo: VideoInfo) {
-    this.captions = videoInfo?.captions;
-    this.game_info = videoInfo?.game_info;
-    this.title = videoInfo?.primary_info.title.text;
-    this.published = videoInfo?.primary_info.published.text;
-    this.relative_date = videoInfo?.primary_info.relative_date.text;
-    this.author_name = videoInfo?.secondary_info.owner.author.name;
-    this.author_channel_id = videoInfo?.secondary_info.owner.author.id;
-    this.author_channel_url = videoInfo?.secondary_info.owner.author.url;
-    this.description = videoInfo?.secondary_info.description.text;
-    this.archived_on = new Date().toISOString();
-    this.file_formats = {};
-    this.yti_version = version;
-  }
-}
-
-class CacheInfo extends ArchiveInfo {
-	mpd_manifest: string;
-	cached_on_ms: number;
-	browser_target: string;
-
-	constructor(videoInfo: VideoInfo, mpd_manifest: string, browser_target: string) {
-		super(videoInfo);
-		this.mpd_manifest = mpd_manifest;
-		this.cached_on_ms = Date.now();
-		this.browser_target = browser_target;
-	}
-}
-
-interface Archive {
-  [key: string]: ArchiveInfo;
-}
-
-interface Cache {
-  [key: string]: CacheInfo;
-}
 
 // TODO better match the format to the browser
 const formatMap = {
@@ -115,7 +60,7 @@ function loadJsonFilesIntoArchive(archiveDir: string, archive: Archive) {
 	  const jsonContent = readFileSync(filePath, 'utf-8');
 
 	  try {
-		const jsonData: ArchiveInfo = JSON.parse(jsonContent);
+		const jsonData: ArchiveInfoV1 = JSON.parse(jsonContent);
 		archive[key] = jsonData;
 	  } catch (error) {
 		console.error(`Failed to parse JSON file: ${filePath}`);
@@ -131,11 +76,18 @@ function transformWebVTT(vtt: string) {
 	return vtt.replace(kindRegex, '').replace(langKindRegex, '');
 }
 
-function getCaptionCache(v_id: string) {
- if (archive[v_id] && archive[v_id].captions) {		
-   return archive[v_id].captions;
- } else if (cache[v_id] && cache[v_id].captions) {
-	return cache[v_id].captions;
+async function getCacheWait(v_id: string, retry: boolean = true, interval: number = 100, timeout = 10000) {
+ if (archive[v_id]) {		
+   return archive[v_id];
+ } else if (cache[v_id]) {
+	return cache[v_id];
+ } else if (retry) {
+	console.log(`Waiting for cache: ${v_id}, retry: ${retry}, interval: ${interval}, timeout: ${timeout}`);
+	let start = Date.now();
+	while (!cache[v_id] && Date.now() - start < timeout) {
+		await new Promise(r => setTimeout(r, interval));
+	}
+	return cache[v_id] ? cache[v_id] : null;
  }
 }
 
@@ -200,6 +152,16 @@ app.get('/streamUrl/:v_id', async (req, res) => {
   }
 });
 
+app.get('/archiveInfo/:v_id', async (req, res) => {
+	const v_id = req.params.v_id;
+	const archiveInfo = await getCacheWait(v_id);
+	if (archiveInfo) {
+		res.send(archiveInfo);
+	} else {
+		res.status(404).send({});
+	}	
+});	
+
 app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
   const v_id = req.params[0]
   const target = req.query.target as string;
@@ -252,35 +214,18 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 	await new Promise(r => setTimeout(r, 2000));
 	const videoInfoFull = await youtube.getInfo(v_id);
 	videoInfoFull.captions = videoInfo.captions;
-	cache[v_id] = new CacheInfo(videoInfoFull, manifest, target);
+	cache[v_id] = new CacheInfoV1(videoInfoFull, manifest, target, yti_version);
   }
 });
 
 app.get('/captions/:v_id', async (req, res) => {
 	const v_id = req.params.v_id;
-	let captionTracks = getCaptionCache(v_id);
+	let captionTracks = (await getCacheWait(v_id))?.captions
 
 	if (captionTracks) {
 		console.log('serving caption from cache or archive');
 		res.json(captionTracks.caption_tracks);
 		return;
-	} else {
-		console.log('caption tracks not found, retrying');
-		const timeout = 10000;
-		const start = Date.now();
-		while (!captionTracks && Date.now() - start < timeout) {
-			await new Promise(r => setTimeout(r, 100));
-			captionTracks = getCaptionCache(v_id);
-		}
-		if (captionTracks) {
-			console.log('serving caption from cache or archive');
-			res.json(captionTracks.caption_tracks);
-			return;
-		} else {
-			console.log('caption tracks not found, returning empty');
-			res.json({});
-			return;
-		}
 	}
 	res.json({});
 });
@@ -333,7 +278,7 @@ app.get('/archive/:v_id', async (req, res) => {
 	}
 	file.close();
 
-	const newInfo = new ArchiveInfo(videoInfoFull); 
+	const newInfo = new ArchiveInfoV1(videoInfoFull, yti_version); 
 
 	if(newInfo.captions) {
 	  const captionsDir = path.join(dir, 'captions');
@@ -390,7 +335,7 @@ app.listen(port, async () => {
 	throw new Utils.InnertubeError('This is thrown to get the version of youtubei.js');
   } catch (error) {
 	if (error instanceof Utils.InnertubeError) {
-	  version = error.version;
+	  yti_version = error.version;
 	}
   }
 
