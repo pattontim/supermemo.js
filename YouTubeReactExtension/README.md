@@ -5,7 +5,7 @@ SuperMemo YouTube extract performance improvements and extensions.
 
 ## Description
 
-Fixes SuperMemo memleaks and slowdowns with a popup window. Utilize a locally hosted service to remove remote requirements saving up to 500ms per card and utilize the react-player to extend the functionality of incremental video in SM-18. I now consider this a beta and usable, it won't overwrite your cards under expected operation. However, I recommend that you [backup your collection](https://www.supermemo.wiki/en/supermemo/backup-guide) before starting to use this extension.
+Fixes SuperMemo memleaks and slowdowns with a react app implementation. Service to remove remote requirements saving up to 10s per youtube card. React-player is used to extend the functionality of incremental video in SM-18. I now consider this a beta and usable, it won't overwrite your cards under expected operation. However, I recommend that you [backup your collection](https://www.supermemo.wiki/en/supermemo/backup-guide) before starting to use this extension.
 
 ![Screenshot](main-screen.png)
 
@@ -16,10 +16,14 @@ Fixes SuperMemo memleaks and slowdowns with a popup window. Utilize a locally ho
 * python2 or 3
 * SuperMemo 18
 * Windows
+* NodeJS
+* npm
 
-### Installing
+### Quick start
 
-* Have you checked the files against the yt.htm in your install folder right? Otherwise someone could track what YT vids you're watching.
+* backup YouTube.htm in your install SuperMemo/bin folder (Usually C:/SuperMemo/bin)
+
+* copy YouTube.htm from the server folder over SuperMemo/bin/YouTube.htm folder, overwriting it with the one provided in this ZIP
 
 * Open the server folder in Terminal
 
@@ -31,11 +35,24 @@ OR
 
 python3 -m http.server
 
+OR 
+
+py ./serveit.py 8000
+
 ```
+## Building the react app
 
-* backup YouTube.htm in your install SuperMemo/bin folder
+WIP
 
-* if above succeeds, replace YouTube.htm to your installs SuperMemo/bin folder with the one provided in this ZIP
+## YouTube replacement (for devs)
+
+We are capable of loading videos from youtube more quickly. The server does this by running a server with a cached [youtubei.js Innertube](https://github.com/LuanRT/YouTube.js) player and serving the MPD to the player for streaming.
+
+so far:
+
+1. cd to ytjs folder
+
+2. Run: `npx ts-node server.ts`
 
 ## Help
 
@@ -63,7 +80,7 @@ If you get a security error, you may need to increase the number of allowed conn
 
 1. Download the zip off github, you'll have a SupermemoScripts zip file. 
 2. Unzip it and go into SuperMemoScripts/YoutubeReactExtension. 
-3. Copy YouTube.htm and paste it in C:/SuperMemo/bin, replacing the existing YouTube.htm. 
+3. Copy server/YouTube.htm and paste it in C:/SuperMemo/bin, replacing the existing YouTube.htm. 
 4. Go into the server folder in SuperMemoScripts/YoutubeReactExtension.
 5. Hold shift key and right click, select the menu option "open in terminal". You might have to select the more options menu for it to appear. 
 6. Enter python -m http.server 

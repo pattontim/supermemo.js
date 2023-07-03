@@ -2,10 +2,10 @@
 
 # Add node folders & files here
 YouTubeReactExtension/build/Release
-YouTubeReactExtension/node_modules
 YouTubeReactExtension/server/yt_old.htm
-YouTubeReactExtension/package.json
-YouTubeReactExtension/package-lock.json
+YouTubeReactExtension/dist/main*.js*
+YouTubeReactExtension/dist/reactPlayer*.js*
+YouTubeReactExtension/dist/archive
 
 #### !MANUAL EDITS HERE
 
@@ -73,6 +73,9 @@ bower_components
 # Output of 'npm pack'
 *.tgz
 
+# node files
+node_modules/
+
 # Yarn Integrity file
 .yarn-integrity
 
@@ -93,7 +96,6 @@ out
 
 # Nuxt.js build / generate output
 .nuxt
-dist
 
 # Gatsby files
 .cache/
@@ -102,7 +104,7 @@ dist
 # public
 
 # vuepress build output
-.vuepress/dist
+.vuepress/dist/
 
 # vuepress v2.x temp and cache directory
 .temp
