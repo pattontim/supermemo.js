@@ -127,7 +127,7 @@ Leave the terminal open and restart from step 4. every time you use SM
 
 ## License
 
-Inherits license in the root of the project.
+See LICENSE
 
 ## Acknowledgments
 
