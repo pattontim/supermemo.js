@@ -1,35 +1,35 @@
-import React, { useEffect } from 'react';
+import React from 'react';
+import { useEffect, useState, useRef } from 'react';
 // import ReactPlayer from 'react-player/lazy';
 import ReactPlayer from 'react-player/lazy';
 // import ReactExtension from './react-extension.js';
 // import ExtractBoard from './features/clip/ExtractBoard.js'; 
-import ClipExtractor from './features/clip/ClipExtractor.js';
-import CaptionsTracks from './features/language/CaptionsTracks.js';
+import ClipExtractor from './features/clip/ClipExtractor';
+import CaptionsTracks from './features/language/CaptionsTracks';
 // import Counter from './features/counter/Counter.js';
 // import Subtitles from './features/language/Subtitles.js';
+import { ArchiveInfoV1 } from '../../ytjs/src/utils/archive';
+type ArchiveInfo = ArchiveInfoV1 // | ArchiveInfoV2; // totally extensible
 
-import { convertHHMMSS2Seconds, convertSeconds2HHMMSS, constrainToRange, formatTime } from './utils/Duration.js';
-
-
-import { useState, useRef } from 'react';
+import { convertHHMMSS2Seconds, convertSeconds2HHMMSS, constrainToRange, formatTime } from './utils/Duration';
 
 function App() {
   const queryParameters = new URLSearchParams(window.location.search)
 
   // TODO component passed as prop?
-  const [resume, setResume] = React.useState(queryParameters.get('resume'));
+  const [resume, setResume] = useState(queryParameters.get('resume'));
   // const [resumeStyle, setResumeStyle] = React.useState({ border: `2px solid ${borderCl}` });
-  const [start, setStart] = React.useState(queryParameters.get('start'));
+  const [start, setStart] = useState(queryParameters.get('start'));
   // const [startStyle, setStartStyle] = React.useState({ border: `2px solid ${borderCl}` });
-  const [stop, setStop] = React.useState(queryParameters.get('stop'));
+  const [stop, setStop] = useState(queryParameters.get('stop'));
   // const [stopStyle, setStopStyle] = React.useState({ border: `2px solid ${borderCl}` });
-  const [imposeBoundaries, setImposeBoundaries] = React.useState(1);
-  const [videoid, setVideoid] = React.useState(queryParameters.get('videoid'));
+  const [imposeBoundaries, setImposeBoundaries] = useState(1);
+  const [videoid, setVideoid] = useState(queryParameters.get('videoid'));
 
   // const [url, setUrl] = useState('https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4');
   // const [url, setUrl] = useState("https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps_640x360_800k.mpd");
   // const [url, setUrl] = useState("http://youtube.com/watch?v=" + queryParameters.get('videoid')) 
-  const [url, setUrl] = useState("http://localhost:3000/mpd/" + queryParameters.get('videoid') + ".mpd?target=IE");
+  const [url, setUrl] = useState("");
   const [subtitleUrl, setSubtitleUrl] = useState("http://localhost:3000/captions/" + queryParameters.get('videoid'));
   
   const [pip, setPip] = useState(false);
@@ -38,15 +38,15 @@ function App() {
   const [light, setLight] = useState(false);
   const [volume, setVolume] = useState(0.8);
   const [muted, setMuted] = useState(false);
-  const [played, setPlayed] = useState(0);
+  const [played, setPlayed] = useState(start ? convertHHMMSS2Seconds(start) : 0);
   const [loaded, setLoaded] = useState(0);
   const [duration, setDuration] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1.0);
   const [loop, setLoop] = useState(false);
   const [seeking, setSeeking] = useState(false);
-  const [tracks, setTracks] = useState([]);
+  const [archiveInfo, setArchiveInfo] = useState<ArchiveInfo>();
 
-  const ref = useRef(null);
+  const ref = useRef<ReactPlayer>(null)
 
   // // SM browser as remote component
   // useEffect(() => {
@@ -55,6 +55,30 @@ function App() {
   //   setStop(queryParameters.get('stop'));
   //   setVideoid(queryParameters.get('videoid'));
   // }, []);
+
+  useEffect(() => {
+    // setUrl("http://localhost:3000/mpd/" + queryParameters.get('videoid') + ".mpd?target=IE#t=" + convertHHMMSS2Seconds(start) + "," + convertHHMMSS2Seconds(stop));
+
+    // TODO
+    const url = new URL("http://localhost:3000/streamUrl/" + queryParameters.get('videoid'));
+    url.searchParams.append('startSec', convertHHMMSS2Seconds(start).toString());
+    url.searchParams.append('stopSec', convertHHMMSS2Seconds(stop).toString());
+    url.searchParams.append('target', 'IE');
+
+    const req = new XMLHttpRequest();
+    req.open('GET', url.toString(), true);
+    req.responseType = 'json';
+    req.onload = function() {
+      if (req.status !== 200) {
+        console.log('Error: ' + req.status);
+        return;
+      }
+      console.log(req.response);
+      setUrl(req.response);
+    }
+    req.send();  
+
+  }, []);
 
   const handlePlay = () => {
     console.log('onPlay')
@@ -66,7 +90,7 @@ function App() {
     setPlaying(false)
   }
 
-  const handleSeek = (destSec) => {
+  const handleSeek = (destSec: number) => {
     if(destSec < convertHHMMSS2Seconds(start) - 3 || destSec > convertHHMMSS2Seconds(stop) + 3) {
       setImposeBoundaries(0);
     }
@@ -74,7 +98,7 @@ function App() {
     setPlayed(destSec)
   }
 
-  const handleOnPlaybackRateChange = (playbackRate) => {
+  const handleOnPlaybackRateChange = (playbackRate: number) => {
     console.log('onPlaybackRateChange', playbackRate)
     setPlaybackRate(playbackRate)
   }
@@ -84,7 +108,8 @@ function App() {
     setPlaying(loop)
   }
 
-  const handleProgress = (state) => {
+  // TODO state 
+  const handleProgress = (state: any) => {
     console.log('onProgress', state)
     setPlayed(state.playedSeconds)
     if (!seeking && imposeBoundaries) {
@@ -98,12 +123,12 @@ function App() {
     // }
   }
 
-  const handleDuration = (duration) => {
+  const handleDuration = (duration: number) => {
     console.log('onDuration', duration)
     setDuration(duration)
   }
 
-  function seekVideo(to) {
+  function seekVideo(to: string | null) {
     if (ref.current) {
         //console.log('seeking from ' + ref.current.getCurrentTime() + ' to ' + to + ' (' + convertHHMMSS2Seconds(to) + ')')
         ref.current.seekTo(convertHHMMSS2Seconds(to));
@@ -123,28 +148,30 @@ function App() {
     }
   }
 
-  function handlePlayerReady( player ) {
-    const xhr = new XMLHttpRequest();
-    xhr.open('GET', subtitleUrl, true);
-    xhr.send();
-    xhr.onreadystatechange = function () {
-        if (this.readyState === 4 && this.status === 200) {
-            console.log(this.responseText);
-            const tracks = JSON.parse(this.responseText);
-            setTracks(tracks);
-        }
+  function handlePlayerReady( player: any ) {
+    const archiveReq = new XMLHttpRequest();
+    archiveReq.open('GET', "http://localhost:3000/archiveInfo/" + queryParameters.get('videoid'));
+    archiveReq.responseType = 'json';
+    archiveReq.onload = function() {
+      if (archiveReq.status !== 200) {
+        console.log('Error: ' + archiveReq.status);
+        return;
+      }
+      console.log("Metadata:" + archiveReq.response);
+      setArchiveInfo(JSON.parse(archiveReq.response) as ArchiveInfo);
     }
+    archiveReq.send();
 
     seekVideo(start);
     setPlaying(true);
     console.log('player ready');
   }
 
-  function handlePlayerStart(player) {
+  function handlePlayerStart() {
     console.log('player start');
   }
 
-  function handleResetAt(type) {
+  function handleResetAt(type: string) {
     if (type === "resume") {
         setResume("0:00");
     } else if (type === "start") {
@@ -154,7 +181,7 @@ function App() {
     }
   }
 
-  function handleSetAbs(type, abs) {
+  function handleSetAbs(type: string, abs: number) {
     let new_val = formatTime(abs, duration);
     if (type === "resume") {
         setResume(new_val);
@@ -165,7 +192,7 @@ function App() {
     }
   }
 
-  function handleSetAt(type, offsetSec) {
+  function handleSetAt(type: string, offsetSec: number) {
     console.log('handleSetAt', type, offsetSec, played, duration, played + offsetSec)
     let new_val = formatTime(played + offsetSec, duration);
     if (type === "resume") {
@@ -177,7 +204,7 @@ function App() {
     } 
   }
 
-  function handleGoTo(type) {
+  function handleGoTo(type: string) {
     let type_val;
     if(type === 'start') {
       type_val = start;
@@ -192,11 +219,11 @@ function App() {
       return;
     }
 
-    setPlayed(type_val);
+    setPlayed(convertHHMMSS2Seconds(type_val));
     seekVideo(type_val);
   }
 
-  function handleOffset(type, offset) {
+  function handleOffset(type: string, offset: number) {
     if (type === "resume") {
         setResume(formatTime(convertHHMMSS2Seconds(resume) + offset, duration));
     } else if (type === "start") {
@@ -209,6 +236,14 @@ function App() {
   return (
     <div className="app">
 
+    { archiveInfo &&
+      <div className="archive-info">
+        <div className="archive-info-title">
+          {archiveInfo.title}
+        </div>
+      </div>
+    }
+    { url != "" && 
       <ReactPlayer 
               ref={ref}
               className='react-player'
@@ -216,7 +251,7 @@ function App() {
                   file: {
                     dashVersion: '4.5.2', //last version supporting IE
                     attributes: {
-                      crossOrigin: true,
+                      crossOrigin: "true",
                       autoPlay: false,
                       poster: "/iv/images/sm.gif",
                     }
@@ -245,6 +280,7 @@ function App() {
               onProgress={handleProgress}
               onDuration={handleDuration}
             />
+      }
       <ClipExtractor 
       resume={resume} 
       start={start} 
@@ -264,12 +300,12 @@ function App() {
       {/* <Counter /> */}
       {/* <Subtitles /> */}
       {/* <ReactExtension /> */}
-      {tracks.length > 0 ?
+      { archiveInfo?.captions?.caption_tracks &&
+      archiveInfo.captions.caption_tracks.length > 0 ?
         <CaptionsTracks
           url={subtitleUrl}
-          tracks={tracks}
+          tracks={archiveInfo.captions.caption_tracks}
           seek={seekVideo}
-          videoRef = {ref}
         />
         : null
       }

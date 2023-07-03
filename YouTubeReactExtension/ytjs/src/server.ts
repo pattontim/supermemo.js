@@ -3,20 +3,19 @@ import { Innertube, UniversalCache, Utils, FormatOptions } from 'youtubei.js';
 import corsAnywhere from 'cors-anywhere';
 import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, createWriteStream, writeFileSync } from 'fs';
 import path from 'path';
-import { Format } from 'youtubei.js/dist/src/parser/misc';
-import { PlayerCaptionsTracklist } from 'youtubei.js/dist/src/parser/nodes';
 import fetch from 'node-fetch';
+
+import { Archive, ArchiveInfoV1, Cache, CacheInfoV1 } from './utils/archive';
 
 const app = express();
 const port = 3000; // You can change the port number if needed
 
-let dashCache = {};
-let captionCache: { [id: string] : PlayerCaptionsTracklist; } = {};
 let cacheDir = './.cache';
 let archiveDir = './dist/archive';
-let version = '0.0.0';
+let yti_version = '0.0.0';
 let youtube: Innertube;
 let archive = {} as Archive;
+let cache = {} as Cache;
 let archive_container = 'mp4';
 
 const proxy = corsAnywhere.createServer({
@@ -24,27 +23,6 @@ const proxy = corsAnywhere.createServer({
   requireHeaders: [], // Do not require any headers.
   removeHeaders: [] // Do not remove any headers.
 });
-
-interface ArchiveInfo {
-  captions?: PlayerCaptionsTracklist;  
-  game_info?: any;
-  // primary_info
-  title: string;
-  published: string;
-  relative_date: string;
-  // secondary_info
-  author_name: string; // owner.author.name
-  author_channel_id: string; // owner.author.id
-  author_channel_url: string; // owner.author.url
-  description: string; // description
-
-  yti_version: string;
-  file_formats: { [filename: string]: Format };
-}
-
-interface Archive {
-  [key: string]: ArchiveInfo;
-}
 
 // TODO better match the format to the browser
 const formatMap = {
@@ -82,7 +60,7 @@ function loadJsonFilesIntoArchive(archiveDir: string, archive: Archive) {
 	  const jsonContent = readFileSync(filePath, 'utf-8');
 
 	  try {
-		const jsonData: ArchiveInfo = JSON.parse(jsonContent);
+		const jsonData: ArchiveInfoV1 = JSON.parse(jsonContent);
 		archive[key] = jsonData;
 	  } catch (error) {
 		console.error(`Failed to parse JSON file: ${filePath}`);
@@ -98,11 +76,18 @@ function transformWebVTT(vtt: string) {
 	return vtt.replace(kindRegex, '').replace(langKindRegex, '');
 }
 
-function getCaptionCache(v_id: string) {
- if (captionCache[v_id]) {
-   return captionCache[v_id];
- } else if (archive[v_id] && archive[v_id].captions) {		
-   return archive[v_id].captions;
+async function getCacheWait(v_id: string, retry: boolean = true, interval: number = 100, timeout = 10000) {
+ if (archive[v_id]) {		
+   return archive[v_id];
+ } else if (cache[v_id]) {
+	return cache[v_id];
+ } else if (retry) {
+	console.log(`Waiting for cache: ${v_id}, retry: ${retry}, interval: ${interval}, timeout: ${timeout}`);
+	let start = Date.now();
+	while (!cache[v_id] && Date.now() - start < timeout) {
+		await new Promise(r => setTimeout(r, interval));
+	}
+	return cache[v_id] ? cache[v_id] : null;
  }
 }
 
@@ -132,18 +117,24 @@ app.get('/proxy/:proxyUrl*', async (req, res) => {
 
 app.get('/mpd/invalidate/:v_id', async (req, res) => {
   const v_id = req.params.v_id;
-  console.log('invalidating cache for ' + v_id);
-  delete dashCache[v_id];
+  console.log('invalidating mpd cache for ' + v_id);
+  cache[v_id].mpd_manifest = null;
   res.send('OK');
 });
 
-app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
-  const v_id = req.params[0]
-  const target = req.query.target as string;
-  console.log('mpd request for ' + v_id);
+// TODO quality selection
+app.get('/streamUrl/:v_id', async (req, res) => {
+  const v_id = req.params.v_id;
+  const start = req.query.startSec;
+  const stop = req.query.stopSec;
+  const target = req.query.target;
+  if (!start || !stop || !target) {
+	res.status(400).send('Missing start, stop, or target');
+	return;
+  }
 
   const archiveFormats = archive[v_id]?.file_formats;
-  if (false && archiveFormats) {
+  if (archiveFormats) {
 	
 	// const bestFormat = Array.from(Object.values(archive[v_id].file_formats)).sort((a, b) => b.bitrate - a.bitrate)[0]; 
 	const bestKey = Object.keys(archive[v_id].file_formats).sort((a, b) => archiveFormats[a].bitrate - archiveFormats[b].bitrate)[0];
@@ -154,20 +145,40 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 		res.send(url.href);
 		return;
 	}
+  } else {
+	const url = new URL(`http://localhost:${port}/mpd/${v_id}.mpd`);
+	url.searchParams.set('target', target as string);
+	res.send(url.href + "#" + start + "," + stop);
   }
+});
+
+app.get('/archiveInfo/:v_id', async (req, res) => {
+	const v_id = req.params.v_id;
+	const archiveInfo = await getCacheWait(v_id);
+	if (archiveInfo) {
+		res.send(archiveInfo);
+	} else {
+		res.status(404).send({});
+	}	
+});	
+
+app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
+  const v_id = req.params[0]
+  const target = req.query.target as string;
+  console.log('mpd request for ' + v_id);
 
   // TODO heuristic, for now it seems to generally be 6 hours
-  if (dashCache[v_id] && (Date.now() - dashCache[v_id].timestamp < 1000 * 60 * 60 * 6) && dashCache[v_id].target == target) {
+  if (cache[v_id] && cache[v_id].mpd_manifest && (Date.now() - cache[v_id].cached_on_ms < 1000 * 60 * 60 * 6) && cache[v_id].browser_target == target) {
 	console.log('serving from cache');
-	res.send(dashCache[v_id].manifest);
+	res.send(cache[v_id].mpd_manifest);
 	return;
   }
 
   const videoInfo = await youtube.getBasicInfo(v_id);
+  let manifest: string;
 
   // TODO better match the format to the browser
   try {
-	let manifest: string;
 	  if (target == "IE") {
 		  manifest = await videoInfo.toDash((url) => new URL(`http://localhost:${port}/proxy/${url}`)
 			  , (format) => !format.mime_type.includes('avc1.4d401e') && !format.mime_type.includes('mp4a.40.2')
@@ -180,7 +191,6 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 		  manifest = await videoInfo.toDash((url) => new URL(`http://localhost:${port}/proxy/${url}`));
 	  }
 	
-	dashCache[v_id] = { "manifest": manifest, "timestamp": Date.now(), "target": target };
 	res.send(manifest);
   } catch (InnertubeError) {
 	console.log('error: ' + InnertubeError);
@@ -200,20 +210,22 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 	  console.log('error: ' + error);
 	}
   } finally {
-	captionCache[v_id] = videoInfo.captions;
+	// wait 2000ms before caching the full video info
+	await new Promise(r => setTimeout(r, 2000));
+	const videoInfoFull = await youtube.getInfo(v_id);
+	videoInfoFull.captions = videoInfo.captions;
+	cache[v_id] = new CacheInfoV1(videoInfoFull, manifest, target, yti_version);
   }
 });
 
 app.get('/captions/:v_id', async (req, res) => {
 	const v_id = req.params.v_id;
-	const captionTracks = getCaptionCache(v_id);
+	let captionTracks = (await getCacheWait(v_id))?.captions
 
 	if (captionTracks) {
-		console.log('serving caption from cache');
+		console.log('serving caption from cache or archive');
 		res.json(captionTracks.caption_tracks);
 		return;
-	} else {
-		console.log('caption tracks not found');
 	}
 	res.json({});
 });
@@ -266,23 +278,7 @@ app.get('/archive/:v_id', async (req, res) => {
 	}
 	file.close();
 
-	// TODO write JSON
-	const newInfo: ArchiveInfo = {
-	  "captions": videoInfoFull?.captions,
-      "game_info": videoInfoFull?.game_info,
-
-	  "title": videoInfoFull.primary_info.title.text,
-	  "published": videoInfoFull.primary_info.published.text,
-	  "relative_date": videoInfoFull.primary_info.relative_date.text,
-
-	  "author_name": videoInfoFull.secondary_info.owner.author.name,
-	  "author_channel_id": videoInfoFull.secondary_info.owner.author.id,
-	  "author_channel_url": videoInfoFull.secondary_info.owner.author.url,
-	  "description": videoInfoFull.secondary_info.description.text,
-
-	  "file_formats": fileFormats,
-	  "yti_version": version
-	};
+	const newInfo = new ArchiveInfoV1(videoInfoFull, yti_version); 
 
 	if(newInfo.captions) {
 	  const captionsDir = path.join(dir, 'captions');
@@ -313,7 +309,6 @@ app.get('/archive/:v_id', async (req, res) => {
 
 	writeFileSync(path.join(dir, 'info.json'), JSON.stringify(newInfo, null, 2));
 
-	captionCache[v_id] = newInfo.captions;
 	archive[v_id] = newInfo;
 	res.send('OK');
   }
@@ -340,7 +335,7 @@ app.listen(port, async () => {
 	throw new Utils.InnertubeError('This is thrown to get the version of youtubei.js');
   } catch (error) {
 	if (error instanceof Utils.InnertubeError) {
-	  version = error.version;
+	  yti_version = error.version;
 	}
   }
 
