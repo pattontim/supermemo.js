@@ -1,11 +1,14 @@
 import express from 'express';
 import { Innertube, UniversalCache, Utils, FormatOptions } from 'youtubei.js';
+
+// @ts-ignore
 import corsAnywhere from 'cors-anywhere';
 import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, createWriteStream, writeFileSync } from 'fs';
 import path from 'path';
 import fetch from 'node-fetch';
 
 import { Archive, ArchiveInfoV1, Cache, CacheInfoV1 } from './utils/archive';
+import { Format } from 'youtubei.js/dist/src/parser/misc';
 
 const app = express();
 const port = 3000; // You can change the port number if needed
@@ -91,13 +94,50 @@ async function getCacheWait(v_id: string, retry: boolean = true, interval: numbe
  }
 }
 
-function fetchTransformedVTT(url: URL) {
-  const baseUrl = new URL(url.href);
-  baseUrl.searchParams.set('fmt', 'vtt');
+async function fetchWait(url: URL, retry: boolean = true, timeout = -1, interval: number = 1000) {
+	const baseUrl = new URL(url.href); 	
+	try {
+		const res = await fetch(baseUrl.href);
+		return res;
+	} catch (error) {
+		// TODO stepback algorithm
+		let tries = 0;
+		let start = Date.now();
+		while (tries < 6 && retry && (timeout == -1 || Date.now() - start < timeout)) {
+			try {
+				const res = await fetch(baseUrl.href);
+				return res;
+			} catch (error) {
+				tries++;
+				await new Promise(r => setTimeout(r, interval));
+				interval *= 2;
+			}
+		}
+		console.error(`Error fetching: ${baseUrl.href}`);
+		console.error(error);
+		return null;
+	}
 
-  return fetch(baseUrl.href)
-	.then(res => res.text())
-	.then(text => transformWebVTT(text));
+}
+
+async function fetchTransformedVTT(url: URL) {
+	const baseUrl = new URL(url.href);
+	baseUrl.searchParams.set('fmt', 'vtt');
+
+	try {
+		// it is assumed that dashjs/HTML will retry on failure
+		const res = await fetchWait(baseUrl, false);
+
+		if (res == null) {
+			return null;
+		}
+
+		const text = await res.text();
+		return transformWebVTT(text);
+	} catch (error: any) {
+		console.error(`Error fetching VTT file: ${error.message}`);
+		return null;
+	}
 }
 
 // app.use((req, res, next) => {
@@ -118,7 +158,7 @@ app.get('/proxy/:proxyUrl*', async (req, res) => {
 app.get('/mpd/invalidate/:v_id', async (req, res) => {
   const v_id = req.params.v_id;
   console.log('invalidating mpd cache for ' + v_id);
-  cache[v_id].mpd_manifest = null;
+  cache[v_id].mpd_manifest = "";
   res.send('OK');
 });
 
@@ -199,7 +239,7 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
   }
 
   try {
-  	for (const caption of videoInfo?.captions?.caption_tracks) {
+  	for (const caption of videoInfo?.captions?.caption_tracks ?? []) {
     	caption.base_url = `http://localhost:${port}/fixvtt/${caption.base_url}`;
   	}
 	// TypeError possible
@@ -232,10 +272,18 @@ app.get('/captions/:v_id', async (req, res) => {
 
 app.get('/fixvtt/*', async (req, res) => {
 	const url = new URL(req.url.replace('/fixvtt/', ''));
-	const vtt = await fetchTransformedVTT(url);
-
-	res.set('Content-Type', 'text/vtt');
-	res.send(vtt);
+	try {
+		const vtt = await fetchTransformedVTT(url);
+		if (vtt == null) {
+			res.status(404).send('Not found');
+			return;
+		}
+		res.set('Content-Type', 'text/vtt');
+		res.send(vtt);
+	} catch (error) {
+		console.log('error: ' + error);
+		res.send('Error: ' + error);
+	} 
 });
 
 app.get('/archive/:v_id', async (req, res) => {
@@ -263,7 +311,7 @@ app.get('/archive/:v_id', async (req, res) => {
 	const format = await videoInfoFull.chooseFormat(best_format);
 	const fileNameItag = format.itag + '.' + archive_container; // for now
 	const stream = await videoInfoFull.download(best_format);
-	const fileFormats = {};
+	const fileFormats: {[key: string]: Format} = {};
 	fileFormats[format.itag + '.' + archive_container] = format;
 
 	console.log('downloading video')
@@ -287,12 +335,19 @@ app.get('/archive/:v_id', async (req, res) => {
 	  }
 
 	  // fetch via base_url
-	  for (const captionTrack of newInfo.captions.caption_tracks) {
+	  for (const captionTrack of newInfo.captions?.caption_tracks ?? []) {
 		// URL request
 		const captionUrl = new URL(captionTrack.base_url);
 		captionUrl.searchParams.set('fmt', 'vtt');
+		const captionStream = await fetchWait(captionUrl, true, 500, 50);
+
+		if (captionStream == null || captionStream.status !== 200   ) {
+		  console.log('error: ' + captionStream?.status);
+		  res.send('Error: ' + captionStream?.status);
+		  return;
+		}
+
 		const captionFile = createWriteStream(path.join(captionsDir, captionTrack.language_code + '.vtt'));
-		const captionStream = await fetch(captionUrl.href);
 
 		await new Promise((resolve, reject) => {
 		  captionStream.body.pipe(captionFile);
