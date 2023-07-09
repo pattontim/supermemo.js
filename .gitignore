@@ -1,11 +1,12 @@
 #### MANUAL EDITS HERE
 
 # Add node folders & files here
-YouTubeReactExtension/build/Release
-YouTubeReactExtension/server/yt_old.htm
-YouTubeReactExtension/dist/main*.js*
-YouTubeReactExtension/dist/reactPlayer*.js*
-YouTubeReactExtension/dist/archive
+build/Release
+server/yt_old.htm
+server/*
+dist/main*.js*
+dist/reactPlayer*.js*
+dist/archive
 
 #### !MANUAL EDITS HERE
 
