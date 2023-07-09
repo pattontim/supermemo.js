@@ -58,10 +58,6 @@ We are capable of loading videos from youtube more quickly. The server does this
 
 This can rarely happen if you hold ALT+LEFT or ALT+RIGHT and cycle theough many cards quickly. You may recover the times from the title of the card.
 
-### The Player is too small, out of place, etc..
-
-Adjust top, left, width and height in sep_embed to adjust screen placement.
-
 ### Server errors
 
 Restart the server and report the error on issues.
@@ -79,6 +75,10 @@ If you get a security error, you may need to increase the number of allowed conn
 4. Go into the server folder in SuperMemoScripts/YoutubeReactExtension.
 5. Hold shift key and right click, select the menu option "open in terminal". You might have to select the more options menu for it to appear. 
 6. Follow the steps in getting started
+
+### Want to change port
+
+Update the port variables in SMPlayer.tsx and server.ts. Change port in YouTube.htm.
 
 ### Known bugs
 
