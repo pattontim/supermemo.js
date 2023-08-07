@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!DOCTYPE HTML>
 <html>
   <head>
     <!-- <title>SuperMemo YouTube Demo</title> -->
@@ -10,7 +10,17 @@
     <link rel="stylesheet" href="css/container.css">
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- DO NOT DELETE
+        <input type="hidden" value="0" id="customPromptVisible" />
+
+        SM NEEDS customPromptVisible or disables the Learn button
+        It is an artifact of the original code, where YUI library was used to 
+        display a dialog box and register ENTER keypresses. This switch was used
+        to prevent the Learn button from being clicked when the dialog box was
+        visible. SM does searches for this as a raw string
+      -->
+    </div>
     <!-- <script src="http://localhost:3000/server/supermemo.js" type="text/javascript"></script> -->
     <script src="main.js"></script>
   </body>

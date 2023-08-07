@@ -7,6 +7,7 @@ server/*
 dist/main*.js*
 dist/reactPlayer*.js*
 dist/archive
+*/scripts/reactPlayer*.js*
 
 #### !MANUAL EDITS HERE
 

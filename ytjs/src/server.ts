@@ -221,11 +221,16 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
   try {
 	  if (target == "IE") {
 		  manifest = await videoInfo.toDash((url) => new URL(`http://localhost:${port}/proxy/${url}`)
-			  , (format) => !format.mime_type.includes('avc1.4d401e') && !format.mime_type.includes('mp4a.40.2')
-				  && !format.mime_type.includes('avc1.4d401f') && !format.mime_type.includes('avc1.4d4020')
-				  && !format.mime_type.includes('avc1.64002a')
-				  && !format.mime_type.includes('avc1.64001f')
-				  && !format.mime_type.includes('avc1.640028')
+			  , (format) => 
+			         !format.mime_type.includes('mp4a.40.5')  //  599 m4a audio only | mp4a.40.5 22050Hz ultralow, m4a_dash
+			  	  && !format.mime_type.includes('avc1.4d4015')  // 133 mp4 426x240 30 | avc1.4d4015 240p, mp4_dash		
+			      && !format.mime_type.includes('avc1.4d401e') // 134 mp4 640x360 30 | avc1.4d401e 360p, mp4_dash
+			        && !format.mime_type.includes('mp4a.40.2') // 140 m4a audio only | mp4a.40.2 44100Hz medium, m4a_dash
+				&& !format.mime_type.includes('avc1.4d401f') // 135 mp4 854x480 30 | avc1.4d401f 480p, mp4_dash
+				  && !format.mime_type.includes('avc1.4d4020') // 298 mp4 1280x720 60 | avc1.4d4020 720p60, mp4_dash
+				  && !format.mime_type.includes('avc1.64002a') // 299 mp4 1920x1080 60 | avc1.64002a 1080p60, mp4_dash
+				  && !format.mime_type.includes('avc1.64001f') // 720p > H.264	- High Profile - Level 3.1
+				  && !format.mime_type.includes('avc1.640028') // 1080p > H.264	- High Profile - Level 4.0
 				  );
 	  } else {
 		  manifest = await videoInfo.toDash((url) => new URL(`http://localhost:${port}/proxy/${url}`));
