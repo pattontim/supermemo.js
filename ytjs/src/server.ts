@@ -1,14 +1,17 @@
 import express from 'express';
-import { Innertube, UniversalCache, Utils, FormatOptions } from 'youtubei.js';
+import { Innertube, UniversalCache, Utils } from 'youtubei.js';
 
 // @ts-ignore
 import corsAnywhere from 'cors-anywhere';
 import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, createWriteStream, writeFileSync } from 'fs';
 import path from 'path';
-import fetch from 'node-fetch';
+import fetch, { Response } from 'node-fetch';
 
 import { Archive, ArchiveInfoV1, Cache, CacheInfoV1 } from './utils/archive';
 import { Format } from 'youtubei.js/dist/src/parser/misc';
+import { FormatOptions } from 'youtubei.js/dist/src/types/FormatUtils';
+import { VideoInfo } from 'youtubei.js/dist/src/parser/youtube';
+import { PlayerCaptionsTracklist } from 'youtubei.js/dist/src/parser/nodes';
 
 const app = express();
 const port = 3000; // You can change the port number if needed
@@ -22,55 +25,55 @@ let cache = {} as Cache;
 let archive_container = 'mp4';
 
 const proxy = corsAnywhere.createServer({
-  originWhitelist: [], // Allow all origins
-  requireHeaders: [], // Do not require any headers.
-  removeHeaders: [] // Do not remove any headers.
+	originWhitelist: [], // Allow all origins
+	requireHeaders: [], // Do not require any headers.
+	removeHeaders: [] // Do not remove any headers.
 });
 
 // TODO better match the format to the browser
 const formatMap = {
-  'IE': ['avc1.4d401f', 'mp4a.40.2'],
-  'Chrome': ['avc1.4d401f', 'mp4a.40.2'],
-  'Firefox': ['avc1.4d401f', 'opus'],
-  'Edge': ['avc1.4d401f', 'mp4a.40.2']
+	'IE': ['avc1.4d401f', 'mp4a.40.2'],
+	'Chrome': ['avc1.4d401f', 'mp4a.40.2'],
+	'Firefox': ['avc1.4d401f', 'opus'],
+	'Edge': ['avc1.4d401f', 'mp4a.40.2']
 };
 
 const getBrowserName = (userAgent: string) => {
-  if (userAgent.includes('Edge')) {
-	  return 'Edge';
-  } else if (userAgent.includes('Firefox')) {
-	  return 'Firefox';
-  } else if (userAgent.includes('Chrome')) {
-	  return 'Chrome';
-  } else if (userAgent.includes('Trident')) {
-	  return 'IE';  
-  } else {
-	  return 'Unknown';
-  }
+	if (userAgent.includes('Edge')) {
+		return 'Edge';
+	} else if (userAgent.includes('Firefox')) {
+		return 'Firefox';
+	} else if (userAgent.includes('Chrome')) {
+		return 'Chrome';
+	} else if (userAgent.includes('Trident')) {
+		return 'IE';
+	} else {
+		return 'Unknown';
+	}
 };
 
 function loadJsonFilesIntoArchive(archiveDir: string, archive: Archive) {
-  const files = readdirSync(archiveDir);
+	const files = readdirSync(archiveDir);
 
-  files.forEach((file) => {
-	const filePath = path.join(archiveDir, file);
-	const stats = statSync(filePath);
+	files.forEach((file) => {
+		const filePath = path.join(archiveDir, file);
+		const stats = statSync(filePath);
 
-	if (stats.isDirectory()) {
-	  loadJsonFilesIntoArchive(filePath, archive);
-	} else if (file === 'info.json') {
-	  const key = path.basename(archiveDir);
-	  const jsonContent = readFileSync(filePath, 'utf-8');
+		if (stats.isDirectory()) {
+			loadJsonFilesIntoArchive(filePath, archive);
+		} else if (file === 'info.json') {
+			const key = path.basename(archiveDir);
+			const jsonContent = readFileSync(filePath, 'utf-8');
 
-	  try {
-		const jsonData: ArchiveInfoV1 = JSON.parse(jsonContent);
-		archive[key] = jsonData;
-	  } catch (error) {
-		console.error(`Failed to parse JSON file: ${filePath}`);
-		console.error(error);
-	  }
-	}
-  });
+			try {
+				const jsonData: ArchiveInfoV1 = JSON.parse(jsonContent);
+				archive[key] = jsonData;
+			} catch (error) {
+				console.error(`Failed to parse JSON file: ${filePath}`);
+				console.error(error);
+			}
+		}
+	});
 }
 
 function transformWebVTT(vtt: string) {
@@ -80,18 +83,18 @@ function transformWebVTT(vtt: string) {
 }
 
 async function getCacheWait(v_id: string, retry: boolean = true, interval: number = 100, timeout = 10000) {
- if (archive[v_id]) {		
-   return archive[v_id];
- } else if (cache[v_id]) {
-	return cache[v_id];
- } else if (retry) {
-	console.log(`Waiting for cache: ${v_id}, retry: ${retry}, interval: ${interval}, timeout: ${timeout}`);
-	let start = Date.now();
-	while (!cache[v_id] && Date.now() - start < timeout) {
-		await new Promise(r => setTimeout(r, interval));
+	if (archive[v_id]) {
+		return archive[v_id];
+	} else if (cache[v_id]) {
+		return cache[v_id];
+	} else if (retry) {
+		console.log(`Waiting for cache: ${v_id}, retry: ${retry}, interval: ${interval}, timeout: ${timeout}`);
+		let start = Date.now();
+		while (!cache[v_id] && Date.now() - start < timeout) {
+			await new Promise(r => setTimeout(r, interval));
+		}
+		return cache[v_id] ? cache[v_id] : null;
 	}
-	return cache[v_id] ? cache[v_id] : null;
- }
 }
 
 async function fetchWait(url: URL, retry: boolean = true, timeout = -1, interval: number = 1000) {
@@ -107,15 +110,14 @@ async function fetchWait(url: URL, retry: boolean = true, timeout = -1, interval
 			try {
 				const res = await fetch(baseUrl.href);
 				return res;
-			} catch (error) {
+			} catch (fetchError) {
+				error = fetchError;
 				tries++;
 				await new Promise(r => setTimeout(r, interval));
 				interval *= 2;
 			}
 		}
-		console.error(`Error fetching: ${baseUrl.href}`);
-		console.error(error);
-		return null;
+		throw error;
 	}
 
 }
@@ -135,8 +137,9 @@ async function fetchTransformedVTT(url: URL) {
 		const text = await res.text();
 		return transformWebVTT(text);
 	} catch (error: any) {
-		console.error(`Error fetching VTT file: ${error.message}`);
-		return null;
+		// console.error(`Error fetching VTT file: ${error.message}`);
+		// return null;
+		throw error;
 	}
 }
 
@@ -220,8 +223,8 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
   // TODO better match the format to the browser
   try {
 	  if (target == "IE") {
-		  manifest = await videoInfo.toDash((url) => new URL(`http://localhost:${port}/proxy/${url}`)
-			  , (format) => 
+		  manifest = await videoInfo.toDash((url: any) => new URL(`http://localhost:${port}/proxy/${url}`)
+			  , (format: any) => 
 			         !format.mime_type.includes('mp4a.40.5')  //  599 m4a audio only | mp4a.40.5 22050Hz ultralow, m4a_dash
 			  	  && !format.mime_type.includes('avc1.4d4015')  // 133 mp4 426x240 30 | avc1.4d4015 240p, mp4_dash		
 			      && !format.mime_type.includes('avc1.4d401e') // 134 mp4 640x360 30 | avc1.4d401e 360p, mp4_dash
@@ -233,7 +236,7 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 				  && !format.mime_type.includes('avc1.640028') // 1080p > H.264	- High Profile - Level 4.0
 				  );
 	  } else {
-		  manifest = await videoInfo.toDash((url) => new URL(`http://localhost:${port}/proxy/${url}`));
+		  manifest = await videoInfo.toDash((url: any) => new URL(`http://localhost:${port}/proxy/${url}`));
 	  }
 	
 	res.send(manifest);
@@ -280,124 +283,195 @@ app.get('/fixvtt/*', async (req, res) => {
 	try {
 		const vtt = await fetchTransformedVTT(url);
 		if (vtt == null) {
-			res.status(404).send('Not found');
+			res.status(503).send('Error: the VTT could not be found on the service by URL.');
 			return;
 		}
 		res.set('Content-Type', 'text/vtt');
 		res.send(vtt);
 	} catch (error) {
 		console.log('error: ' + error);
-		res.send('Error: ' + error);
+		res.status(503).send('Error: ' + error);
 	} 
 });
 
 app.get('/archive/:v_id', async (req, res) => {
-  const v_id = req.params.v_id;
-  console.log('archive request for ' + v_id);
+	const v_id = req.params.v_id;
+	console.log('archive request for ' + v_id);
 
-  if (archive[v_id]?.file_formats) {
-	const vid_files = Object.keys(archive[v_id].file_formats);
-	const vid_formats = vid_files.map((file) => {
-	  return {
-		"itag": file,
-		"url": `http://localhost:${port}/archive/${v_id}/${file}`
-	  }
-	});
-	res.send(vid_formats[0]);
-  } else {
-	const videoInfoFull = await youtube.getInfo(v_id);
-	const best_format = {
-	  type: 'video+audio', // audio, video or video+audio
-	  quality: 'best', // best, bestefficiency, 144p, 240p, 480p, 720p and so on.
-	  format: 'mp4' // media container format 
-	} as FormatOptions;
+	if (archive[v_id]?.file_formats) {
+		const vid_files = Object.keys(archive[v_id].file_formats);
+		const vid_formats = vid_files.map((file) => {
+			return {
+				"itag": file,
+				"url": `http://localhost:${port}/archive/${v_id}/${file}`
+			}
+		});
+		res.status(200).send(vid_formats[0]);
+	} else {
+		let videoInfoFull: VideoInfo
+		try {
+			videoInfoFull = await youtube.getInfo(v_id);
+		} catch (error) {
+			console.log('error: ' + error);
+			res.status(503).send('Error: ' + error);
+			return;
+		}
+		const best_format = {
+			type: 'video+audio', // audio, video or video+audio
+			quality: 'best', // best, bestefficiency, 144p, 240p, 480p, 720p and so on.
+			format: 'mp4' // media container format 
+		} as FormatOptions;
 
-	// assume chooseFormat is used internally deterministically
-	const format = await videoInfoFull.chooseFormat(best_format);
-	const fileNameItag = format.itag + '.' + archive_container; // for now
-	const stream = await videoInfoFull.download(best_format);
-	const fileFormats: {[key: string]: Format} = {};
-	fileFormats[format.itag + '.' + archive_container] = format;
+		// assume chooseFormat is used internally deterministically
+		const format = await videoInfoFull.chooseFormat(best_format);
+		const fileNameItag = format.itag + '.' + archive_container; // for now
 
-	console.log('downloading video')
-	const dir = path.join(archiveDir, v_id);
-	if (!existsSync(dir)) {
-	  mkdirSync(dir);
-	}
+		let stream;
+		try {
+			stream = await videoInfoFull.download(best_format);
+		} catch (error) {
+			console.log('error: ' + error);
+			res.status(503).send('Error: ' + error);
+			return;
+		}
+		const fileFormats: { [key: string]: Format } = {};
+		fileFormats[format.itag + '.' + archive_container] = format;
 
-	const file = createWriteStream(path.join(dir, fileNameItag));
-	for await (const chunk of Utils.streamToIterable(stream)) {
-	  file.write(chunk);
-	}
-	file.close();
-
-	const newInfo = new ArchiveInfoV1(videoInfoFull, yti_version); 
-
-	if(newInfo.captions) {
-	  const captionsDir = path.join(dir, 'captions');
-	  if (!existsSync(captionsDir)) {
-		mkdirSync(captionsDir);
-	  }
-
-	  // fetch via base_url
-	  for (const captionTrack of newInfo.captions?.caption_tracks ?? []) {
-		// URL request
-		const captionUrl = new URL(captionTrack.base_url);
-		captionUrl.searchParams.set('fmt', 'vtt');
-		const captionStream = await fetchWait(captionUrl, true, 500, 50);
-
-		if (captionStream == null || captionStream.status !== 200   ) {
-		  console.log('error: ' + captionStream?.status);
-		  res.send('Error: ' + captionStream?.status);
-		  return;
+		console.log('downloading video')
+		const dir = path.join(archiveDir, v_id);
+		if (!existsSync(dir)) {
+			try {
+				mkdirSync(dir);
+			} catch (error) {
+				console.log('error: ' + error);
+				res.status(507).send('Error: ' + error);
+				return;
+			}
+		}
+		
+		try {
+			const file = createWriteStream(path.join(dir, fileNameItag));
+			for await (const chunk of Utils.streamToIterable(stream)) {
+				file.write(chunk);
+			}
+			file.close();
+		} catch (error) {
+			console.log('error: ' + error);
+			res.status(507).send('Error: ' + error);
+			return;
+		} finally {
+			stream.cancel();
 		}
 
-		const captionFile = createWriteStream(path.join(captionsDir, captionTrack.language_code + '.vtt'));
+		let newInfo;
+		try {
+			newInfo = new ArchiveInfoV1(videoInfoFull, yti_version);
+		} catch (error) {
+			console.log('error: ' + error);
+			res.status(503).send('Error: ' + error);
+			return;
+		}
+		newInfo.file_formats = fileFormats;
 
-		await new Promise((resolve, reject) => {
-		  captionStream.body.pipe(captionFile);
-		  captionStream.body.on('error', reject);
-		  captionStream.body.on('end', resolve);
-		});
-			
-		captionFile.close();
-		const preFix = "http://localhost:" + port + "/fixvtt/";		
-		const fsUrl = `http://localhost:${port}/archive/${v_id}/captions/${captionTrack.language_code}.vtt`;
-		captionTrack.base_url = preFix + fsUrl;
-	  }
-	}    
+		if (newInfo.captions) {
+			const captionsDir = path.join(dir, 'captions');
+			if (!existsSync(captionsDir)) {
+				try {
+					mkdirSync(captionsDir);
+				} catch (error) {
+					console.log('error: ' + error);
+					res.status(507).send('Error: ' + error);
+					return;
+				}
+			}
 
-	writeFileSync(path.join(dir, 'info.json'), JSON.stringify(newInfo, null, 2));
+			// fetch via base_url
+			let captionTracks = [] as PlayerCaptionsTracklist["caption_tracks"];
+			try {
+				captionTracks = newInfo.captions?.caption_tracks ?? [];
+			} catch (error) {
+				console.log('error: ' + error);
+				res.status(503).send('Error: ' + error);
+				return;
+			}
+			for (const captionTrack of captionTracks ?? []) {
+				// URL request
+				const captionUrl = new URL(captionTrack.base_url);
+				captionUrl.searchParams.set('fmt', 'vtt');
+				let captionStream: Response;
+				try {
+					captionStream = await fetchWait(captionUrl, true, 500, 50);
+				} catch (error) {
+					console.log('error: ' + error);
+					res.status(503).send('Error: ' + error);
+					return;
+				}
+				if (captionStream.status !== 200) {
+					console.log('error in caption stream, code: ' + captionStream?.status);
+					res.status(503).send('Error: ' + captionStream?.status);
+					return;
+				}
+				
+				try {
+					const captionFile = createWriteStream(path.join(captionsDir, captionTrack.language_code + '.vtt'));
+					await new Promise((resolve, reject) => {
+						captionStream.body.pipe(captionFile);
+						captionStream.body.on('error', reject);
+						captionStream.body.on('end', resolve);
+					});
+					captionFile.close();
+				} catch (error) {
+					console.log('error: ' + error);
+					res.status(507).send('Error: ' + error);
+					return;
+				}
+				const preFix = "http://localhost:" + port + "/fixvtt/";
+				const fsUrl = `http://localhost:${port}/archive/${v_id}/captions/${captionTrack.language_code}.vtt`;
+				captionTrack.base_url = preFix + fsUrl;
+			}
+		}
 
-	archive[v_id] = newInfo;
-	res.send('OK');
-  }
-});
-
-app.listen(port, async () => {  
-  if (!existsSync(cacheDir)) {
-	mkdirSync(cacheDir);
-  }
-
-  youtube = await Innertube.create({
-	cache: new UniversalCache(true, cacheDir),
-	generate_session_locally: true,
-  });
-
-
-  if (!existsSync(archiveDir)) {
-	mkdirSync(archiveDir);
-  } else {
-	loadJsonFilesIntoArchive(archiveDir, archive);
-  }
-
-  try {
-	throw new Utils.InnertubeError('This is thrown to get the version of youtubei.js');
-  } catch (error) {
-	if (error instanceof Utils.InnertubeError) {
-	  yti_version = error.version;
+		try {
+			writeFileSync(path.join(dir, 'info.json'), JSON.stringify(newInfo, null, 2));
+		} catch (error) {
+			console.log('error: ' + error);
+			res.status(507).send('Error: ' + error);
+			return;
+		}
+		archive[v_id] = newInfo;
+		res.status(200).send('OK');
 	}
-  }
 
-  console.log(`Server listening on port ${port}`);
 });
+
+function startServer() {
+	app.listen(port, async () => {
+		if (!existsSync(cacheDir)) {
+			mkdirSync(cacheDir);
+		}
+
+		youtube = await Innertube.create({
+			cache: new UniversalCache(true, cacheDir),
+			generate_session_locally: true,
+		});
+
+
+		if (!existsSync(archiveDir)) {
+			mkdirSync(archiveDir);
+		} else {
+			loadJsonFilesIntoArchive(archiveDir, archive);
+		}
+
+		try {
+			throw new Utils.InnertubeError('This is thrown to get the version of youtubei.js');
+		} catch (error) {
+			if (error instanceof Utils.InnertubeError) {
+				yti_version = error.version;
+			}
+		}
+
+		console.log(`Server listening on port ${port}`);
+	});
+}
+
+startServer()
