@@ -38,6 +38,27 @@ const formatMap = {
 	'Edge': ['avc1.4d401f', 'mp4a.40.2']
 };
 
+const formatsToUse = [
+  // 599 m4a audio only | mp4a.40.5 22050Hz ultralow, m4a_dash
+  'mp4a.40.5',
+  // 133 mp4 426x240 30 | avc1.4d4015 240p, mp4_dash
+  'avc1.4d4015',
+  // 134 mp4 640x360 30 | avc1.4d401e 360p, mp4_dash
+  'avc1.4d401e',
+  // 140 m4a audio only | mp4a.40.2 44100Hz medium, m4a_dash
+  'mp4a.40.2',
+  // 135 mp4 854x480 30 | avc1.4d401f 480p, mp4_dash
+  'avc1.4d401f',
+  // 298 mp4 1280x720 60 | avc1.4d4020 720p60, mp4_dash
+  'avc1.4d4020',
+  // 299 mp4 1920x1080 60 | avc1.64002a 1080p60, mp4_dash
+  'avc1.64002a',
+  // 720p > H.264 - High Profile - Level 3.1
+  'avc1.64001f',
+  // 1080p > H.264 - High Profile - Level 4.0
+  'avc1.640028',
+];
+
 const getBrowserName = (userAgent: string) => {
 	if (userAgent.includes('Edge')) {
 		return 'Edge';
@@ -206,64 +227,68 @@ app.get('/archiveInfo/:v_id', async (req, res) => {
 });	
 
 app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
-  const v_id = req.params[0]
-  const target = req.query.target as string;
-  console.log('mpd request for ' + v_id);
+	const v_id = req.params[0]
+	const target = req.query.target as string;
+	console.log('mpd request for ' + v_id);
 
-  // TODO heuristic, for now it seems to generally be 6 hours
-  if (cache[v_id] && cache[v_id].mpd_manifest && (Date.now() - cache[v_id].cached_on_ms < 1000 * 60 * 60 * 6) && cache[v_id].browser_target == target) {
-	console.log('serving from cache');
-	res.send(cache[v_id].mpd_manifest);
-	return;
-  }
-
-  const videoInfo = await youtube.getBasicInfo(v_id);
-  let manifest: string;
-
-  // TODO better match the format to the browser
-  try {
-	  if (target == "IE") {
-		  manifest = await videoInfo.toDash((url: any) => new URL(`http://localhost:${port}/proxy/${url}`)
-			  , (format: any) => 
-			         !format.mime_type.includes('mp4a.40.5')  //  599 m4a audio only | mp4a.40.5 22050Hz ultralow, m4a_dash
-			  	  && !format.mime_type.includes('avc1.4d4015')  // 133 mp4 426x240 30 | avc1.4d4015 240p, mp4_dash		
-			      && !format.mime_type.includes('avc1.4d401e') // 134 mp4 640x360 30 | avc1.4d401e 360p, mp4_dash
-			        && !format.mime_type.includes('mp4a.40.2') // 140 m4a audio only | mp4a.40.2 44100Hz medium, m4a_dash
-				&& !format.mime_type.includes('avc1.4d401f') // 135 mp4 854x480 30 | avc1.4d401f 480p, mp4_dash
-				  && !format.mime_type.includes('avc1.4d4020') // 298 mp4 1280x720 60 | avc1.4d4020 720p60, mp4_dash
-				  && !format.mime_type.includes('avc1.64002a') // 299 mp4 1920x1080 60 | avc1.64002a 1080p60, mp4_dash
-				  && !format.mime_type.includes('avc1.64001f') // 720p > H.264	- High Profile - Level 3.1
-				  && !format.mime_type.includes('avc1.640028') // 1080p > H.264	- High Profile - Level 4.0
-				  );
-	  } else {
-		  manifest = await videoInfo.toDash((url: any) => new URL(`http://localhost:${port}/proxy/${url}`));
-	  }
-	
-	res.send(manifest);
-  } catch (InnertubeError) {
-	console.log('error: ' + InnertubeError);
-	res.send('Error: ' + InnertubeError);
-	return;
-  }
-
-  try {
-  	for (const caption of videoInfo?.captions?.caption_tracks ?? []) {
-    	caption.base_url = `http://localhost:${port}/fixvtt/${caption.base_url}`;
-  	}
-	// TypeError possible
-  } catch (error) {
-	if (error instanceof TypeError) {
-	  console.log('TypeError, very likely captions disabled.' );
-	} else {
-	  console.log('error: ' + error);
+	// TODO heuristic, for now it seems to generally be 6 hours
+	if (cache[v_id] && cache[v_id].mpd_manifest && (Date.now() - cache[v_id].cached_on_ms < 1000 * 60 * 60 * 6) && cache[v_id].browser_target == target) {
+		console.log('serving from cache');
+		res.status(200).send(cache[v_id].mpd_manifest);
+		return;
 	}
-  } finally {
+
+	let videoInfo: VideoInfo;
+	try {
+		videoInfo = await youtube.getBasicInfo(v_id);
+	} catch (error) {
+		console.log('error: ' + error);
+		res.status(503).send('Error: ' + error);
+		return;
+	}
+	let manifest: string;
+
+	// TODO better match the format to the browser
+	try {
+		if (target == "IE") {
+			manifest = await videoInfo.toDash((url: any) => new URL(`http://localhost:${port}/proxy/${url}`)
+				, (format: any) => !formatsToUse.find(fmt => format.mime_type.includes(fmt))
+			);
+		} else {
+			manifest = await videoInfo.toDash((url: any) => new URL(`http://localhost:${port}/proxy/${url}`));
+		}
+		res.send(manifest);
+	} catch (error) {
+		console.log('error: ' + error);
+		res.status(503).send('Error: ' + error);
+		return;
+	}
+
+	try {
+		for (const caption of videoInfo?.captions?.caption_tracks ?? []) {
+			caption.base_url = `http://localhost:${port}/fixvtt/${caption.base_url}`;
+		}
+		// TypeError possible
+	} catch (error) {
+		if (error instanceof TypeError) {
+			console.log('TypeError, very likely captions disabled.');
+		} else {
+			console.log('error: ' + error);
+		}
+	}
 	// wait 2000ms before caching the full video info
-	await new Promise(r => setTimeout(r, 2000));
-	const videoInfoFull = await youtube.getInfo(v_id);
-	videoInfoFull.captions = videoInfo.captions;
-	cache[v_id] = new CacheInfoV1(videoInfoFull, manifest, target, yti_version);
-  }
+	if (!cache[v_id]) {
+		new Promise(r => setTimeout(r, 2000)).then(async () => {
+			try {
+				const videoInfoFull = await youtube.getInfo(v_id);
+				videoInfoFull.captions = videoInfo.captions;
+				cache[v_id] = new CacheInfoV1(videoInfoFull, manifest, target, yti_version);
+			} catch (error) {
+				console.log('Error: ' + error);
+				console.log('failed to cache full video info');
+			}
+		})
+	}
 });
 
 app.get('/captions/:v_id', async (req, res) => {
