@@ -22,7 +22,9 @@ let yti_version = '0.0.0';
 let youtube: Innertube;
 let archive = {} as Archive;
 let cache = {} as Cache;
-let archive_container = 'mp4';
+let archiveContainer = 'mp4';
+let online = false;
+let onlineTimeoutMs = 10000;
 
 const proxy = corsAnywhere.createServer({
 	originWhitelist: [], // Allow all origins
@@ -39,24 +41,24 @@ const formatMap = {
 };
 
 const formatsToUse = [
-  // 599 m4a audio only | mp4a.40.5 22050Hz ultralow, m4a_dash
-  'mp4a.40.5',
-  // 133 mp4 426x240 30 | avc1.4d4015 240p, mp4_dash
-  'avc1.4d4015',
-  // 134 mp4 640x360 30 | avc1.4d401e 360p, mp4_dash
-  'avc1.4d401e',
-  // 140 m4a audio only | mp4a.40.2 44100Hz medium, m4a_dash
-  'mp4a.40.2',
-  // 135 mp4 854x480 30 | avc1.4d401f 480p, mp4_dash
-  'avc1.4d401f',
-  // 298 mp4 1280x720 60 | avc1.4d4020 720p60, mp4_dash
-  'avc1.4d4020',
-  // 299 mp4 1920x1080 60 | avc1.64002a 1080p60, mp4_dash
-  'avc1.64002a',
-  // 720p > H.264 - High Profile - Level 3.1
-  'avc1.64001f',
-  // 1080p > H.264 - High Profile - Level 4.0
-  'avc1.640028',
+	// 599 m4a audio only | mp4a.40.5 22050Hz ultralow, m4a_dash
+	'mp4a.40.5',
+	// 133 mp4 426x240 30 | avc1.4d4015 240p, mp4_dash
+	'avc1.4d4015',
+	// 134 mp4 640x360 30 | avc1.4d401e 360p, mp4_dash
+	'avc1.4d401e',
+	// 140 m4a audio only | mp4a.40.2 44100Hz medium, m4a_dash
+	'mp4a.40.2',
+	// 135 mp4 854x480 30 | avc1.4d401f 480p, mp4_dash
+	'avc1.4d401f',
+	// 298 mp4 1280x720 60 | avc1.4d4020 720p60, mp4_dash
+	'avc1.4d4020',
+	// 299 mp4 1920x1080 60 | avc1.64002a 1080p60, mp4_dash
+	'avc1.64002a',
+	// 720p > H.264 - High Profile - Level 3.1
+	'avc1.64001f',
+	// 1080p > H.264 - High Profile - Level 4.0
+	'avc1.640028',
 ];
 
 const getBrowserName = (userAgent: string) => {
@@ -104,7 +106,7 @@ function transformWebVTT(vtt: string) {
 }
 
 async function getCacheWait(v_id: string, retry: boolean = true, interval: number = 100, timeout = 10000) {
-	if (archive[v_id]) {
+	if (!online || archive[v_id]) {
 		return archive[v_id];
 	} else if (cache[v_id]) {
 		return cache[v_id];
@@ -238,6 +240,19 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 		return;
 	}
 
+	if(youtube == undefined){
+		try {
+			console.log("Attempting Innertube reconnect...")
+			youtube = await callRejectAfter(connectInnertube(), onlineTimeoutMs/3).catch() as Innertube 
+			console.log("Successfully reconnected.")
+			online = true
+		} catch(error) {
+			console.log("network still down.")
+			res.status(504).send('Error: ' + error);
+			return
+		}
+	}
+
 	let videoInfo: VideoInfo;
 	try {
 		videoInfo = await youtube.getBasicInfo(v_id);
@@ -349,7 +364,7 @@ app.get('/archive/:v_id', async (req, res) => {
 
 		// assume chooseFormat is used internally deterministically
 		const format = await videoInfoFull.chooseFormat(best_format);
-		const fileNameItag = format.itag + '.' + archive_container; // for now
+		const fileNameItag = format.itag + '.' + archiveContainer; // for now
 
 		let stream;
 		try {
@@ -360,7 +375,7 @@ app.get('/archive/:v_id', async (req, res) => {
 			return;
 		}
 		const fileFormats: { [key: string]: Format } = {};
-		fileFormats[format.itag + '.' + archive_container] = format;
+		fileFormats[format.itag + '.' + archiveContainer] = format;
 
 		console.log('downloading video')
 		const dir = path.join(archiveDir, v_id);
@@ -469,33 +484,54 @@ app.get('/archive/:v_id', async (req, res) => {
 
 });
 
+async function callRejectAfter(call: Promise<unknown>, timeMs: number) {
+	return Promise.race([
+			call,
+			new Promise((resolve, reject) => setTimeout(() => { reject() }, timeMs))
+		])
+}
+
+function connectInnertube() {
+	return Innertube.create({
+		cache: new UniversalCache(true, cacheDir),
+		generate_session_locally: true,
+	})
+}
+
 function startServer() {
 	app.listen(port, async () => {
-		if (!existsSync(cacheDir)) {
-			mkdirSync(cacheDir);
-		}
-
-		youtube = await Innertube.create({
-			cache: new UniversalCache(true, cacheDir),
-			generate_session_locally: true,
-		});
-
-
-		if (!existsSync(archiveDir)) {
-			mkdirSync(archiveDir);
-		} else {
-			loadJsonFilesIntoArchive(archiveDir, archive);
-		}
-
 		try {
 			throw new Utils.InnertubeError('This is thrown to get the version of youtubei.js');
 		} catch (error) {
 			if (error instanceof Utils.InnertubeError) {
 				yti_version = error.version;
 			}
+		}	
+
+		if (!existsSync(cacheDir)) {
+			mkdirSync(cacheDir);
 		}
 
-		console.log(`Server listening on port ${port}`);
+		setTimeout(async () => {
+			console.log("Attempting to create Innertube instance...")
+			try {
+				// youtube = await createInnertubeRejectAfter(onlineTimeoutMs).catch()
+				youtube = await callRejectAfter(connectInnertube(), onlineTimeoutMs).catch() as Innertube
+				online = true;
+				console.log("Innertube instance created successfully.")
+			} catch {
+				online = false;
+				console.log("Innertube could not be fetched. Running in offline (archive only) mode...")
+			}
+		})		
+
+		if (!existsSync(archiveDir)) {
+			mkdirSync(archiveDir);
+		} else {
+			loadJsonFilesIntoArchive(archiveDir, archive);
+		}
+		const curDir = process.cwd();
+		console.log(`Video archive loaded using path: ${path.join(curDir, archiveDir)}`)
 	});
 }
 

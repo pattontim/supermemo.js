@@ -51,6 +51,10 @@ Run `npm run build` in the root folder
 
 We are capable of loading videos from youtube more quickly. The server does this by running a server with a cached [youtubei.js Innertube](https://github.com/LuanRT/YouTube.js) player and serving the MPD to the player for streaming.
 
+## Using youtube video archive feature
+
+You can archive videos and they'll be loaded instead of from youtube. To do this, in your browser go to http://localhost:3000/archive/<youtube_id_here>/ and wait until you get an OK message. From that point on, the video will be loaded from file storage.
+
 
 ## Help
 
@@ -105,9 +109,13 @@ Update the port variables in SMPlayer.tsx and server.ts. Change port in YouTube.
     * Extracts and navigation work
     * Start, Stop, Mark textbox can be clicked to set times
     * Everything in the UI works
-* 1.0 prelease
+* 1.0 
     * App completely rewritten to react
     * Server caches players so videos load quicker
+* 1.1
+    * Server can locally archive and load videos
+    * Offline mode for watching archived videos
+    * More robust to errors
 
 ### Roadmap
 * Add Archive component which lets send a video to be archived
