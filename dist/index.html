@@ -1,4 +1,12 @@
 <!DOCTYPE HTML>
+<!-- To interface with SuperMemo you must preserve these properties and fields when editing yt_new.htm:
+    - the order of INPUT fields (these are used by SuperMemo to collect extract boundaries)
+    - SELECT and OPTION fields for generating extracts
+    - INPUT field with YouTube video ID substituted by SuperMemo (id="videoid")
+    - INPUT field that determines the position of video start and end (id="startvideoat" and id="stopvideoat")(must be "0:00:00")
+    see: https://help.supermemo.org/wiki/Incremental_video#Your_own_incremental_video_script
+    Symptoms of failure to do this: extract start nd stop times are rotated incorrctly (start becomes stop)
+-->
 <html>
   <head>
     <!-- <title>SuperMemo YouTube Demo</title> -->
@@ -8,6 +16,7 @@
     <!-- <link rel="stylesheet" href="http://localhost:3000/server/scripts/container.css"> -->
     <link rel="stylesheet" href="css/extractboard.css">
     <link rel="stylesheet" href="css/container.css">
+    <link rel="stylesheet" href="css/archive.css">
   </head>
   <body>
     <div id="root">

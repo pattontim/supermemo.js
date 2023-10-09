@@ -12,6 +12,7 @@ import { ArchiveInfoV1 } from '../../ytjs/src/utils/archive';
 type ArchiveInfo = ArchiveInfoV1 // | ArchiveInfoV2; // totally extensible
 
 import { convertHHMMSS2Seconds, convertSeconds2HHMMSS, constrainToRange, formatTime } from './utils/Duration';
+import Archive from './features/archive/Archive';
 
 function App() {
   const queryParameters = new URLSearchParams(window.location.search)
@@ -149,18 +150,7 @@ function App() {
   }
 
   function handlePlayerReady( player: any ) {
-    const archiveReq = new XMLHttpRequest();
-    archiveReq.open('GET', "http://localhost:3000/archiveInfo/" + queryParameters.get('videoid'));
-    archiveReq.responseType = 'json';
-    archiveReq.onload = function() {
-      if (archiveReq.status !== 200) {
-        console.log('Error: ' + archiveReq.status);
-        return;
-      }
-      console.log("Metadata:" + archiveReq.response);
-      setArchiveInfo(JSON.parse(archiveReq.response) as ArchiveInfo);
-    }
-    archiveReq.send();
+    fetchArchiveInfo(queryParameters.get('videoid') as string);
 
     seekVideo(start);
     setPlaying(true);
@@ -233,6 +223,21 @@ function App() {
     }
   }
 
+  function fetchArchiveInfo(v_id: string) {
+    const archiveReq = new XMLHttpRequest();
+    archiveReq.open('GET', "http://localhost:3000/archiveInfo/" + v_id);
+    archiveReq.responseType = 'json';
+    archiveReq.onload = function () {
+      if (archiveReq.status !== 200) {
+        console.log('Error: ' + archiveReq.status);
+        return;
+      }
+      console.log("Metadata:" + archiveReq.response);
+      setArchiveInfo(JSON.parse(archiveReq.response) as ArchiveInfo);
+    }
+    archiveReq.send();
+  }
+    
   return (
     <div className="app">
 
@@ -309,6 +314,7 @@ function App() {
         />
         : null
       }
+      { archiveInfo && <Archive v_id={queryParameters.get("videoid") ?? ""} info={archiveInfo} setInfo={setArchiveInfo}/> }
     </div>
   );
 }
