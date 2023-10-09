@@ -55,6 +55,10 @@ We are capable of loading videos from youtube more quickly. The server does this
 
 You can archive videos and they'll be loaded instead of from youtube. To do this, in your browser go to http://localhost:3000/archive/<youtube_id_here>/ and wait until you get an OK message. From that point on, the video will be loaded from file storage.
 
+OR
+
+Press Archive button in the Archive Pane. You can also archive other videos if you enter their ID there.
+
 
 ## Help
 
@@ -82,11 +86,11 @@ If you get a security error, you may need to increase the number of allowed conn
 
 ### Want to change port
 
-Update the port variables in SMPlayer.tsx and server.ts. Change port in YouTube.htm.
+CURRENTLY DISABLED: Update the port variables in SMPlayer.tsx and server.ts. Change port in YouTube.htm.
 
 ### Known bugs
 
-- **Learn button doesn't work**. I haven't found a solution yet, for now to go off a video element by pressing "add new". If you use alt+left repeatedly after each video card you won't have to spam new elements.
+- Scrolling elemnts with mouse wheel or keyboard in element browser may wipe YT extracts 
 
 ### Differences with vanilla supermemo
 
