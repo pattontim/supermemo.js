@@ -166,14 +166,27 @@ async function fetchTransformedVTT(url: URL) {
 	}
 }
 
-// app.use((req, res, next) => {
-//     if(req.get('Content-Type') != undefined && req.get('Content-Type').indexOf('utf-8') != -1) {
-//         res.set('Content-Type', 'text/html; charset=windows-1252');
-//         next();
-//     }
-// });
+// I have a hunch this disables some slow SM caching mechanisms
+const setNoCacheHeaders = (
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction
+) => {
+  // Set Cache-Control header to prevent caching
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
 
-app.use(express.static('dist'));
+  // Set Pragma header to prevent caching in old HTTP/1.0 clients
+  res.setHeader('Pragma', 'no-cache');
+
+  // Set Expires header to a past date to ensure no caching
+  res.setHeader('Expires', '0');
+
+  // Continue to the next middleware
+  next();
+};
+
+
+app.use(express.static('dist'), setNoCacheHeaders);
 
 /* Attach our cors proxy to the existing API on the /proxy endpoint. */
 app.get('/proxy/:proxyUrl*', async (req, res) => {
@@ -258,6 +271,7 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 		videoInfo = await youtube.getBasicInfo(v_id);
 	} catch (error) {
 		console.log('error: ' + error);
+		console.log('failed to get basic info');
 		res.status(503).send('Error: ' + error);
 		return;
 	}
@@ -275,7 +289,12 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 		res.send(manifest);
 	} catch (error) {
 		console.log('error: ' + error);
+		console.log('failed to get manifest');
 		res.status(503).send('Error: ' + error);
+		if(videoInfo.basic_info.is_private){
+			console.log('Private video! Please remove!');
+			return;
+		}
 		return;
 	}
 
@@ -285,6 +304,7 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 		}
 		// TypeError possible
 	} catch (error) {
+		console.log('failed to get captions');
 		if (error instanceof TypeError) {
 			console.log('TypeError, very likely captions disabled.');
 		} else {
@@ -298,6 +318,8 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 				const videoInfoFull = await youtube.getInfo(v_id);
 				videoInfoFull.captions = videoInfo.captions;
 				cache[v_id] = new CacheInfoV1(videoInfoFull, manifest, target, yti_version);
+				// TODO update to use video_sets instead of file_formats
+				// cache[v_id].file_formats = videoInfoFull.getStreamingInfo().video_sets
 			} catch (error) {
 				console.log('Error: ' + error);
 				console.log('failed to cache full video info');
@@ -332,6 +354,16 @@ app.get('/fixvtt/*', async (req, res) => {
 		console.log('error: ' + error);
 		res.status(503).send('Error: ' + error);
 	} 
+});
+
+app.get('/formats/:v_id', async (req, res) => {
+	const v_id = req.params.v_id;
+	const formats = (await getCacheWait(v_id))?.file_formats;
+	if (formats) {
+		res.json(formats);
+	} else {
+		res.json({});
+	}
 });
 
 app.get('/archive/:v_id', async (req, res) => {
@@ -525,10 +557,13 @@ function startServer() {
 			}
 		})		
 
+		// TODO support symlink
 		if (!existsSync(archiveDir)) {
 			mkdirSync(archiveDir);
+			console.log("created a new archive")
 		} else {
 			loadJsonFilesIntoArchive(archiveDir, archive);
+			console.log("loaded archive: " + Object.keys(archive).length + " videos")
 		}
 		const curDir = process.cwd();
 		console.log(`Video archive loaded using path: ${path.join(curDir, archiveDir)}`)
