@@ -241,6 +241,64 @@ app.get('/archiveInfo/:v_id', async (req, res) => {
 	}	
 });	
 
+async function getSupportedFormats(videoInfoFull: VideoInfo) {
+	const supported =  [
+		{
+			type: 'video+audio', // audio, video or video+audio
+			quality: '1080p', // best, bestefficiency, 144p, 240p, 480p, 720p and so on.
+			format: 'mp4' // media container format 
+		}, 
+		{
+			type: 'video+audio', // audio, video or video+audio
+			quality: '720p', // best, bestefficiency, 144p, 240p, 480p, 720p and so on.
+			format: 'mp4' // media container format 
+		},
+		{
+			type: 'video+audio', // audio, video or video+audio
+			quality: '480p', // best, bestefficiency, 144p, 240p, 480p, 720p and so on.
+			format: 'mp4' // media container format 
+		},
+		{
+			type: 'video+audio', // audio, video or video+audio
+			quality: '360p', // best, bestefficiency, 144p, 240p, 480p, 720p and so on.
+			format: 'mp4' // media container format 
+		},
+		{
+			type: 'video+audio', // audio, video or video+audio
+			quality: '240p', // best, bestefficiency, 144p, 240p, 480p, 720p and so on.
+			format: 'mp4' // media container format 
+		},
+		{
+			type: 'video+audio', // audio, video or video+audio
+			quality: '144p', // best, bestefficiency, 144p, 240p, 480p, 720p and so on.
+			format: 'mp4' // media container format 
+		},
+	] as FormatOptions[];
+
+	const fileFormats: { [key: string]: Format } = {};
+
+	for (const formatOpt of supported) {
+		// assume chooseFormat is used internally deterministically
+		try {
+			const format = await videoInfoFull.chooseFormat(formatOpt);
+			fileFormats[format.itag + '.' + archiveContainer] = format;
+		} catch (error) {
+			console.log('failed to get format: ' + error);
+			continue;
+		}
+	}
+
+	return fileFormats;
+}
+
+app.get('/archivei/', async (req, res) => {
+	res.send(archive);
+});
+
+app.get('/cachei/', async (req, res) => {
+	res.send(cache);
+});
+
 app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 	const v_id = req.params[0]
 	const target = req.query.target as string;
@@ -319,7 +377,7 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 				videoInfoFull.captions = videoInfo.captions;
 				cache[v_id] = new CacheInfoV1(videoInfoFull, manifest, target, yti_version);
 				// TODO update to use video_sets instead of file_formats
-				// cache[v_id].file_formats = videoInfoFull.getStreamingInfo().video_sets
+				cache[v_id].file_formats = await getSupportedFormats(videoInfoFull);
 			} catch (error) {
 				console.log('Error: ' + error);
 				console.log('failed to cache full video info');
@@ -389,13 +447,24 @@ app.get('/archive/:v_id', async (req, res) => {
 			return;
 		}
 		const best_format = {
-			type: 'video+audio', // audio, video or video+audio
-			quality: 'best', // best, bestefficiency, 144p, 240p, 480p, 720p and so on.
-			format: 'mp4' // media container format 
+			type: req.query.type ? req.query.type : 'video+audio', // audio, video or video+audio
+			quality: req.query.quality ? req.query.quality : 'best', // best, bestefficiency, 144p, 240p, 480p, 720p and so on.
+			format: req.query.format ? req.query.format : 'mp4' // media container format 
 		} as FormatOptions;
 
 		// assume chooseFormat is used internally deterministically
-		const format = await videoInfoFull.chooseFormat(best_format);
+		let format = await videoInfoFull.chooseFormat(best_format);
+
+		if(!(format.has_video && format.has_audio)){
+			console.log('Error: format does not have video and audio, up/downgrading to best quality');
+			const best_format = {
+				type: 'video+audio', // audio, video or video+audio
+				quality: 'best', // best, bestefficiency, 144p, 240p, 480p, 720p and so on.
+				format: 'mp4' // media container format 
+			} as FormatOptions;
+			format = await videoInfoFull.chooseFormat(best_format);
+		}
+
 		const fileNameItag = format.itag + '.' + archiveContainer; // for now
 
 		let stream;

@@ -17,7 +17,7 @@ export class ArchiveInfoV1 {
   description: string; // description
 
   yti_version: string;
-  archived_on: string;
+  archived_on: string; //set to indicate it was archived
   file_formats: { [filename: string]: Format };
 
   constructor(videoInfo: VideoInfo, yti_version: string) {
@@ -38,18 +38,19 @@ export class ArchiveInfoV1 {
 }
 
 export class CacheInfoV1 extends ArchiveInfoV1 {
-    version: number;
-	mpd_manifest: string;
-	cached_on_ms: number;
-	browser_target: string;
+  version: number;
+  mpd_manifest: string;
+  cached_on_ms: number;
+  browser_target: string;
 
-	constructor(videoInfo: VideoInfo, mpd_manifest: string, browser_target: string, yti_version: string) {
-        super(videoInfo, yti_version);
-        this.version = 1;
-		this.mpd_manifest = mpd_manifest;
-		this.cached_on_ms = Date.now();
-		this.browser_target = browser_target;
-	}
+  constructor(videoInfo: VideoInfo, mpd_manifest: string, browser_target: string, yti_version: string) {
+    super(videoInfo, yti_version);
+    this.version = 1;
+    this.mpd_manifest = mpd_manifest;
+    this.cached_on_ms = Date.now();
+    this.browser_target = browser_target;
+    this.archived_on = "";
+  }
 }
 
 type ArchiveInfo = ArchiveInfoV1 // | ArchiveInfoV2

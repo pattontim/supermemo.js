@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ArchiveInfoV1 } from '../../../../ytjs/src/utils/archive';
 
 interface ArchiveProps<T> {
@@ -15,7 +15,9 @@ function isValidYTId(id: string) {
 export default function Archive<T extends unknown> ({ v_id, info, setInfo: setArchiveInfo } : ArchiveProps<T>) {
     const [isActive, setIsActive] = useState(false);
     const [archiveId, setArchiveId] = useState(v_id);
-    
+    // const [availableFormats, setAvailableFormats] = useState< ArchiveInfoV1["file_formats"] >({});
+    const [selectedFormat, setSelectedFormat] = useState<keyof ArchiveInfoV1["file_formats"] | undefined>(undefined);
+
     function handleClick() {
        setIsActive(!isActive)
     }
@@ -26,6 +28,7 @@ export default function Archive<T extends unknown> ({ v_id, info, setInfo: setAr
             return;
         }
 
+        // TODO plug in to request
         const archiveReq = new XMLHttpRequest();
         archiveReq.open('GET', "http://localhost:3000/archive/" + archiveId + "/");
         archiveReq.responseType = 'json';
@@ -62,11 +65,17 @@ export default function Archive<T extends unknown> ({ v_id, info, setInfo: setAr
                                         <div className="ctrlSubgrp firstCtrlSubgrp">
                                             <div> Archived? </div>
                                             {/* <div> {info?.archived_on ? "🈯" : "🈵"} </div> */}
-                                            <div> {Object.keys(info?.file_formats ?? []).length != 0 ? "Yes" : "No"} </div>
+                                            <div> {Object.keys(info?.archived_on ?? []).length != 0 ? "Yes" : "No"} </div>
                                         </div>
                                         <div className="ctrlSubgrp secondCtrlSubgrp">
                                             <input placeholder='yt vid id e.g. dQw4w9WgXcQ' type="text" id="archive_id" value={archiveId} onChange={e => setArchiveId(e.target.value)} />
                                             <button onClick={archiveVideo}>Archive</button>
+                                            { info && info.file_formats && Object.keys(info.file_formats).length != 0 &&
+                                            <select disabled id="archive_formats" onChange={e => setSelectedFormat(e.target.value as keyof ArchiveInfoV1["file_formats"])} value={selectedFormat}>
+                                                <option value={undefined} disabled hidden>Select Format</option>
+                                                {Object.keys(info.file_formats).map(format => <option value={format}>{format}</option>)}
+                                            </select>
+                                            }
                                         </div>
                                         <div className="ctrlSubgrp secondCtrlSubgrp">
                                         </div>
