@@ -26,6 +26,9 @@ function App() {
   // const [stopStyle, setStopStyle] = React.useState({ border: `2px solid ${borderCl}` });
   const [imposeBoundaries, setImposeBoundaries] = useState(1);
   const [videoid, setVideoid] = useState(queryParameters.get('videoid'));
+  const videoIdAtStart = new String(queryParameters.get('videoid')).toString();
+  const [repeat, setRepeat] = useState(true);
+  const [numRepeats, setNumRepeats] = useState(0);
 
   // const [url, setUrl] = useState('https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4');
   // const [url, setUrl] = useState("https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps_640x360_800k.mpd");
@@ -113,6 +116,12 @@ function App() {
   const handleProgress = (state: any) => {
     console.log('onProgress', state)
     setPlayed(state.playedSeconds)
+    if(played == 0 && convertHHMMSS2Seconds(start) == convertHHMMSS2Seconds(stop)) {
+      handleResetAt("stop");
+    }
+    if(played == 0 && convertHHMMSS2Seconds(start) > duration) {
+      handleResetAt("stop");
+    }
     if (!seeking && imposeBoundaries) {
       checkBoundaries()
     }
@@ -122,6 +131,15 @@ function App() {
     //   console.log('dashjs', dashjs)
     //   console.log('dashjs.getBitrateInfoListFor(' + dashjs.getActiveStream().getId() + ')', dashjs.getBitrateInfoListFor(dashjs.getActiveStream().getId()))
     // }
+    // if(videoid != videoIdAtStart) {
+    //   setVideoid(videoIdAtStart);
+    // }
+    if (document.activeElement?.id && document.activeElement?.id != "startvideoat") {
+      handleStartChange(document.getElementById("startvideoat") as HTMLInputElement)
+    }
+    if (document.activeElement?.id && document.activeElement?.id != "stopvideoat") {
+      handleStopChange(document.getElementById("stopvideoat") as HTMLInputElement)
+    }
   }
 
   const handleDuration = (duration: number) => {
@@ -137,6 +155,7 @@ function App() {
   }
 
   function checkBoundaries() {
+    if(!repeat) return;
     if (ref.current) {
         //console.log('checking boundaries')
         if (ref.current.getCurrentTime() < convertHHMMSS2Seconds(start)) {
@@ -147,6 +166,10 @@ function App() {
             ref.current.seekTo(convertHHMMSS2Seconds(start));
         }
     }
+  }
+
+  function handleToggleRepeat() {
+    setRepeat(!repeat);
   }
 
   function handlePlayerReady( player: any ) {
@@ -188,9 +211,11 @@ function App() {
     if (type === "resume") {
         setResume(new_val);
     } else if (type === "start") {
-        setStart(new_val);
+      setStart(new_val);
+      handleStartChange(document.getElementById("startvideoat") as HTMLInputElement)
     } else if (type === "stop") {
-        setStop(new_val);
+      setStop(new_val);
+      handleStopChange(document.getElementById("stopvideoat") as HTMLInputElement)
     } 
   }
 
@@ -237,6 +262,22 @@ function App() {
     }
     archiveReq.send();
   }
+
+    function handleStopChange(elem: HTMLInputElement) {          
+        if(playing && convertHHMMSS2Seconds(stop) < duration){
+            elem.style.border = "2px solid blue";
+        } else {
+            elem.style.border = "2px inset";
+        }
+    }
+    function handleStartChange(elem: HTMLInputElement){
+        if(convertHHMMSS2Seconds(start) > 0){
+            elem.style.border = "2px solid blue";
+        } else {
+            elem.style.border = "2px inset";
+        }
+    }
+
     
   return (
     <div className="app">
@@ -300,6 +341,9 @@ function App() {
       goTo={handleGoTo}
       offset={handleOffset}
       setPlaying={setPlaying}
+      playing
+      repeat
+      handleToggleRepeat={handleToggleRepeat}
       />
       {/* <ExtractBoard/> */}
       {/* <Counter /> */}

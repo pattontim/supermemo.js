@@ -22,10 +22,13 @@ interface PlayerProps<T> {
     goTo: (type: string) => void;
     offset: (type: string, offset: number) => void;
     setPlaying: (playing: boolean) => void;
+    playing: boolean;
+    repeat: boolean;
+    handleToggleRepeat: () => void;
 }
 
 export default function ClipExtractor<T extends unknown>({resume, start, stop, boundaries, videoid, played, duration, 
-    setAt, setAtAbs, resetAt, goTo, offset, setPlaying } : PlayerProps<T>)
+    setAt, setAtAbs, resetAt, goTo, offset, setPlaying, playing, repeat, handleToggleRepeat } : PlayerProps<T>)
     {
     
     const [options, setOptions] = useState<Option[]>([]);
@@ -41,7 +44,7 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
                 selStart = formatTime(played + offsetSec, duration)
                 selStop = formatTime(played, duration);
             } else if (offsetSec > 0) {
-                selStart = formatTime(offsetSec, duration);
+                selStart = formatTime(played, duration);
                 selStop = formatTime(played + offsetSec, duration)
             }
 
@@ -99,6 +102,11 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
         throw new Error("Function not implemented.");
     }
 
+    function handleResetBtnClick(): void {
+        resetAt('start');
+        resetAt('stop');
+    }
+
     return (
         <div>
             <div id="customPrompt" hidden>
@@ -127,40 +135,40 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
                     <div className="ctrlSubgrp firstCtrlSubgrp">
                         <p>
                             <button type="button" id="mark" onClick={() => setAt('resume', 0)}> [ Mark ]</button>
-                            <img src="iv/images/transparent.png" alt="" id="rewindResume" onClick={() => offset('resume', -1)} className="imgBtn rewind"/>
+                            <img src="iv/images/transparent.png" title="Rewind 1 Sec." alt="Rewind 1 Sec." id="rewindResume" onClick={() => offset('resume', -1)} className="imgBtn rewind"/>
                             <img src="iv/images/transparent.png" alt="Go to" title="Go to" id="resume" onClick={() => goTo('resume')} className="imgBtn goTo"/>
-                            <img src="iv/images/transparent.png" alt="" id="forwardResume" className="imgBtn forward" onClick={() => offset('resume', 1)}/>
+                            <img src="iv/images/transparent.png" title="Forward 1 Sec." alt="Forward 1 Sec." id="forwardResume" className="imgBtn forward" onClick={() => offset('resume', 1)}/>
                             <input type="text" value={resume ?? ''} id="resumevideoat" onClick={() => setAt('resume', 0)} onChange={() => {}} />
                             <img src="iv/images/transparent.png" alt="Restore default" id="restoreResumeAt" onClick={() => resetAt('resume')} className="imgBtn restoreStartAt"/> 
                         </p>
                     </div>
                     <div className="ctrlSubgrp secondCtrlSubgrp">
                         <button type="button" id="start" onClick={() => setAt('start', 0)} title="Set clip start">[</button>
-                        <img src="iv/images/transparent.png" alt="" id="rewindStart" onClick={() => offset('start', -1)} className="imgBtn rewind"/>
+                        <img src="iv/images/transparent.png" title="Rewind 1 Sec." alt="Rewind 1 Sec." id="rewindStart" onClick={() => offset('start', -1)} className="imgBtn rewind"/>
                         <img src="iv/images/transparent.png" alt="Go to" title="Go to" id="goToStart" onClick={() => goTo('start')} className="imgBtn goTo"/>
-                        <img src="iv/images/transparent.png" alt="" id="forwardStart" onClick={() => offset('start', 1)} className="imgBtn forward"/>
+                        <img src="iv/images/transparent.png" title="Forward 1 Sec." alt="Forward 1 Sec." id="forwardStart" onClick={() => offset('start', 1)} className="imgBtn forward"/>
                         <input type="text" value={start ?? ''} id="startvideoat" onClick={() => setAt('start', 0)} onChange={() => {}}/>
                         <img src="iv/images/transparent.png" alt="Restore default" title="Restore default" id="restoreStartAt" onClick={() => resetAt('start')} className="imgBtn restoreStartAt"/>
                         ~
                         <img src="iv/images/transparent.png" alt="Restore default" title="Restore default" id="restoreStopAt" onClick={() => resetAt('stop')} className="imgBtn restoreStopAt"/>
                         <input type="text" value={stop ?? ''} id="stopvideoat" onClick={() => setAt('stop', 0)} onChange={() => {}}/>
-                        <img src="iv/images/transparent.png" alt="" id="rewindStop" onClick={() => offset('stop', -1)} className="imgBtn rewind"/>
+                        <img src="iv/images/transparent.png" title="Rewind 1 Sec." alt="Rewind 1 Sec." id="rewindStop" onClick={() => offset('stop', -1)} className="imgBtn rewind"/>
                         <img src="iv/images/transparent.png" alt="Go to" title="Go to" id="goToStop" onClick={() => goTo('stop')} className="imgBtn goTo"/>
-                        <img src="iv/images/transparent.png" alt="" id="forwardStop" onClick={() => offset('stop', 1)} className="imgBtn forward"/>
+                        <img src="iv/images/transparent.png" title="Forward 1 Sec." alt="Forward 1 Sec." id="forwardStop" onClick={() => offset('stop', 1)} className="imgBtn forward"/>
                         <button type="button" id="stop" onClick={() => setAt('stop', 0)} title="Set clip end">]</button>
                     </div>
                 </div>
                 <div className="ctrlGrp secondCtrlGrp">
                     <div className="ctrlSubgrp firstCtrlSubgrp">
                         <p>
-                            <input type="checkbox" checked={true} id="repeat" className="checkbox" onChange={() => {}}/>
+                            <input type="checkbox" checked={repeat} id="repeat" className="checkbox" onChange={handleToggleRepeat}/>
                             <label htmlFor="repeat" id="repeat" title="Repeat (R)">&nbsp;</label>
                         </p>
                     </div>
                     <div className="ctrlSubgrp secondCtrlSubgrp">
                         <p>
                             <button type="button" id="test" onClick={() => goTo('start')}>Test</button>
-                            <button type="button" id="reset">Reset</button>
+                            <button type="button" id="reset" onClick={handleResetBtnClick}>Reset</button>
                             <button type="button" id="extract" onClick={() => addOption(0)}>Extract</button>
                             <select id="extracts" multiple={true} onChange={handleSelectChange}>
                                 {options.map((option, index) => (
