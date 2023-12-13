@@ -5,7 +5,11 @@
     - INPUT field with YouTube video ID substituted by SuperMemo (id="videoid")
     - INPUT field that determines the position of video start and end (id="startvideoat" and id="stopvideoat")(must be "0:00:00")
     see: https://help.supermemo.org/wiki/Incremental_video#Your_own_incremental_video_script
-    Symptoms of failure to do this: extract start nd stop times are rotated incorrctly (start becomes stop)
+    Symptoms of failure to do this: 
+         - extract start nd stop times are rotated incorrctly (start becomes stop)
+         - random elements with name of input element value are added as extracts
+    Undocumented restraints:
+    - OPTION elements anywhere on the page make extracts...
 -->
 <html>
   <head>

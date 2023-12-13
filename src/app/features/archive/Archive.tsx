@@ -68,13 +68,15 @@ export default function Archive<T extends unknown> ({ v_id, info, setInfo: setAr
                                             <div> {Object.keys(info?.archived_on ?? []).length != 0 ? "Yes" : "No"} </div>
                                         </div>
                                         <div className="ctrlSubgrp secondCtrlSubgrp">
-                                            <input placeholder='yt vid id e.g. dQw4w9WgXcQ' type="text" id="archive_id" value={archiveId} onChange={e => setArchiveId(e.target.value)} />
+                                            {/* <input placeholder='yt vid id e.g. dQw4w9WgXcQ' type="text" id="archive_id" value={archiveId} onChange={e => setArchiveId(e.target.value)} /> */}
                                             <button onClick={archiveVideo}>Archive</button>
-                                            { info && info.file_formats && Object.keys(info.file_formats).length != 0 &&
-                                            <select disabled id="archive_formats" onChange={e => setSelectedFormat(e.target.value as keyof ArchiveInfoV1["file_formats"])} value={selectedFormat}>
-                                                <option value={undefined} disabled hidden>Select Format</option>
-                                                {Object.keys(info.file_formats).map(format => <option value={format}>{format}</option>)}
-                                            </select>
+                                            { 
+                                            //     {/* TODO this violates OPTION restriction and will need a workaround  */}
+                                            // info && info.file_formats && Object.keys(info.file_formats).length != 0 &&
+                                            // <select disabled id="archive_formats" onChange={e => setSelectedFormat(e.target.value as keyof ArchiveInfoV1["file_formats"])} value={selectedFormat}>
+                                            //     {/* <option value={undefined} disabled hidden>Select Format</option> */}
+                                            //     {/* {Object.keys(info.file_formats).map(format => <option value={format}>{format}</option>)} */}
+                                            // </select>
                                             }
                                         </div>
                                         <div className="ctrlSubgrp secondCtrlSubgrp">
