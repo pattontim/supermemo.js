@@ -436,6 +436,7 @@ app.get('/archive/:v_id', async (req, res) => {
 				"url": `http://localhost:${port}/archive/${v_id}/${file}`
 			}
 		});
+		// vid_formats.sort((a, b) => Number.parseInt(a.itag.split('.')[0]) - b.itag.split('.')[0]);
 		res.status(200).send(vid_formats[0]);
 	} else {
 		let videoInfoFull: VideoInfo
@@ -478,7 +479,7 @@ app.get('/archive/:v_id', async (req, res) => {
 		const fileFormats: { [key: string]: Format } = {};
 		fileFormats[format.itag + '.' + archiveContainer] = format;
 
-		console.log('downloading video')
+		console.log('downloading video, format ' + format.quality_label + ' ' + format.itag)
 		const dir = path.join(archiveDir, v_id);
 		if (!existsSync(dir)) {
 			try {

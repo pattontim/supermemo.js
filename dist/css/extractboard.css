@@ -1,11 +1,11 @@
-body, div, h4, p, input, select {
+/* body, div, h4, p, input, select {
     margin: 0;
     padding: 0;
 }
 
-/* body {
-    background-color: rgb(20,30, 1);
-} */
+// body {
+//    background-color: rgb(20,30, 1);
+//} 
 
 img {
     margin: 0 2px;
@@ -123,36 +123,6 @@ a span {
     background: transparent url(../iv/images/icons.png) no-repeat -254px 0;
 }
 
-.imgBtn {
-    border: 0;
-    width: 16px;
-    vertical-align: text-top;
-}
-
-.rewind {
-    background: transparent url(../iv/images/icons.png) no-repeat -16px 0;
-}
-
-.forward {
-    background: transparent url(../iv/images/icons.png) no-repeat -32px 0;
-}
-
-.goTo {
-    background: transparent url(../iv/images/icons.png) no-repeat -48px 0;
-}
-
-.restoreStartAt {
-    background: transparent url(../iv/images/icons.png) no-repeat -64px 0;
-}
-
-.restoreStopAt {
-    background: transparent url(../iv/images/icons.png) no-repeat -80px 0;
-}
-
-.removeCurrentExtract {
-    background: transparent url(../iv/images/icons.png) no-repeat -96px 0;
-}
-
 .track {
   flex: 6;
   height: 90vh;
@@ -251,8 +221,104 @@ a span {
 .search .icon {
   padding-left: 5px;
   padding-right: 5px;
+} */
+
+
+/* MAIN STRUCTURE */
+fieldset {
+  width: 800px;
 }
 
+.row {
+  display: flex;
+  flex-flow: row wrap;
+  align-items: baseline; 
+  border-bottom: 1px solid #000000;
+}
+
+.col {
+  flex: 0 0 auto; 
+  padding: 10px;
+}
+
+.row:last-child {
+  border-bottom: none; 
+}
+
+.col + .col {
+  border-left: 1px solid #000000;
+}
+
+input {
+  width: 75px;
+  box-sizing: border-box;
+}
+
+.col input,  
+.col button {
+  height: 22px;
+  box-sizing: border-box;
+}
+
+.col input {
+  width: 75px;
+}
+
+.col button {
+  width: auto; 
+  padding: 0 5px;
+  margin: 0 1px;
+  align-self: start;
+}
+
+.col select {
+  /* height: 22px; */
+  height: auto;
+  flex: 1;
+  min-height: 22px;
+  max-height: 44px;
+  min-width: 250px;
+}
+
+/* COMPONENTS */
+.imgBtn {
+  width: 20px;
+  height: 20px;
+  vertical-align: top;
+  /* padding-right: 2px; */
+  margin: 2px;
+  /* margin-top: 3px; */
+}
+
+.rewind {    
+  background: transparent url(../iv/images/icons.png) no-repeat -20px 0;
+}
+
+.forward {
+  background: transparent url(../iv/images/icons.png) no-repeat -40px 0;
+}
+
+.goTo {
+  background: transparent url(../iv/images/icons.png) no-repeat -60px 0;
+}
+
+.restoreStartAt {
+  background: transparent url(../iv/images/icons.png) no-repeat -80px 0; 
+}
+
+.restoreStopAt {
+  background: transparent url(../iv/images/icons.png) no-repeat -100px 0;
+} 
+
+.removeCurrentExtract {
+  background: transparent url(../iv/images/icons.png) no-repeat -120px 0; 
+}
+
+.repeat {
+  background: transparent url(../iv/images/icons.png) no-repeat -320px 0;
+}
+
+/* ACCORDION ELEMS */
 .accordion {
   margin: 2rem auto;
 }

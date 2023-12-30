@@ -56,6 +56,7 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
         }
     };
 
+    // TODO set selected so we can mirror start changes to start/stop indnpendently 
     const handleSelectChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
         const selectedOption = event.target.value;
         if(selectedOption){
@@ -64,6 +65,17 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
             setAtAbs('stop', convertHHMMSS2Seconds(selStop));
             goTo('start');
         }
+    };
+
+    const handleRemoveCurrentExtractBtnClick = () => {
+        // const selectedOption = document.getElementById('extracts') as HTMLSelectElement;
+        alert("Not implemented yet")
+        // if(selectedOption){
+        //     const [selStart, selStop] = selectedOption.value.split(' - ');
+        //     setAtAbs('start', convertHHMMSS2Seconds(selStart));
+        //     setAtAbs('stop', convertHHMMSS2Seconds(selStop));
+        //     goTo('start');
+        // }
     };
 
     const handleCaptionCopyBtnClick = () => {
@@ -131,19 +143,17 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
             <input type="hidden" value={videoid ?? ''} id="videoid" />
             <input type="hidden" value={boundaries} id="imposeboundries" />
             <fieldset>
-                <div className="ctrlGrp firstCtrlGrp">
-                    <div className="ctrlSubgrp firstCtrlSubgrp">
-                        <p>
-                            <button type="button" id="mark" onClick={() => setAt('resume', 0)}> [ Mark ]</button>
-                            <img src="iv/images/transparent.png" title="Rewind 1 Sec." alt="Rewind 1 Sec." id="rewindResume" onClick={() => offset('resume', -1)} className="imgBtn rewind"/>
-                            <img src="iv/images/transparent.png" alt="Go to" title="Go to" id="resume" onClick={() => goTo('resume')} className="imgBtn goTo"/>
-                            <img src="iv/images/transparent.png" title="Forward 1 Sec." alt="Forward 1 Sec." id="forwardResume" className="imgBtn forward" onClick={() => offset('resume', 1)}/>
-                            <input type="text" value={resume ?? ''} id="resumevideoat" onClick={() => setAt('resume', 0)} onChange={() => {}} />
-                            <img src="iv/images/transparent.png" alt="Restore default" id="restoreResumeAt" onClick={() => resetAt('resume')} className="imgBtn restoreStartAt"/> 
-                        </p>
+                <div className="row">
+                    <div className="col">
+                        <button type="button" id="mark" onClick={() => setAt('resume', 0)}> [ Mark ]</button>
+                        <img src="iv/images/transparent.png" title="Rewind 1 Sec." alt="Rewind 1 Sec." id="rewindResume" onClick={() => offset('resume', -1)} className="imgBtn rewind" />
+                        <img src="iv/images/transparent.png" alt="Go to" title="Go to" id="resume" onClick={() => goTo('resume')} className="imgBtn goTo" />
+                        <img src="iv/images/transparent.png" title="Forward 1 Sec." alt="Forward 1 Sec." id="forwardResume" className="imgBtn forward" onClick={() => offset('resume', 1)} />
+                        <input type="text" value={resume ?? ''} id="resumevideoat" onClick={() => setAt('resume', 0)} onChange={() => { }} />
+                        <img src="iv/images/transparent.png" alt="Restore default" id="restoreResumeAt" onClick={() => resetAt('resume')} className="imgBtn restoreStartAt" />
                     </div>
-                    <div className="ctrlSubgrp secondCtrlSubgrp">
-                        <button type="button" id="start" onClick={() => setAt('start', 0)} title="Set clip start">[</button>
+                    <div className="col">
+                        <button type="button" id="start" onClick={() => setAt('start', 0)} title="Set clip start" style={{width: "45px"}}>[</button>
                         <img src="iv/images/transparent.png" title="Rewind 1 Sec." alt="Rewind 1 Sec." id="rewindStart" onClick={() => offset('start', -1)} className="imgBtn rewind"/>
                         <img src="iv/images/transparent.png" alt="Go to" title="Go to" id="goToStart" onClick={() => goTo('start')} className="imgBtn goTo"/>
                         <img src="iv/images/transparent.png" title="Forward 1 Sec." alt="Forward 1 Sec." id="forwardStart" onClick={() => offset('start', 1)} className="imgBtn forward"/>
@@ -155,52 +165,50 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
                         <img src="iv/images/transparent.png" title="Rewind 1 Sec." alt="Rewind 1 Sec." id="rewindStop" onClick={() => offset('stop', -1)} className="imgBtn rewind"/>
                         <img src="iv/images/transparent.png" alt="Go to" title="Go to" id="goToStop" onClick={() => goTo('stop')} className="imgBtn goTo"/>
                         <img src="iv/images/transparent.png" title="Forward 1 Sec." alt="Forward 1 Sec." id="forwardStop" onClick={() => offset('stop', 1)} className="imgBtn forward"/>
-                        <button type="button" id="stop" onClick={() => setAt('stop', 0)} title="Set clip end">]</button>
+                        <button type="button" id="stop" onClick={() => setAt('stop', 0)} title="Set clip end" style={{width: "45px"}}>]</button>
                     </div>
                 </div>
-                <div className="ctrlGrp secondCtrlGrp">
-                    <div className="ctrlSubgrp firstCtrlSubgrp">
-                        <p>
-                            <input type="checkbox" checked={repeat} id="repeat" className="checkbox" onChange={handleToggleRepeat}/>
-                            <label htmlFor="repeat" id="repeat" title="Repeat (R)">&nbsp;</label>
-                        </p>
+                <div className="row">
+                    <div className="col">
+                        <input type="checkbox" checked={repeat} id="repeat" className="checkbox" onChange={handleToggleRepeat} />
+                        {/* <label htmlFor="repeat" id="repeat" title="Repeat (R)">&nbsp;</label> */}
+                        <img src="iv/images/transparent.png" id="repeat" title="Repeat (R)" alt="Repeat (R)" className="imgBtn repeat" onClick={handleToggleRepeat} />
                     </div>
-                    <div className="ctrlSubgrp secondCtrlSubgrp">
-                        <p>
-                            <button type="button" id="test" onClick={() => goTo('start')}>Test</button>
-                            <button type="button" id="reset" onClick={handleResetBtnClick}>Reset</button>
-                            <button type="button" id="extract" onClick={() => addOption(0)}>Extract</button>
-                            <select id="extracts" multiple={true} onChange={handleSelectChange}>
-                                {options.map((option, index) => (
-                                    <option value={option.value}>
-                                        {option.label}
-                                    </option>
-                                ))}
-                            </select>
-                            <img src="iv/images/transparent.png" alt="Remove the currently selected extract" id="removeCurrentExtract" className="imgBtn removeCurrentExtract"/>
-                            <input type="hidden" value="0" id="customPromptVisible" />
-                        </p>
+                    <div className="col">
+                        <button type="button" id="test" onClick={() => goTo('start')}>Test</button>
+                        <button type="button" id="reset" onClick={handleResetBtnClick}>Reset</button>
+                        <button type="button" id="extract" onClick={() => addOption(0)}>Extract</button>
+                        <button type="button" className="" id="extractm10" onClick={() => addOption(-10)}>-10</button>
+                        <button type="button" className="" id="extractm5" onClick={() => addOption(-5)}>-5</button>
+                        <button type="button" className="" id="extract" onClick={() => addOption(5)}>+5</button>
+                        <button type="button" className="" id="extract10" onClick={() => addOption(10)}>+10</button>
+                        <select id="extracts" multiple={true} onChange={handleSelectChange}>
+                            {options.map((option, index) => (
+                                <option value={option.value}>
+                                    {option.label}
+                                </option>
+                            ))}
+                        </select>
+                        { options.length == 0 ? <img src="iv/images/transparent.png" alt="Remove the currently selected extract" id="removeCurrentExtract" className="imgBtn removeCurrentExtract" />
+                        : <img 
+                            src="iv/images/transparent.png" alt="Remove the currently selected extract" id="removeCurrentExtract" className="imgBtn removeCurrentExtract" 
+                            style={{background: "transparent url(../iv/images/icons.png) no-repeat -140px 0"}} onClick={handleRemoveCurrentExtractBtnClick}
+                            // onMouseOver={(e) => {e.currentTarget.style.backgroundPosition = "-140px -20px"}}
+                            />}
+                        <input type="hidden" value="0" id="customPromptVisible" />
                     </div>
                 </div>
-                <div className="ctrlGrp">
-                <div className="ctrlSubgrp">
-                    <p>
-                        <button type="button" className="" id="extractm5" onClick={() => addOption(-5)}>Extr. &lt;-5</button>
-                        <button type="button" className="" id="extract5"  onClick={() => addOption(5)}>Extr. 5+&gt;</button>
-                    </p>
-                </div>
-                <div className="ctrlSubgrp">
-                    <p>
+                <div className="row">
+                    <div className="col">
                         <button type="button" id="copyBtn" onClick={handleDetailsClick} >YT Copy Details</button>
-                        <button type="button" id="screenshotBtn" onClick={handleScreenshotClick}>YT Screenshot</button> 
-                        <button type="button" id="copyCaptionBtn" onClick={handleCaptionCopyBtnClick}>Copy Cap</button> 
-                    </p>
-                </div>
-            </div>  
-                <div className="ctrlGrp">
+                        <button type="button" id="screenshotBtn" onClick={handleScreenshotClick}>YT Screenshot</button>
+                        <button type="button" id="copyCaptionBtn" onClick={handleCaptionCopyBtnClick}>Copy Cap</button>
+                    </div>
+                </div>  
+                <div className="row">
                     <textarea id="log" style={{width: "100%"}}></textarea>
                 </div>
-                <div className="ctrlGrp">
+                <div className="row">
                     <div className="ctrlSubgrp firstCtrlSubgrp debug">Date: May 24, 2023</div>
                 </div>
             </fieldset>

@@ -22,7 +22,7 @@ export default function Archive<T extends unknown> ({ v_id, info, setInfo: setAr
        setIsActive(!isActive)
     }
 
-    function archiveVideo() {
+    function handleArchiveBtnClick(quality?: string) {
         if(!isValidYTId(archiveId)) {
             alert("Invalid YouTube Video ID!");
             return;
@@ -30,7 +30,7 @@ export default function Archive<T extends unknown> ({ v_id, info, setInfo: setAr
 
         // TODO plug in to request
         const archiveReq = new XMLHttpRequest();
-        archiveReq.open('GET', "http://localhost:3000/archive/" + archiveId + "/");
+        archiveReq.open('GET', "http://localhost:3000/archive/" + archiveId + "?quality=" + (quality ?? "best"));
         archiveReq.responseType = 'json';
         archiveReq.onload = function () {
             if (archiveReq.status !== 200) {
@@ -69,14 +69,32 @@ export default function Archive<T extends unknown> ({ v_id, info, setInfo: setAr
                                         </div>
                                         <div className="ctrlSubgrp secondCtrlSubgrp">
                                             {/* <input placeholder='yt vid id e.g. dQw4w9WgXcQ' type="text" id="archive_id" value={archiveId} onChange={e => setArchiveId(e.target.value)} /> */}
-                                            <button onClick={archiveVideo}>Archive</button>
-                                            { 
-                                            //     {/* TODO this violates OPTION restriction and will need a workaround  */}
-                                            // info && info.file_formats && Object.keys(info.file_formats).length != 0 &&
+                                            <label>DL & Archive</label>
+                                            {info && info.file_formats && Object.keys(info.file_formats).length != 0 &&
+                                            // {/* TODO this violates OPTION restriction and will need a workaround  */}
                                             // <select disabled id="archive_formats" onChange={e => setSelectedFormat(e.target.value as keyof ArchiveInfoV1["file_formats"])} value={selectedFormat}>
-                                            //     {/* <option value={undefined} disabled hidden>Select Format</option> */}
+                                            //     <option value={undefined} disabled hidden>Select Format</option>
                                             //     {/* {Object.keys(info.file_formats).map(format => <option value={format}>{format}</option>)} */}
-                                            // </select>
+                                            //     { Object.entries(info.file_formats).map(([itagMime, format]) => <option value={itagMime}>{format.quality ?? itagMime}</option>) }
+                                                // </select>
+
+                                                <div style={{ display: 'flex' }}>
+                                                    <button 
+                                                        onClick={() => {handleArchiveBtnClick()}}
+                                                        style={{ marginRight: '10px' }}
+                                                        >
+                                                            Best
+                                                            </button>
+                                                    {Object.entries(info.file_formats).map(([itagMime, format]) => (
+                                                        <button
+                                                            key={itagMime}
+                                                            onClick={() => handleArchiveBtnClick(format.quality_label)}
+                                                            style={{ marginRight: '10px' }}
+                                                        >
+                                                            {(format.quality_label ?? "???") + " [" + format.itag + "]"}
+                                                        </button>
+                                                    ))}
+                                                </div>
                                             }
                                         </div>
                                         <div className="ctrlSubgrp secondCtrlSubgrp">
