@@ -122,6 +122,7 @@ a span {
     width: auto;
     background: transparent url(../iv/images/icons.png) no-repeat -254px 0;
 }
+*/
 
 .track {
   flex: 6;
@@ -221,7 +222,7 @@ a span {
 .search .icon {
   padding-left: 5px;
   padding-right: 5px;
-} */
+}
 
 
 /* MAIN STRUCTURE */

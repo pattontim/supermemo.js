@@ -1,0 +1,78 @@
+<html>
+
+<head>
+    <style type="text/css">
+        INPUT {
+            display: none !important;
+        }
+    </style>
+    <style>
+        body {
+            font-family: Arial;
+            background-color: #edf2f7;
+        }
+
+        .article {
+            background-color: #fff;
+            padding: 20px;
+            margin: 20px;
+            border: 1px solid #aaa;
+        }
+
+        .extract {
+            background-color: #f1f8e9;
+            padding: 10px;
+            margin: 10px 0;
+        }
+
+        p {
+            line-height: 1.6;
+        }
+
+        button {
+            background-color: #00a0c6;
+            color: #fff;
+            border: none;
+            padding: 8px 12px;
+            margin-right: 10px;
+        }
+    </style>
+</head>
+
+<body>
+    <input type="text" name="extractName" id="extractName" class=".hidden" />
+    <input type="hidden" value="zzzYT-IDzzz" id="videoid" class=".hidden" />
+    <input type="hidden" id="imposeboundries" class=".hidden" />
+    <input type="text" value="0:00:00" id="resumevideoat" onfocus="this.select();" ondblclick="resetAt('resume');"
+        onchange="this.value = convertDuration2HHMMSS(convertHHMMSS2Duration(this.value));" />
+    <input type="text" value="0:00:00" id="startvideoat" onfocus="this.select();"
+        onchange="this.value = convertDuration2HHMMSS(convertHHMMSS2Duration(this.value)); document.getElementById('imposeboundries').value = 0; updateBorder(this);"
+        ondblclick="resetAt('start');" />
+    <input type="text" value="0:00:00" id="stopvideoat" onfocus="this.select();"
+        onchange="this.value = convertDuration2HHMMSS(convertHHMMSS2Duration(this.value)); document.getElementById('imposeboundries').value = 0; updateBorder(this);"
+        ondblclick="resetAt('stop');" />
+    <div class="ctrlGrp">
+        <textarea id="log" style="width: 100%"></textarea>
+    </div>
+
+    <title>Incremental Reading</title>
+    <div class="article">
+        <h1>Incremental Reading Article</h1>
+
+        <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Phasellus sollicitudin tortor eu leo condimentum,
+            non ultrices ante mollis. Nam vitae nunc vel augue cursus porta.</p>
+
+        <div class="extract">
+            <p>This is an extracted part of the article for incremental reading.</p>
+        </div>
+
+        <p>Cras posuere, risus nec molestie lacinia, nibh erat convallis ligula, sit amet pretium augue dui sed lorem.
+            Sed congue aliquet diam, ut gravida tellus accumsan sed.</p>
+
+        <button>Extract Text</button>
+        <button>Cloze Deletion</button>
+
+    </div>
+</body>
+
+</html>

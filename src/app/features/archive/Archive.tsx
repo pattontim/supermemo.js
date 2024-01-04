@@ -8,8 +8,15 @@ interface ArchiveProps<T> {
     setInfo: React.Dispatch<React.SetStateAction<ArchiveInfoV1 | undefined>>
 }
 
-function isValidYTId(id: string) {
-    return id.length == 11 && id.match(/^[a-zA-Z0-9_-]+$/);
+function isValidSMId(id: string, expectedLen = 11) {
+    if(id.length != expectedLen) return false;
+    const matching = id.match(/^[a-zA-Z0-9_\-]+$/);
+    if(!matching || matching.length != 1) return false;
+    return matching[0].length == expectedLen;
+}
+
+function isValidSMJSId(id: string) {
+    return isValidSMId(id, 5);
 }
 
 export default function Archive<T extends unknown> ({ v_id, info, setInfo: setArchiveInfo } : ArchiveProps<T>) {
@@ -23,8 +30,8 @@ export default function Archive<T extends unknown> ({ v_id, info, setInfo: setAr
     }
 
     function handleArchiveBtnClick(quality?: string) {
-        if(!isValidYTId(archiveId)) {
-            alert("Invalid YouTube Video ID!");
+        if(!isValidSMId(archiveId)) {
+            alert("Invalid YouTube Video ID: " + archiveId);
             return;
         }
 

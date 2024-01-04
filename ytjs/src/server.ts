@@ -12,12 +12,14 @@ import { Format } from 'youtubei.js/dist/src/parser/misc';
 import { FormatOptions } from 'youtubei.js/dist/src/types/FormatUtils';
 import { VideoInfo } from 'youtubei.js/dist/src/parser/youtube';
 import { PlayerCaptionsTracklist } from 'youtubei.js/dist/src/parser/nodes';
+import { ElementInfo, ElementInfoV1 } from './utils/element';
 
 const app = express();
 const port = 3000; // You can change the port number if needed
 
 let cacheDir = './.cache';
 let archiveDir = './dist/archive';
+let elementsDir = './dist/elements';
 let yti_version = '0.0.0';
 let youtube: Innertube;
 let archive = {} as Archive;
@@ -199,6 +201,28 @@ app.get('/mpd/invalidate/:v_id', async (req, res) => {
   console.log('invalidating mpd cache for ' + v_id);
   cache[v_id].mpd_manifest = "";
   res.send('OK');
+});
+
+app.get('/templateUrl/:id', async (req, res) => {
+	const id = req.params.id;
+	if(id.length == 11){
+		res.send(`http://localhost:${port}/index.html`);
+		return;
+	}
+
+	// open FS at elements/id and read info.json, return its HTML
+	// patch together and send
+	const dir = path.join(elementsDir, id);
+	if (!existsSync(dir)) {
+		res.status(404).send('Not found: ' + dir);
+		return;
+	}
+	const info = JSON.parse(readFileSync(path.join(dir, 'info.json'), 'utf-8')) as ElementInfo;
+
+	// open at templates/id.html and ret the template
+	// const template = JSON.parse(readFileSync(path.join(archiveDir, 'templates', info.templateId + '.json'), 'utf-8'));
+
+	res.send(`http://localhost:${port}/templates/${info.templateId}.html`);
 });
 
 // TODO quality selection

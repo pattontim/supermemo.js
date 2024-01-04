@@ -86,8 +86,29 @@
 			/*  
 			 *	B.
 			 */
-			document.location.href = "http://localhost:3000/index.html?" + sUrlString
-			
+			// var vId = document.getElementById("videoid").value;
+			// if(vId.length == 5){
+			// 	document.location.href = "http://localhost:3000/dist/elements/" + vId + ".html?" + sUrlString
+			// } else {
+			// 	document.location.href = "http://localhost:3000/index.html?" + sUrlString
+			// }
+			var vId = document.getElementById("videoid").value;
+
+			var xhr = new XMLHttpRequest();
+			xhr.open('GET', 'http://localhost:3000/templateUrl/' + vId);
+
+			xhr.onreadystatechange = function() {
+				if (xhr.readyState === 4 && xhr.status === 200) {
+					document.location.href = xhr.responseText + '?' + sUrlString;
+				}
+				else {
+					//console.error('Request failed with status: ' + xhr.status); 
+					// TODO direct to default SM youtube template
+				}
+			};
+
+			xhr.send();
+	
 			/*  
 			 *	C.
 			 will use window.open(sProtocol + ':' + sBaseUrl + sUrlString;
