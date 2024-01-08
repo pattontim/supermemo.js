@@ -206,7 +206,7 @@ app.get('/mpd/invalidate/:v_id', async (req, res) => {
 app.get('/templateUrl/:id', async (req, res) => {
 	const id = req.params.id;
 	if(id.length == 11){
-		res.send(`http://localhost:${port}/index.html`);
+		res.send(`http://localhost:${port}/templates/smplayer.html`);
 		return;
 	}
 

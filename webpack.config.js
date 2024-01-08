@@ -7,7 +7,13 @@ const path = require('path');
 const ForkTsCheckerWebpackPlugin = require('fork-ts-checker-webpack-plugin');
 
 module.exports = {
-  entry : './src/index.tsx',
+  entry : {
+    // helloworld: './src/index.tsx',
+    smplayer: './src/app/templates/smplayer/index.tsx',
+  },
+  output: {
+    filename: '[name].bundle.js'
+  },
   mode: mode,
   module: {
     rules: [

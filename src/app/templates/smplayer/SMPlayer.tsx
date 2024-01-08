@@ -4,15 +4,15 @@ import { useEffect, useState, useRef } from 'react';
 import ReactPlayer from 'react-player/lazy';
 // import ReactExtension from './react-extension.js';
 // import ExtractBoard from './features/clip/ExtractBoard.js'; 
-import ClipExtractor from './features/clip/ClipExtractor';
-import CaptionsTracks from './features/language/CaptionsTracks';
+import ClipExtractor from '../../features/clip/ClipExtractor';
+import CaptionsTracks from '../../features/language/CaptionsTracks';
 // import Counter from './features/counter/Counter.js';
 // import Subtitles from './features/language/Subtitles.js';
-import { ArchiveInfoV1 } from '../../ytjs/src/utils/archive';
+import { ArchiveInfoV1 } from '../../../../ytjs/src/utils/archive';
 type ArchiveInfo = ArchiveInfoV1 // | ArchiveInfoV2; // totally extensible
 
-import { convertHHMMSS2Seconds, convertSeconds2HHMMSS, constrainToRange, formatTime } from './utils/Duration';
-import Archive from './features/archive/Archive';
+import { convertHHMMSS2Seconds, convertSeconds2HHMMSS, constrainToRange, formatTime } from '../../utils/Duration';
+import Archive from '../../features/archive/Archive';
 
 function App() {
   const queryParameters = new URLSearchParams(window.location.search)

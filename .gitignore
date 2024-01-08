@@ -7,7 +7,11 @@ server/*
 dist/main*.js*
 dist/reactPlayer*.js*
 dist/archive
+dist/elements
 */scripts/reactPlayer*.js*
+dist/*.bundle.js
+dist/*.bundle.js.map
+dist/*.bundle.js.LICENSE.txt
 
 #### !MANUAL EDITS HERE
 

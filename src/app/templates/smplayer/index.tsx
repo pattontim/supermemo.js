@@ -6,7 +6,7 @@ import ReactDOM from 'react-dom/client';
 // import { PersistGate } from 'redux-persist/integration/react';
 // import { store, persistor } from './app/store';
 
-import App from './app/SMPlayer';
+import App from './SMPlayer';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
     //  <Provider store={store}> 
