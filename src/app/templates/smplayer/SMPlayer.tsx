@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from 'react';
 import ReactPlayer from 'react-player/lazy';
 // import ReactExtension from './react-extension.js';
 // import ExtractBoard from './features/clip/ExtractBoard.js'; 
-import ClipExtractor from '../../features/clip/ClipExtractor';
+import ClipExtractor from '../../features/extractors/ClipExtractor';
 import CaptionsTracks from '../../features/language/CaptionsTracks';
 // import Counter from './features/counter/Counter.js';
 // import Subtitles from './features/language/Subtitles.js';
@@ -25,7 +25,7 @@ function App() {
   const [stop, setStop] = useState(queryParameters.get('stop'));
   // const [stopStyle, setStopStyle] = React.useState({ border: `2px solid ${borderCl}` });
   const [imposeBoundaries, setImposeBoundaries] = useState(1);
-  const [videoid, setVideoid] = useState(queryParameters.get('videoid'));
+  const [videoid, setVideoid] = useState(queryParameters.get('videoid')?.trim() ?? null);
   const videoIdAtStart = new String(queryParameters.get('videoid')).toString();
   const [repeat, setRepeat] = useState(true);
   const [numRepeats, setNumRepeats] = useState(0);
@@ -349,6 +349,7 @@ function App() {
       {/* <Counter /> */}
       {/* <Subtitles /> */}
       {/* <ReactExtension /> */}
+      { archiveInfo && <Archive v_id={queryParameters.get("videoid")?.trim() ?? ""} info={archiveInfo} setInfo={setArchiveInfo}/> }
       { archiveInfo?.captions?.caption_tracks &&
       archiveInfo.captions.caption_tracks.length > 0 ?
         <CaptionsTracks
@@ -358,7 +359,6 @@ function App() {
         />
         : null
       }
-      { archiveInfo && <Archive v_id={queryParameters.get("videoid") ?? ""} info={archiveInfo} setInfo={setArchiveInfo}/> }
     </div>
   );
 }

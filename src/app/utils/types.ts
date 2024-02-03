@@ -12,6 +12,6 @@ export interface CaptionTrack {
   name: Text;
   vss_id: string;
   language_code: string;
-  kind: string;
+  kind?: string | undefined;
   is_translatable: boolean;
 }

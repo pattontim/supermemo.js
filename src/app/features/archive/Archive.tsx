@@ -9,8 +9,8 @@ interface ArchiveProps<T> {
 }
 
 function isValidSMId(id: string, expectedLen = 11) {
-    if(id.length != expectedLen) return false;
-    const matching = id.match(/^[a-zA-Z0-9_\-]+$/);
+    if(id.trim().length != expectedLen) return false;
+    const matching = id.trim().match(/^[a-zA-Z0-9_\-]+$/);
     if(!matching || matching.length != 1) return false;
     return matching[0].length == expectedLen;
 }
@@ -20,7 +20,7 @@ function isValidSMJSId(id: string) {
 }
 
 export default function Archive<T extends unknown> ({ v_id, info, setInfo: setArchiveInfo } : ArchiveProps<T>) {
-    const [isActive, setIsActive] = useState(false);
+    const [isActive, setIsActive] = useState(true);
     const [archiveId, setArchiveId] = useState(v_id);
     // const [availableFormats, setAvailableFormats] = useState< ArchiveInfoV1["file_formats"] >({});
     const [selectedFormat, setSelectedFormat] = useState<keyof ArchiveInfoV1["file_formats"] | undefined>(undefined);
@@ -58,8 +58,7 @@ export default function Archive<T extends unknown> ({ v_id, info, setInfo: setAr
             <div className="accordion">
                 <div className="accordion-item">
                     <div className="accordion-title" onClick={handleClick}>
-                        <div>Archive</div>
-                        <div>{isActive ? '-' : '+'}</div>
+                        <div>Archived? [{isActive ? '−' : '+'}]</div>
                     </div>
                     { isActive &&
                     <div className="accordion-content">
@@ -70,9 +69,16 @@ export default function Archive<T extends unknown> ({ v_id, info, setInfo: setAr
                                 <fieldset>
                                     <div className="ctrlGrp firstCtrlGrp">
                                         <div className="ctrlSubgrp firstCtrlSubgrp">
-                                            <div> Archived? </div>
                                             {/* <div> {info?.archived_on ? "🈯" : "🈵"} </div> */}
-                                            <div> {Object.keys(info?.archived_on ?? []).length != 0 ? "Yes" : "No"} </div>
+                                            {Object.keys(info?.archived_on ?? []).length !== 0 ?
+                                                <div style={{ backgroundColor: 'cyan', color: 'yellow', padding: '10px', borderRadius: '5px', boxShadow: '0 0 10px rgba(0, 0, 0, 0.3)' }}>
+                                                    <span style={{ textShadow: '0 0 5px white' }}>Yes</span>
+                                                </div>
+                                                :
+                                                <div style={{ color: 'red', fontWeight: 'bold', padding: '10px', borderRadius: '5px', boxShadow: '0 0 10px rgba(0, 0, 0, 0.3)' }}>
+                                                    No
+                                                </div>
+                                            }
                                         </div>
                                         <div className="ctrlSubgrp secondCtrlSubgrp">
                                             {/* <input placeholder='yt vid id e.g. dQw4w9WgXcQ' type="text" id="archive_id" value={archiveId} onChange={e => setArchiveId(e.target.value)} /> */}

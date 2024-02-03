@@ -1,4 +1,5 @@
 import express from 'express';
+import { SERVER_CONFIG } from '../../server-config';
 import { Innertube, UniversalCache, Utils } from 'youtubei.js';
 
 // @ts-ignore
@@ -15,8 +16,11 @@ import { PlayerCaptionsTracklist } from 'youtubei.js/dist/src/parser/nodes';
 import { ElementInfo, ElementInfoV1 } from './utils/element';
 
 const app = express();
-const port = 3000; // You can change the port number if needed
 
+//let fullUrl = SERVER_CONFIG.development.url + ":" + SERVER_CONFIG.development.port;
+let port = 3000;
+let fullUrl = "localhost" + ":" + port;
+// let port = SERVER_CONFIG.development.port;
 let cacheDir = './.cache';
 let archiveDir = './dist/archive';
 let elementsDir = './dist/elements';
@@ -206,7 +210,7 @@ app.get('/mpd/invalidate/:v_id', async (req, res) => {
 app.get('/templateUrl/:id', async (req, res) => {
 	const id = req.params.id;
 	if(id.length == 11){
-		res.send(`http://localhost:${port}/templates/smplayer.html`);
+		res.send(`http://${fullUrl}/templates/smplayer.html`);
 		return;
 	}
 
@@ -222,7 +226,7 @@ app.get('/templateUrl/:id', async (req, res) => {
 	// open at templates/id.html and ret the template
 	// const template = JSON.parse(readFileSync(path.join(archiveDir, 'templates', info.templateId + '.json'), 'utf-8'));
 
-	res.send(`http://localhost:${port}/templates/${info.templateId}.html`);
+	res.send(`http://${fullUrl}/templates/${info.templateId}.html`);
 });
 
 // TODO quality selection
@@ -244,12 +248,12 @@ app.get('/streamUrl/:v_id', async (req, res) => {
 	const bestFormat = archiveFormats[bestKey];
 
 	if (bestFormat) {
-		const url = new URL(`http://localhost:${port}/archive/${v_id}/${bestKey}`);
+		const url = new URL(`http://${fullUrl}/archive/${v_id}/${bestKey}`);
 		res.send(url.href);
 		return;
 	}
   } else {
-	const url = new URL(`http://localhost:${port}/mpd/${v_id}.mpd`);
+	const url = new URL(`http://${fullUrl}/mpd/${v_id}.mpd`);
 	url.searchParams.set('target', target as string);
 	res.send(url.href + "#" + start + "," + stop);
   }
@@ -362,11 +366,11 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 	// TODO better match the format to the browser
 	try {
 		if (target == "IE") {
-			manifest = await videoInfo.toDash((url: any) => new URL(`http://localhost:${port}/proxy/${url}`)
+			manifest = await videoInfo.toDash((url: any) => new URL(`http://${fullUrl}/proxy/${url}`)
 				, (format: any) => !formatsToUse.find(fmt => format.mime_type.includes(fmt))
 			);
 		} else {
-			manifest = await videoInfo.toDash((url: any) => new URL(`http://localhost:${port}/proxy/${url}`));
+			manifest = await videoInfo.toDash((url: any) => new URL(`http://${fullUrl}/proxy/${url}`));
 		}
 		res.send(manifest);
 	} catch (error) {
@@ -382,7 +386,7 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 
 	try {
 		for (const caption of videoInfo?.captions?.caption_tracks ?? []) {
-			caption.base_url = `http://localhost:${port}/fixvtt/${caption.base_url}`;
+			caption.base_url = `http://${fullUrl}/fixvtt/${caption.base_url}`;
 		}
 		// TypeError possible
 	} catch (error) {
@@ -457,7 +461,7 @@ app.get('/archive/:v_id', async (req, res) => {
 		const vid_formats = vid_files.map((file) => {
 			return {
 				"itag": file,
-				"url": `http://localhost:${port}/archive/${v_id}/${file}`
+				"url": `http://${fullUrl}/archive/${v_id}/${file}`
 			}
 		});
 		// vid_formats.sort((a, b) => Number.parseInt(a.itag.split('.')[0]) - b.itag.split('.')[0]);
@@ -591,8 +595,8 @@ app.get('/archive/:v_id', async (req, res) => {
 					res.status(507).send('Error: ' + error);
 					return;
 				}
-				const preFix = "http://localhost:" + port + "/fixvtt/";
-				const fsUrl = `http://localhost:${port}/archive/${v_id}/captions/${captionTrack.language_code}.vtt`;
+				const preFix = "http://" + fullUrl + "/fixvtt/";
+				const fsUrl = `http://${fullUrl}/archive/${v_id}/captions/${captionTrack.language_code}.vtt`;
 				captionTrack.base_url = preFix + fsUrl;
 			}
 		}

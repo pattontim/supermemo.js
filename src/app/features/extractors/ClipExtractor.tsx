@@ -33,11 +33,18 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
     
     const [options, setOptions] = useState<Option[]>([]);
 
+    // these props are emulated to match the original code behavior
+    const [emulatedCustomPromptVisible, setEmulatedCustomPromptVisible] = useState("0");
+    const [emulatedExtractName, setEmulatedExtractName] = useState("")
+
     const addOption = (offsetSec: number) => {
         setPlaying(false);
         const defaultName = "Extract #" + (options.length + 1);
+        // @ts-expect-error
+        setEmulatedCustomPromptVisible(1);
         const newOption = prompt('Enter an extract name:', defaultName);
         if (newOption) {
+            setEmulatedExtractName(newOption);
             let selStart = formatTime(convertHHMMSS2Seconds(start), duration)
             let selStop = formatTime(convertHHMMSS2Seconds(stop), duration)
             if (offsetSec < 0) {
@@ -53,6 +60,9 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
             // setAtAbs('start', convertHHMMSS2Seconds(stop));
             resetAt('stop');
             setPlaying(true);
+        } else {
+            // @ts-expect-error
+            setEmulatedCustomPromptVisible(0);
         }
     };
 
@@ -126,7 +136,7 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
                 <div className="bd">
                     <form name="promptForm" id="promptForm">
                         <label htmlFor="extractName">Extract name: </label>
-                        <input type="text" name="extractName" id="extractName"/>
+                        <input type="text" name="extractName" id="extractName" value={emulatedExtractName}/>
                     </form>
                 </div>
             </div>
@@ -195,7 +205,7 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
                             style={{background: "transparent url(/iv/images/icons.png) no-repeat -140px 0"}} onClick={handleRemoveCurrentExtractBtnClick}
                             // onMouseOver={(e) => {e.currentTarget.style.backgroundPosition = "-140px -20px"}}
                             />}
-                        <input type="hidden" value="0" id="customPromptVisible" />
+                        <input type="hidden" value={emulatedCustomPromptVisible} id="customPromptVisible" />
                     </div>
                 </div>
                 <div className="row">

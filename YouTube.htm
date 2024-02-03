@@ -45,31 +45,31 @@
             //Then redefine the old console
             window.console = console;
 
-			var buildUrlString = function() {
-					var urlString = "",
-						oTs = new Date(),
-						sTs = [
-							oTs.getFullYear(),
-							oTs.getMonth(),
-							oTs.getDate(),
-							oTs.getHours(),
-							oTs.getMinutes(),
-							oTs.getSeconds(),
-							oTs.getMilliseconds()
-						].join("");
-					
-					urlString += "videoid=" + document.getElementById("videoid").value + "&";
-					urlString += "resume=" + document.getElementById("resumevideoat").value + "&";
-					urlString += "start=" + document.getElementById("startvideoat").value + "&";
-					urlString += "stop=" + document.getElementById("stopvideoat").value + "&";
-					urlString += "ts=" + sTs;
-					
-					return urlString;
-				},
-				sProtocol = 'microsoft-edge',
-				sBaseUrl = "http://localhost:8000/yt_new.htm?",
-				sBaseHeaderUrl = "http://localhost:8000/yt_header.htm?",
-				sUrlString = buildUrlString();
+			var buildUrlString = function () {
+				var urlString = "",
+					oTs = new Date(),
+					sTs = [
+						oTs.getFullYear(),
+						oTs.getMonth(),
+						oTs.getDate(),
+						oTs.getHours(),
+						oTs.getMinutes(),
+						oTs.getSeconds(),
+						oTs.getMilliseconds()
+					].join("");
+
+				urlString += "videoid=" + document.getElementById("videoid").value + "&";
+				urlString += "resume=" + document.getElementById("resumevideoat").value + "&";
+				urlString += "start=" + document.getElementById("startvideoat").value + "&";
+				urlString += "stop=" + document.getElementById("stopvideoat").value + "&";
+				urlString += "ts=" + sTs;
+
+				return urlString;
+			},
+			sProtocol = 'microsoft-edge',
+			sBaseUrl = "http://localhost:8000/yt_new.htm?",
+			sBaseHeaderUrl = "http://localhost:8000/yt_header.htm?",
+			sUrlString = buildUrlString();
 			
 			/*
 			 * Select one of the following default behaviours
@@ -101,9 +101,10 @@
 				if (xhr.readyState === 4 && xhr.status === 200) {
 					document.location.href = xhr.responseText + '?' + sUrlString;
 				}
-				else {
+				else if (xhr.readyState === 4 && xhr.status !== 200) {
 					//console.error('Request failed with status: ' + xhr.status); 
 					// TODO direct to default SM youtube template
+					document.location.href = "https://youtube.supermemo.org/?" + sUrlString;
 				}
 			};
 

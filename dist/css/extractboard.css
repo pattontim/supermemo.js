@@ -321,26 +321,29 @@ input {
 
 /* ACCORDION ELEMS */
 .accordion {
-  margin: 2rem auto;
+  /* margin: 2rem auto; */
+  border: 1px solid #000000;
+  max-width: 800px;
 }
 
 .accordion-title {
-  display: flex;
-  flex-direction: row;
-  justify-content: space-between;
-  cursor: pointer;
-  background-color: #21aeca;
+  /* display: flex; */
+  /* flex-direction: row; */
+  /* justify-content: space-between; */
+  /* cursor: pointer; */
+  background-color: #ffffff;
 }
 
 .accordion-title:hover {
-  background-color: #3ab4cc;
+  background-color: #ffffff;
 }
 
 .accordion-title,
 .accordion-content {
-  padding: 1rem;
+  padding: 0rem;
 }
 
 .accordion-content {
-  background-color: #39b9d2;
+  background-color: #ffffff;
+  border: 1px solid #000000;
 }
