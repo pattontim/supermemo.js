@@ -19,6 +19,19 @@
     return seconds;
   }
 
+  /** HHMMSS = x:y:z, MMSS = y:z, SS = z  */
+  export function convertHHMMSS2Vector3D(hhmmss: string | null) {
+    if (hhmmss === null) {
+      return { x: 0, y: 0, z: 0 };
+    }
+    var splitTimestamp = hhmmss.split(':');
+    const x = splitTimestamp.length > 2 ? parseInt(splitTimestamp[0], 10) : 0;
+    const y = splitTimestamp.length > 1 ? parseInt(splitTimestamp[1], 10) : 0;
+    const z = splitTimestamp.length > 0 ? parseInt(splitTimestamp[2], 10) : 0;
+    return { x, y, z };
+  }
+
+
   export function convertSeconds2HHMMSS(duration: number | string) {
     var sec_num = typeof(duration) == "number" ? Math.floor(duration) : parseInt(duration as string, 10);
     var hours: string | number = Math.floor(sec_num / 3600);

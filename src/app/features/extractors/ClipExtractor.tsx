@@ -16,7 +16,7 @@ interface PlayerProps<T> {
     videoid: string | null;
     played: number;
     duration: number;
-    setAt: (type: string, offsetSec: number) => void;
+    setAt: (type: string, offsetSec?: number) => void;
     setAtAbs: (type: string, abs: number) => void;
     resetAt: (type: string) => void;
     goTo: (type: string) => void;
@@ -25,10 +25,12 @@ interface PlayerProps<T> {
     playing: boolean;
     repeat: boolean;
     handleToggleRepeat: () => void;
+    handleCopyVideoDetails: () => void;
+    isShortClip: boolean;
 }
 
 export default function ClipExtractor<T extends unknown>({resume, start, stop, boundaries, videoid, played, duration, 
-    setAt, setAtAbs, resetAt, goTo, offset, setPlaying, playing, repeat, handleToggleRepeat } : PlayerProps<T>)
+    setAt, setAtAbs, resetAt, goTo, offset, setPlaying, playing, repeat, handleToggleRepeat, handleCopyVideoDetails, isShortClip } : PlayerProps<T>)
     {
     
     const [options, setOptions] = useState<Option[]>([]);
@@ -116,12 +118,50 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
     };
 
 
-    function handleDetailsClick(): void {
-        throw new Error("Function not implemented.");
-    }
-
     function handleScreenshotClick(): void {
-        throw new Error("Function not implemented.");
+        // Get the first video element on the page
+        var video = document.querySelector('video');
+
+        if (video) {
+            // Create a canvas element
+            var canvas = document.createElement('canvas');
+            var ctx = canvas.getContext('2d');
+
+            if(!ctx) return;
+
+            // Set canvas dimensions to match the video
+            canvas.width = video.width || video.videoWidth;
+            canvas.height = video.height || video.videoHeight;
+
+            // Draw the current frame of the video onto the canvas
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            // Convert the canvas content to a data URL with JPEG format
+            var imageDataURL = canvas.toDataURL('image/jpeg'); // specify 'image/jpeg' for JPEG format
+
+            var newWinFeatures = 'width=' + canvas.width + ',height=' + canvas.height + ',resizable=yes,scrollbars=no,status=yes,toolbar=no,menubar=no,location=no';
+
+            // Open a new window
+            var newWindow = window.open('', '_blank', newWinFeatures);
+
+            if (newWindow) {
+                // Generate HTML content with the image
+                var htmlContent = '<html><head><title>Image Viewer</title></head><body style="margin: 0; display: flex; align-items: center; justify-content: center; height: 100vh;"><img src="' + imageDataURL + '" alt="Image"></body></html>';
+
+                // Set the HTML content of the new window
+                newWindow.document.write(htmlContent);
+
+                newWindow.focus();
+
+                // Display a message
+                console.log('Image opened in a new window. Right-click the image and select "Copy" from the context menu.');
+            } else {
+                console.error('Failed to open a new window.');
+            }
+        } else {
+            console.error('No video element found on the page.');
+        }
+
     }
 
     function handleResetBtnClick(): void {
@@ -155,27 +195,34 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
             <fieldset>
                 <div className="row">
                     <div className="col">
-                        <button type="button" id="mark" onClick={() => setAt('resume', 0)}> [ Mark ]</button>
+                        {!isShortClip ?
+                            <button type="button" id="mark" onClick={() => setAt('resume')}> [ Mark ]</button>
+                            : 
+                            <>
+                            <button type="button" id="mark" onClick={() => {}}>[ </button>
+                            <button type="button" id="mark" onClick={() => {}}> ]</button>
+                            </>
+                        }
                         <img src="/iv/images/transparent.png" title="Rewind 1 Sec." alt="Rewind 1 Sec." id="rewindResume" onClick={() => offset('resume', -1)} className="imgBtn rewind" />
                         <img src="/iv/images/transparent.png" alt="Go to" title="Go to" id="resume" onClick={() => goTo('resume')} className="imgBtn goTo" />
                         <img src="/iv/images/transparent.png" title="Forward 1 Sec." alt="Forward 1 Sec." id="forwardResume" className="imgBtn forward" onClick={() => offset('resume', 1)} />
-                        <input type="text" value={resume ?? ''} id="resumevideoat" onClick={() => setAt('resume', 0)} onChange={() => { }} />
+                        <input type="text" value={resume ?? ''} id="resumevideoat" onClick={() => setAt('resume')} onChange={() => { }} />
                         <img src="/iv/images/transparent.png" alt="Restore default" id="restoreResumeAt" onClick={() => resetAt('resume')} className="imgBtn restoreStartAt" />
                     </div>
                     <div className="col">
-                        <button type="button" id="start" onClick={() => setAt('start', 0)} title="Set clip start" style={{width: "45px"}}>[</button>
+                        <button type="button" id="start" onClick={() => setAt('start')} title="Set clip start" style={{width: "45px"}}>[</button>
                         <img src="/iv/images/transparent.png" title="Rewind 1 Sec." alt="Rewind 1 Sec." id="rewindStart" onClick={() => offset('start', -1)} className="imgBtn rewind"/>
                         <img src="/iv/images/transparent.png" alt="Go to" title="Go to" id="goToStart" onClick={() => goTo('start')} className="imgBtn goTo"/>
                         <img src="/iv/images/transparent.png" title="Forward 1 Sec." alt="Forward 1 Sec." id="forwardStart" onClick={() => offset('start', 1)} className="imgBtn forward"/>
-                        <input type="text" value={start ?? ''} id="startvideoat" onClick={() => setAt('start', 0)} onChange={() => {}}/>
+                        <input type="text" value={start ?? ''} id="startvideoat" onClick={() => setAt('start')} onChange={() => {}}/>
                         <img src="/iv/images/transparent.png" alt="Restore default" title="Restore default" id="restoreStartAt" onClick={() => resetAt('start')} className="imgBtn restoreStartAt"/>
                         ~
                         <img src="/iv/images/transparent.png" alt="Restore default" title="Restore default" id="restoreStopAt" onClick={() => resetAt('stop')} className="imgBtn restoreStopAt"/>
-                        <input type="text" value={stop ?? ''} id="stopvideoat" onClick={() => setAt('stop', 0)} onChange={() => {}}/>
+                        <input type="text" value={stop ?? ''} id="stopvideoat" onClick={() => setAt('stop')} onChange={() => {}}/>
                         <img src="/iv/images/transparent.png" title="Rewind 1 Sec." alt="Rewind 1 Sec." id="rewindStop" onClick={() => offset('stop', -1)} className="imgBtn rewind"/>
                         <img src="/iv/images/transparent.png" alt="Go to" title="Go to" id="goToStop" onClick={() => goTo('stop')} className="imgBtn goTo"/>
                         <img src="/iv/images/transparent.png" title="Forward 1 Sec." alt="Forward 1 Sec." id="forwardStop" onClick={() => offset('stop', 1)} className="imgBtn forward"/>
-                        <button type="button" id="stop" onClick={() => setAt('stop', 0)} title="Set clip end" style={{width: "45px"}}>]</button>
+                        <button type="button" id="stop" onClick={() => setAt('stop')} title="Set clip end" style={{width: "45px"}}>]</button>
                     </div>
                 </div>
                 <div className="row">
@@ -210,7 +257,7 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
                 </div>
                 <div className="row">
                     <div className="col">
-                        <button type="button" id="copyBtn" onClick={handleDetailsClick} >YT Copy Details</button>
+                        <button type="button" id="copyBtn" onClick={handleCopyVideoDetails} >YT Copy Details</button>
                         <button type="button" id="screenshotBtn" onClick={handleScreenshotClick}>YT Screenshot</button>
                         <button type="button" id="copyCaptionBtn" onClick={handleCaptionCopyBtnClick}>Copy Cap</button>
                     </div>

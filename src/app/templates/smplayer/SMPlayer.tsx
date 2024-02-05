@@ -11,7 +11,7 @@ import CaptionsTracks from '../../features/language/CaptionsTracks';
 import { ArchiveInfoV1 } from '../../../../ytjs/src/utils/archive';
 type ArchiveInfo = ArchiveInfoV1 // | ArchiveInfoV2; // totally extensible
 
-import { convertHHMMSS2Seconds, convertSeconds2HHMMSS, constrainToRange, formatTime } from '../../utils/Duration';
+import { convertHHMMSS2Seconds, convertSeconds2HHMMSS, constrainToRange, formatTime, convertHHMMSS2Vector3D } from '../../utils/Duration';
 import Archive from '../../features/archive/Archive';
 
 function App() {
@@ -26,7 +26,6 @@ function App() {
   // const [stopStyle, setStopStyle] = React.useState({ border: `2px solid ${borderCl}` });
   const [imposeBoundaries, setImposeBoundaries] = useState(1);
   const [videoid, setVideoid] = useState(queryParameters.get('videoid')?.trim() ?? null);
-  const videoIdAtStart = new String(queryParameters.get('videoid')).toString();
   const [repeat, setRepeat] = useState(true);
   const [numRepeats, setNumRepeats] = useState(0);
 
@@ -49,6 +48,7 @@ function App() {
   const [loop, setLoop] = useState(false);
   const [seeking, setSeeking] = useState(false);
   const [archiveInfo, setArchiveInfo] = useState<ArchiveInfo>();
+  const [isShortClip, setIsShortClip] = useState(false);
 
   const ref = useRef<ReactPlayer>(null)
 
@@ -65,8 +65,10 @@ function App() {
 
     // TODO
     const url = new URL("http://localhost:3000/streamUrl/" + queryParameters.get('videoid'));
-    url.searchParams.append('startSec', convertHHMMSS2Seconds(start).toString());
-    url.searchParams.append('stopSec', convertHHMMSS2Seconds(stop).toString());
+    const startSec = convertHHMMSS2Seconds(start);
+    const stopSec = convertHHMMSS2Seconds(stop);
+    url.searchParams.append('startSec', startSec.toString());
+    url.searchParams.append('stopSec', stopSec.toString());
     url.searchParams.append('target', 'IE');
 
     const req = new XMLHttpRequest();
@@ -83,6 +85,14 @@ function App() {
     req.send();  
 
   }, []);
+
+  useEffect(() => {
+    const startSec = convertHHMMSS2Seconds(start);
+    const stopSec = convertHHMMSS2Seconds(stop);
+    const clipDurationSec = stopSec - startSec;
+    // TODO
+    // setIsShortClip(clipDurationSec < 15);
+  }, [duration]);
 
   const handlePlay = () => {
     console.log('onPlay')
@@ -114,7 +124,10 @@ function App() {
 
   // TODO state 
   const handleProgress = (state: any) => {
-    console.log('onProgress', state)
+    console.log('onProgress', state.playedSeconds, (state.playedSeconds * 10).toFixed(2) + '%')
+    if(isShortClip) {
+      scheduleBeep(state.playedSeconds);
+    }
     setPlayed(state.playedSeconds)
     if(played == 0 && convertHHMMSS2Seconds(start) == convertHHMMSS2Seconds(stop)) {
       handleResetAt("stop");
@@ -168,6 +181,91 @@ function App() {
     }
   }
 
+  const scheduleBeep = (playedSeconds: number) => {
+    const resumeVector = convertHHMMSS2Vector3D(resume);
+    const startSec = convertHHMMSS2Seconds(start);
+    const stopSec = convertHHMMSS2Seconds(stop);
+
+    // Check if B or C is 0, return if true
+    if (resumeVector.y === 0 || resumeVector.z === 0) {
+      return;
+    }
+
+    const msOffset = {
+      start: 0,
+      stop: 0
+    }
+    function applyOffset(a: Number) {
+      switch (a) {
+        case 1: 
+          msOffset.start += 25;
+          break;
+        case 2: 
+          msOffset.start -= 25;
+          break;
+        case 3: 
+          msOffset.stop += 25;
+          break;
+        case 4: 
+          msOffset.stop -= 25;
+          break;
+        case 5: 
+          msOffset.start += 50;
+          break;
+        case 6: 
+          msOffset.start -= 50;
+          break;
+        case 7: 
+          msOffset.stop += 50;
+          break;
+        case 8: 
+          msOffset.stop -= 50;
+          break;
+        case 9: // -
+          // Custom logic for action 9
+          break;
+        case 10: // -
+          // Custom logic for action 10
+          break;
+        default:
+          // console.error('Invalid action');
+      }
+    }
+    applyOffset(resumeVector.x);
+
+    const percentModifier = {
+      start: resumeVector.y / 59,
+      stop: resumeVector.z / 59
+    }
+
+    // Calculate duration and beep times
+    const duration = stopSec - startSec;
+    const beepStartSec = startSec + (duration * percentModifier.start) //+ msOffset.start;
+    const beepStopSec = startSec + (duration * percentModifier.stop) //+ msOffset.stop;
+
+    if(playedSeconds > beepStartSec){
+      console.log("Not running after possible start");
+      return
+    }
+
+    const offsetToStart = beepStartSec - playedSeconds;
+    const offsetToStop = beepStopSec - playedSeconds;
+    console.log('offsetToStart', offsetToStart);
+
+    //this progress's timeslice start can vary by up to 300ms
+    if (offsetToStart >= 0 && offsetToStart <= 1) {
+      const muteDuration = (offsetToStop * 1000) - (offsetToStart * 1000)
+      if(isNaN(muteDuration) || muteDuration < 0) return;
+      setTimeout(() => {
+        setMuted(true);
+        setTimeout(() => {
+          setMuted(false);
+        }, muteDuration);
+      }, offsetToStart * 1000);
+      console.log('MUTING FOR', muteDuration, 'ms');
+    }
+  }
+
   function handleToggleRepeat() {
     setRepeat(!repeat);
   }
@@ -205,7 +303,7 @@ function App() {
     }
   }
 
-  function handleSetAt(type: string, offsetSec: number) {
+  function handleSetAt(type: string, offsetSec = 0, offsetMin = 0, offsetHour = 0) {
     console.log('handleSetAt', type, offsetSec, played, duration, played + offsetSec)
     let new_val = formatTime(played + offsetSec, duration);
     if (type === "resume") {
@@ -261,6 +359,29 @@ function App() {
       setArchiveInfo(JSON.parse(archiveReq.response) as ArchiveInfo);
     }
     archiveReq.send();
+  }
+
+  function handleCopyVideoDetails() {
+    if(!archiveInfo) return;
+    const detailsToCopy = `Title: ${archiveInfo.title}
+====================
+Published: ${archiveInfo.published}
+====================
+Author: ${archiveInfo.author_name}
+====================
+Channel URL: ${archiveInfo.author_channel_url}
+====================
+Description:\n${archiveInfo.description}
+====================`;
+
+    const textarea = document.createElement('textarea');
+    textarea.value = detailsToCopy;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+
+      alert('Video details copied to clipboard!');
   }
 
     function handleStopChange(elem: HTMLInputElement) {          
@@ -344,6 +465,8 @@ function App() {
       playing
       repeat
       handleToggleRepeat={handleToggleRepeat}
+      handleCopyVideoDetails={handleCopyVideoDetails}
+      isShortClip={isShortClip}
       />
       {/* <ExtractBoard/> */}
       {/* <Counter /> */}
