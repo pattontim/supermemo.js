@@ -323,7 +323,7 @@ input {
 .accordion {
   /* margin: 2rem auto; */
   border: 1px solid #000000;
-  max-width: 800px;
+  max-width: 808px;
 }
 
 .accordion-title {
@@ -345,5 +345,5 @@ input {
 
 .accordion-content {
   background-color: #ffffff;
-  border: 1px solid #000000;
+  /* border: 1px solid #000000; */
 }

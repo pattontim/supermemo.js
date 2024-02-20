@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useRef } from "react";
 import { useState } from "react";
 import { convertHHMMSS2Seconds, formatTime } from "../../utils/Duration";
 // import { PlayerProps } from "../../utils/types";
@@ -34,6 +34,8 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
     {
     
     const [options, setOptions] = useState<Option[]>([]);
+    const [selectedOption, setSelectedOption] = React.useState<Option | null>(null);
+    const extractNum = useRef(1);
 
     // these props are emulated to match the original code behavior
     const [emulatedCustomPromptVisible, setEmulatedCustomPromptVisible] = useState("0");
@@ -41,12 +43,12 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
 
     const addOption = (offsetSec: number) => {
         setPlaying(false);
-        const defaultName = "Extract #" + (options.length + 1);
+        const defaultName = "Extract #" + extractNum.current++;
         // @ts-expect-error
         setEmulatedCustomPromptVisible(1);
-        const newOption = prompt('Enter an extract name:', defaultName);
-        if (newOption) {
-            setEmulatedExtractName(newOption);
+        const newOptionText = prompt('Enter an extract name:', defaultName);
+        if (newOptionText) {
+            setEmulatedExtractName(newOptionText);
             let selStart = formatTime(convertHHMMSS2Seconds(start), duration)
             let selStop = formatTime(convertHHMMSS2Seconds(stop), duration)
             if (offsetSec < 0) {
@@ -58,20 +60,22 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
             }
 
             const formattedOption = selStart + ' - ' + selStop;
-            setOptions([...options, { value: formattedOption, label: newOption }]);
+            const newOption = { value: formattedOption, label: newOptionText };
+            setOptions([...options, newOption]);
+            setSelectedOption(newOption);
             // setAtAbs('start', convertHHMMSS2Seconds(stop));
             resetAt('stop');
             setPlaying(true);
-        } else {
-            // @ts-expect-error
-            setEmulatedCustomPromptVisible(0);
         }
+        // @ts-expect-error this is how the original code behaves
+        setEmulatedCustomPromptVisible(0);
     };
 
     // TODO set selected so we can mirror start changes to start/stop indnpendently 
     const handleSelectChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
         const selectedOption = event.target.value;
         if(selectedOption){
+            setSelectedOption(options.find(option => option.value === selectedOption) || null);
             const [selStart, selStop] = selectedOption.split(' - ');
             setAtAbs('start', convertHHMMSS2Seconds(selStart));
             setAtAbs('stop', convertHHMMSS2Seconds(selStop));
@@ -80,14 +84,12 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
     };
 
     const handleRemoveCurrentExtractBtnClick = () => {
-        // const selectedOption = document.getElementById('extracts') as HTMLSelectElement;
-        alert("Not implemented yet")
-        // if(selectedOption){
-        //     const [selStart, selStop] = selectedOption.value.split(' - ');
-        //     setAtAbs('start', convertHHMMSS2Seconds(selStart));
-        //     setAtAbs('stop', convertHHMMSS2Seconds(selStop));
-        //     goTo('start');
-        // }
+        if(selectedOption){
+            const newOptions = options.slice();
+            newOptions.splice(options.indexOf(selectedOption), 1);
+            setOptions(newOptions);
+            setSelectedOption(newOptions.at(-1) ?? null);
+        }
     };
 
     const handleCaptionCopyBtnClick = () => {
@@ -239,14 +241,14 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
                         <button type="button" className="" id="extractm5" onClick={() => addOption(-5)}>-5</button>
                         <button type="button" className="" id="extract" onClick={() => addOption(5)}>+5</button>
                         <button type="button" className="" id="extract10" onClick={() => addOption(10)}>+10</button>
-                        <select id="extracts" multiple={true} onChange={handleSelectChange}>
+                        <select id="extracts" value={selectedOption?.value} onChange={handleSelectChange}>
                             {options.map((option, index) => (
                                 <option value={option.value}>
                                     {option.label}
                                 </option>
                             ))}
                         </select>
-                        { options.length == 0 ? <img src="/iv/images/transparent.png" alt="Remove the currently selected extract" id="removeCurrentExtract" className="imgBtn removeCurrentExtract" />
+                        { selectedOption == null ? <img src="/iv/images/transparent.png" alt="Remove the currently selected extract" id="removeCurrentExtract" className="imgBtn removeCurrentExtract" />
                         : <img 
                             src="/iv/images/transparent.png" alt="Remove the currently selected extract" id="removeCurrentExtract" className="imgBtn removeCurrentExtract" 
                             style={{background: "transparent url(/iv/images/icons.png) no-repeat -140px 0"}} onClick={handleRemoveCurrentExtractBtnClick}
@@ -262,11 +264,11 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
                         <button type="button" id="copyCaptionBtn" onClick={handleCaptionCopyBtnClick}>Copy Cap</button>
                     </div>
                 </div>  
-                <div className="row">
-                    <textarea id="log" style={{width: "100%"}}></textarea>
+                <div className="row" hidden>
+                    <textarea id="log" style={{width: "100%"}} hidden></textarea>
                 </div>
-                <div className="row">
-                    <div className="ctrlSubgrp firstCtrlSubgrp debug">Date: May 24, 2023</div>
+                <div className="row" hidden>
+                    <div className="ctrlSubgrp firstCtrlSubgrp debug" hidden>Date: May 24, 2023</div>
                 </div>
             </fieldset>
         </div>
