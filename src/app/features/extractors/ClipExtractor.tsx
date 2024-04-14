@@ -1,6 +1,6 @@
 import React, { useRef } from "react";
 import { useState } from "react";
-import { convertHHMMSS2Seconds, formatTime } from "../../utils/Duration";
+import { convertHHMMSS2Seconds, convertHHMMSS2Vector3D, convertVector3D2HHMMSS, formatTime } from "../../utils/Duration";
 // import { PlayerProps } from "../../utils/types";
 
 interface Option {
@@ -16,7 +16,7 @@ interface PlayerProps<T> {
     videoid: string | null;
     played: number;
     duration: number;
-    setAt: (type: string, offsetSec?: number) => void;
+    setAt: (type: string,  offsetSec?: number, offsetMin?: number, offsetHour?: number) => void;
     setAtAbs: (type: string, abs: number) => void;
     resetAt: (type: string) => void;
     goTo: (type: string) => void;
@@ -27,10 +27,12 @@ interface PlayerProps<T> {
     handleToggleRepeat: () => void;
     handleCopyVideoDetails: () => void;
     isShortClip: boolean;
+    setHHMMSS: (type: string, hhmmss: string) => void;
 }
 
 export default function ClipExtractor<T extends unknown>({resume, start, stop, boundaries, videoid, played, duration, 
-    setAt, setAtAbs, resetAt, goTo, offset, setPlaying, playing, repeat, handleToggleRepeat, handleCopyVideoDetails, isShortClip } : PlayerProps<T>)
+    setAt, setAtAbs, resetAt, goTo, offset, setPlaying, playing, repeat, handleToggleRepeat, 
+    handleCopyVideoDetails, isShortClip, setHHMMSS } : PlayerProps<T>)
     {
     
     const [options, setOptions] = useState<Option[]>([]);
@@ -40,6 +42,75 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
     // these props are emulated to match the original code behavior
     const [emulatedCustomPromptVisible, setEmulatedCustomPromptVisible] = useState("0");
     const [emulatedExtractName, setEmulatedExtractName] = useState("")
+
+    /* 
+     * offset the resume vector for the clip extractor
+     * 
+     * @param type - the type of offset, either "start" or "stop"
+     * @param offsetBin - the offset in bins (bins are 1/59 of clip duration for now)
+     * @returns the new resume vector
+     * 
+     */
+    function offsetResumeVector(type: "start" | "stop", offsetBin: number) {
+        const startSec = convertHHMMSS2Seconds(start);
+        const stopSec = convertHHMMSS2Seconds(stop);
+
+        const resumeVector = convertHHMMSS2Vector3D(resume);
+
+        // TODO calculate bin size
+        // const duration = stopSec - startSec;
+        // const secBinDistance = 1/59; 
+
+        const newVector = {
+            x: resumeVector.x,
+            y: type === "start" ? resumeVector.y + offsetBin: resumeVector.y,
+            z: type === "stop" ? resumeVector.z + offsetBin : resumeVector.z
+        }
+
+        setHHMMSS("resume", convertVector3D2HHMMSS(newVector));
+    }
+
+    /* 
+     * create a resume vector for the clip extractor with y and z set to the basis
+     * 
+     * @param basisSeconds - the basis in seconds (usually the current time)
+     * @returns the resume vector or, null if the basis is not within the clip boundaries
+     * 
+     */
+    function createResumeVector(basisSeconds: number) {
+        const startSec = convertHHMMSS2Seconds(start);
+        const stopSec = convertHHMMSS2Seconds(stop);
+
+        if(basisSeconds < startSec || basisSeconds > stopSec) {
+            console.warn("Basis is not within clip boundaries");
+            return { x: 0, y: 0, z: 0 };
+        }
+        const clipPlayedSec = basisSeconds - startSec;
+        const duration = stopSec - startSec;
+        console.log("clipPlayedSec", clipPlayedSec, "duration", duration);
+
+        const percentPlayed = clipPlayedSec / duration;
+        console.log("percentPlayed", percentPlayed);
+ 
+        const offsetsToStart  = [null, 25, -25, null, null, 50, -50, null, null, null];
+        const offsetsToStop = [null,  null, null, 25, -25, null, null, 50, -50, null, null];
+        
+        const basis = Math.round(percentPlayed * 59)
+        console.log("basis", basis);
+        const isWholePercent = percentPlayed % 1 === 0;
+        console.log("isWholePercent", isWholePercent);
+
+        if(!isWholePercent) {
+            // TODO calacluate closest offset bin to the basis
+        }
+
+        return {
+            x: 0,
+            y: basis,
+            z: basis
+        };
+    }
+
 
     const addOption = (offsetSec: number) => {
         setPlaying(false);
@@ -195,14 +266,17 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
             <input type="hidden" value={videoid ?? ''} id="videoid" />
             <input type="hidden" value={boundaries} id="imposeboundries" />
             <fieldset>
-                <div className="row">
+                <div className="row" style={isShortClip ? {backgroundColor: "yellowgreen"} : {}}>
                     <div className="col">
                         {!isShortClip ?
                             <button type="button" id="mark" onClick={() => setAt('resume')}> [ Mark ]</button>
                             : 
                             <>
-                            <button type="button" id="mark" onClick={() => {}}>[ </button>
-                            <button type="button" id="mark" onClick={() => {}}> ]</button>
+                            <button type="button" id="beepStartBtn" onClick={() => { offsetResumeVector("start", -1) }}>&lt; </button>
+                            <button type="button" id="beepStartBtn" onClick={() => { offsetResumeVector("start", 1) }}>&gt; </button>
+                            <button type="button" id="beepStartBtn" onClick={() => { setHHMMSS("resume", convertVector3D2HHMMSS(createResumeVector(played)))}}>[O] </button>
+                            <button type="button" id="beepStopBtn" onClick={() => { offsetResumeVector("stop", -1) }}>&lt; </button>
+                            <button type="button" id="beepStopBtn" onClick={() => { offsetResumeVector("stop", 1) }}>&gt; </button>
                             </>
                         }
                         <img src="/iv/images/transparent.png" title="Rewind 1 Sec." alt="Rewind 1 Sec." id="rewindResume" onClick={() => offset('resume', -1)} className="imgBtn rewind" />

@@ -630,6 +630,7 @@ function connectInnertube() {
 
 function startServer() {
 	app.listen(port, async () => {
+		console.log(`Server started at http://${fullUrl}`);
 		try {
 			throw new Utils.InnertubeError('This is thrown to get the version of youtubei.js');
 		} catch (error) {

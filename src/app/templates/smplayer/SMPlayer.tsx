@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useEffect, useState, useRef } from 'react';
 // import ReactPlayer from 'react-player/lazy';
 import ReactPlayer from 'react-player/lazy';
@@ -48,7 +48,12 @@ function App() {
   const [loop, setLoop] = useState(false);
   const [seeking, setSeeking] = useState(false);
   const [archiveInfo, setArchiveInfo] = useState<ArchiveInfo>();
-  const [isShortClip, setIsShortClip] = useState(false);
+  const isShortClip = useMemo(() => {
+    // console.log('isShortClip', stop, start, convertHHMMSS2Seconds(stop) - convertHHMMSS2Seconds(start));
+    // console.log("duration", duration, convertHHMMSS2Seconds(stop), convertHHMMSS2Seconds(start));
+    const clipDur = stop ? convertHHMMSS2Seconds(stop) - convertHHMMSS2Seconds(start): null;
+    return clipDur && (clipDur < 15) && (duration - convertHHMMSS2Seconds(stop) > 1) ? true : false;
+  }, [start, stop, duration]);
 
   const ref = useRef<ReactPlayer>(null)
 
@@ -85,14 +90,6 @@ function App() {
     req.send();  
 
   }, []);
-
-  useEffect(() => {
-    const startSec = convertHHMMSS2Seconds(start);
-    const stopSec = convertHHMMSS2Seconds(stop);
-    const clipDurationSec = stopSec - startSec;
-    // TODO
-    // setIsShortClip(clipDurationSec < 15);
-  }, [duration]);
 
   const handlePlay = () => {
     console.log('onPlay')
@@ -181,7 +178,7 @@ function App() {
     }
   }
 
-  const scheduleBeep = (playedSeconds: number) => {
+  function scheduleBeep(playedSeconds: number) {
     const resumeVector = convertHHMMSS2Vector3D(resume);
     const startSec = convertHHMMSS2Seconds(start);
     const stopSec = convertHHMMSS2Seconds(stop);
@@ -303,9 +300,28 @@ function App() {
     }
   }
 
+  function setHHMMSS(type: string, hhmmss: string) {
+    if (type === "resume") {
+        setResume(hhmmss);
+    } else if (type === "start") {
+        setStart(hhmmss);
+    } else if (type === "stop") {
+        setStop(hhmmss);
+    }
+  }
+
+  /*
+   * Set the resume/start/stop time to the current time plus the offset
+    * @param {string} type - the type of time to set
+    * @param {number} offsetSec - the number of seconds to add to the current time
+    * @param {number} offsetMin - the number of minutes to add to the current time
+    * @param {number} offsetHour - the number of hours to add to the current time
+    * @returns {void}
+    * 
+  */
   function handleSetAt(type: string, offsetSec = 0, offsetMin = 0, offsetHour = 0) {
     console.log('handleSetAt', type, offsetSec, played, duration, played + offsetSec)
-    let new_val = formatTime(played + offsetSec, duration);
+    let new_val = formatTime(played + offsetSec + offsetMin * 60 + offsetHour * 3600, duration);
     if (type === "resume") {
         setResume(new_val);
     } else if (type === "start") {
@@ -404,7 +420,7 @@ Description:\n${archiveInfo.description}
     <div className="app">
 
     { archiveInfo &&
-      <div className="archive-info">
+      <div className="archive-info" style={isShortClip ? {backgroundColor: "yellowgreen"} : {}}>
         <div className="archive-info-title">
           {archiveInfo.title}
         </div>
@@ -467,6 +483,7 @@ Description:\n${archiveInfo.description}
       handleToggleRepeat={handleToggleRepeat}
       handleCopyVideoDetails={handleCopyVideoDetails}
       isShortClip={isShortClip}
+      setHHMMSS={setHHMMSS}
       />
       {/* <ExtractBoard/> */}
       {/* <Counter /> */}

@@ -31,6 +31,10 @@
     return { x, y, z };
   }
 
+  export function convertVector3D2HHMMSS(vector3D: { x: number, y: number, z: number }) {
+    return `${vector3D.x}:${vector3D.y}:${vector3D.z}`;
+  }
+
 
   export function convertSeconds2HHMMSS(duration: number | string) {
     var sec_num = typeof(duration) == "number" ? Math.floor(duration) : parseInt(duration as string, 10);
