@@ -57,6 +57,10 @@ function App() {
 
   const ref = useRef<ReactPlayer>(null)
 
+  const [bitrateHeights, setBitrateHeights] = useState([]);
+  // const bitrateHeights = useMemo(() => {
+  // }, [ref]);
+
   // // SM browser as remote component
   // useEffect(() => {
   //   setResume(queryParameters.get('resume'));
@@ -415,6 +419,39 @@ Description:\n${archiveInfo.description}
         }
     }
 
+    function customDebugger() {
+      // getInternalPlayer('dash') to get the dash.js player
+      const player = ref.current?.getInternalPlayer('dash');
+      if (!player) {
+        console.log('No player');
+        return;
+      }
+      console.log('Player', player);
+      
+
+    }
+
+    function setResolution(res: string){
+      // Assuming you have already initialized the dash.js player
+      const player = ref.current?.getInternalPlayer('dash');
+      if (!player) {
+        window.alert("dash player not found (archive?)")
+        return;
+      }
+
+      // Get the available quality levels
+      // player.setAutoSwitchQualityFor('video', false);
+      const qualityLevels = player.getBitrateInfoListFor('video').map((info: { height: any; }) => info.height);
+
+      // Set the quality to 720p
+      const level = qualityLevels.indexOf(res)
+      if(!level) {
+        window.alert("quality not found")
+        return;
+      }
+      player.setQualityFor('video', level);
+    }
+
     
   return (
     <div className="app">
@@ -489,6 +526,14 @@ Description:\n${archiveInfo.description}
       {/* <Counter /> */}
       {/* <Subtitles /> */}
       {/* <ReactExtension /> */}
+      <div>
+        Set video quality:
+        <button onClick={() => setResolution("240")}>240p</button>
+        <button onClick={() => setResolution("360")}>360p</button>
+        <button onClick={() => setResolution("480")}>480p</button>
+        <button onClick={() => setResolution("720")}>720p</button>
+        <button onClick={() => setResolution("1080")}>1080p</button>
+      </div>
       { archiveInfo && <Archive v_id={queryParameters.get("videoid")?.trim() ?? ""} info={archiveInfo} setInfo={setArchiveInfo}/> }
       { archiveInfo?.captions?.caption_tracks &&
       archiveInfo.captions.caption_tracks.length > 0 ?

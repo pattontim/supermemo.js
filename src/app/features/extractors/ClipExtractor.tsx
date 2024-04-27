@@ -163,7 +163,7 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
         }
     };
 
-    const handleCaptionCopyBtnClick = () => {
+    function getActiveCueText() {
         const videoElement = document.getElementsByTagName('video')[0];
 
         const activeTextTrack = Array.from(videoElement.textTracks)
@@ -180,7 +180,14 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
             return;
         }
 
-        const activeCueText = activeCue.text.replace(/<\/?[^>]+(>|$)/g, '');
+        return activeCue.text.replace(/<\/?[^>]+(>|$)/g, '').replace(/\n/g, '').trim();
+    }
+
+    const handleCaptionCopyBtnClick = () => {
+        const activeCueText = getActiveCueText();
+        if(!activeCueText) {
+            return;
+        }
 
         const textArea = document.createElement('textarea');
         textArea.value = activeCueText;
@@ -189,6 +196,23 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
         document.execCommand('copy');
         document.body.removeChild(textArea);
     };
+
+    const handleTranslateCaptionBtnClick = () => {
+        const activeCueText = getActiveCueText();
+        if(!activeCueText) {
+            return;
+        }
+
+        // https://translate.google.com/?sl=ja&tl=en&text={}&op=translate
+        const encoded = encodeURIComponent(activeCueText);
+        const url = `https://translate.google.com/?sl=auto&tl=auto&text=${encoded}&op=translate`;
+        // open in new window, IE11
+        window.open(url, '_blank');
+    }
+
+    const handleOpenSummarizer = () => {
+        window.open(`microsoft-edge:https://www.summarize.tech/https://www.youtube.com/watch?v=${videoid}`);
+    }
 
 
     function handleScreenshotClick(): void {
@@ -336,6 +360,8 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
                         <button type="button" id="copyBtn" onClick={handleCopyVideoDetails} >YT Copy Details</button>
                         <button type="button" id="screenshotBtn" onClick={handleScreenshotClick}>YT Screenshot</button>
                         <button type="button" id="copyCaptionBtn" onClick={handleCaptionCopyBtnClick}>Copy Cap</button>
+                        <button type="button" id="translateCapBtn" onClick={handleTranslateCaptionBtnClick}>Open TL</button>
+                        <button type="button" id="summarizeBtn" onClick={handleOpenSummarizer}>Summarize</button>
                     </div>
                 </div>  
                 <div className="row" hidden>
