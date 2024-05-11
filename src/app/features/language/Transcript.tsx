@@ -18,8 +18,7 @@ export default function Transcript<T extends unknown>({ track, url,
             <div className="accordion">
                 <div className="accordion-item">
                     <div className="accordion-title" onClick={ () => setIsActive(!isActive) }>
-                        <div>Transcript</div>
-                        <div>{isActive ? '-' : '+'}</div>
+                        <div>Transcript [{isActive ? '-' : '+'}]</div>
                     </div>
                     { isActive &&
                     <div className="accordion-content">

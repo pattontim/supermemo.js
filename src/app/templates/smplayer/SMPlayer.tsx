@@ -13,6 +13,8 @@ type ArchiveInfo = ArchiveInfoV1 // | ArchiveInfoV2; // totally extensible
 
 import { convertHHMMSS2Seconds, convertSeconds2HHMMSS, constrainToRange, formatTime, convertHHMMSS2Vector3D } from '../../utils/Duration';
 import Archive from '../../features/archive/Archive';
+import { useLocalStorage } from '../../utils/storage';
+import ClipTool from '../../features/clip/ClipTool';
 
 function App() {
   const queryParameters = new URLSearchParams(window.location.search)
@@ -54,12 +56,10 @@ function App() {
     const clipDur = stop ? convertHHMMSS2Seconds(stop) - convertHHMMSS2Seconds(start): null;
     return clipDur && (clipDur < 15) && (duration - convertHHMMSS2Seconds(stop) > 1) ? true : false;
   }, [start, stop, duration]);
+  const [prefLangCode, setPrefLangCode] = useLocalStorage('prefLangCode', '');
+  const [prefLangLabel, setPrefLangLabel] = useLocalStorage('prefLangLabel', '');
 
   const ref = useRef<ReactPlayer>(null)
-
-  const [bitrateHeights, setBitrateHeights] = useState([]);
-  // const bitrateHeights = useMemo(() => {
-  // }, [ref]);
 
   // // SM browser as remote component
   // useEffect(() => {
@@ -273,6 +273,20 @@ function App() {
 
   function handlePlayerReady( player: any ) {
     fetchArchiveInfo(queryParameters.get('videoid') as string);
+
+    const videoElement = document.getElementsByTagName('video')[0];
+    if(videoElement) {
+      setTimeout(() => {
+      // console.log('trying to get text tracks', JSON.stringify(videoElement.textTracks), "prefLangCode", prefLangCode);
+      // const matchingTextTrack = Object.values(videoElement.textTracks).find((track: TextTrack) => track.language === prefLangCode);
+      console.log('trying to get text tracks', JSON.stringify(videoElement.textTracks), "prefLangLabel", prefLangLabel);
+      const matchingTextTrack = Object.values(videoElement.textTracks).find((track: TextTrack) => track.label === prefLangLabel);
+      if(matchingTextTrack) {
+        console.log('matchingTextTrack', matchingTextTrack);
+        matchingTextTrack.mode = "showing";
+      }
+      }, 2000);
+    }
 
     seekVideo(start);
     setPlaying(true);
@@ -526,14 +540,7 @@ Description:\n${archiveInfo.description}
       {/* <Counter /> */}
       {/* <Subtitles /> */}
       {/* <ReactExtension /> */}
-      <div>
-        Set video quality:
-        <button onClick={() => setResolution("240")}>240p</button>
-        <button onClick={() => setResolution("360")}>360p</button>
-        <button onClick={() => setResolution("480")}>480p</button>
-        <button onClick={() => setResolution("720")}>720p</button>
-        <button onClick={() => setResolution("1080")}>1080p</button>
-      </div>
+      <ClipTool v_id={queryParameters.get("videoid")?.trim() ?? ""} info={archiveInfo} handleCopyVideoDetails={handleCopyVideoDetails} setResolution={setResolution}/>
       { archiveInfo && <Archive v_id={queryParameters.get("videoid")?.trim() ?? ""} info={archiveInfo} setInfo={setArchiveInfo}/> }
       { archiveInfo?.captions?.caption_tracks &&
       archiveInfo.captions.caption_tracks.length > 0 ?

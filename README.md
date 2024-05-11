@@ -68,8 +68,9 @@ You can archive videos and they'll be loaded instead of from youtube. To do this
 
 OR
 
-[RECOMMENDED!!! Press Archive button in the Archive Pane. You can also archive other videos if you enter their ID there.
+[RECOMMENDED!!!] Open the Archive Pane and click the button for the qulity you want.
 
+Videos are stored in <SUPERMEMO_JS_FOLDER>/dist/archive. You can delete folders by ID at any time.
 
 ## Help
 
@@ -93,15 +94,19 @@ Restart the server and report the error on issues.
 
 CURRENTLY DISABLED: Update the port variables in SMPlayer.tsx and server.ts. Change port in YouTube.htm.
 
+### Want subtitles to autoload
+
+Change prefLangLabel '' to whatever lang you want and run a build, eg English, Japanese, etc.
+
 ### Known bugs
 
-- Scrolling elemnts with mouse wheel or keyboard in element browser may wipe YT extracts 
+- Scrolling elemnts with mouse wheel or keyboard in element browser may wipe YT extracts
 
 - Pressing ctrl+v while the video player is focused and with a YT video in your clipboard overwrites the current YT extract. This may be a SM feature however.
 
 ### Differences with vanilla supermemo
 
-- Extract background colour is lost (blue)
+- Extract background colour is lost, instead green is used to indicate ambiguity between blue and yellow
 - Clicking fields inserts current time
 
 ## Version History

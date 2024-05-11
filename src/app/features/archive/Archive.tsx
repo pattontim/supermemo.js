@@ -20,7 +20,7 @@ function isValidSMJSId(id: string) {
 }
 
 export default function Archive<T extends unknown> ({ v_id, info, setInfo: setArchiveInfo } : ArchiveProps<T>) {
-    const [isActive, setIsActive] = useState(true);
+    const [isActive, setIsActive] = useState(false);
     const [archiveId, setArchiveId] = useState(v_id);
     // const [availableFormats, setAvailableFormats] = useState< ArchiveInfoV1["file_formats"] >({});
     const [selectedFormat, setSelectedFormat] = useState<keyof ArchiveInfoV1["file_formats"] | undefined>(undefined);
@@ -53,68 +53,71 @@ export default function Archive<T extends unknown> ({ v_id, info, setInfo: setAr
         archiveReq.send();
     }
 
+    function getQualityLabel(archiveInfo?: ArchiveInfoV1) {
+        return Object.values(archiveInfo?.file_formats ?? []).at(0)?.quality_label ?? "???";
+    }
+    
     return (
         <>
             <div className="accordion">
                 <div className="accordion-item">
                     <div className="accordion-title" onClick={handleClick}>
-                        <div>Archived? [{isActive ? '−' : '+'}]</div>
+                        <div style={{ backgroundColor: (Object.keys(info?.archived_on ?? []).length === 0 ? "red" : "green") }}>Archived? [{isActive ? '−' : '+'}]</div>
                     </div>
                     { isActive &&
-                    <div className="accordion-content">
-                        <pre>
+                        <div className="accordion-content">
                             {/* {info && 
                             <textarea id="archiveInfn" style={{width: "100%"}} value={JSON.stringify(info, null, 2)}/>
                             } */}
-                                <fieldset>
-                                    <div className="ctrlGrp firstCtrlGrp">
-                                        <div className="ctrlSubgrp firstCtrlSubgrp">
-                                            {/* <div> {info?.archived_on ? "🈯" : "🈵"} </div> */}
-                                            {Object.keys(info?.archived_on ?? []).length !== 0 ?
-                                                <div style={{ backgroundColor: 'cyan', color: 'yellow', padding: '10px', borderRadius: '5px', boxShadow: '0 0 10px rgba(0, 0, 0, 0.3)' }}>
-                                                    <span style={{ textShadow: '0 0 5px white' }}>Yes</span>
-                                                </div>
-                                                :
-                                                <div style={{ color: 'red', fontWeight: 'bold', padding: '10px', borderRadius: '5px', boxShadow: '0 0 10px rgba(0, 0, 0, 0.3)' }}>
-                                                    No
-                                                </div>
-                                            }
+                            <div className="ctrlGrp firstCtrlGrp">
+                                <div className="ctrlSubgrp firstCtrlSubgrp">
+                                    {/* <div> {info?.archived_on ? "🈯" : "🈵"} </div> */}
+                                    {Object.keys(info?.archived_on ?? []).length !== 0 ?
+                                        <div style={{ backgroundColor: 'green', color: 'black', padding: '10px', borderRadius: '5px', boxShadow: '0 0 10px rgba(0, 0, 0, 0.3)' }}>
+                                            <span style={{ textShadow: '0 0 5px white' }}>Yes [{getQualityLabel(info)}] [{new Date(info?.archived_on ?? "").toLocaleDateString()}]</span>
                                         </div>
-                                        <div className="ctrlSubgrp secondCtrlSubgrp">
-                                            {/* <input placeholder='yt vid id e.g. dQw4w9WgXcQ' type="text" id="archive_id" value={archiveId} onChange={e => setArchiveId(e.target.value)} /> */}
-                                            <label>DL & Archive</label>
-                                            {info && info.file_formats && Object.keys(info.file_formats).length != 0 &&
+                                        :
+                                        <div style={{ backgroundColor: 'red', color: 'white', fontWeight: 'bold', padding: '10px', borderRadius: '5px', boxShadow: '0 0 10px rgba(0, 0, 0, 0.3)' }}>
+                                            No
+                                        </div>
+                                    }
+                                </div>
+                                {Object.keys(info?.archived_on ?? []).length === 0 &&
+                                    <div className="ctrlSubgrp secondCtrlSubgrp">
+                                        {/* <input placeholder='yt vid id e.g. dQw4w9WgXcQ' type="text" id="archive_id" value={archiveId} onChange={e => setArchiveId(e.target.value)} /> */}
+                                        <label>DL & Archive</label>
+                                        {info && info.file_formats && Object.keys(info.file_formats).length != 0 &&
                                             // {/* TODO this violates OPTION restriction and will need a workaround  */}
                                             // <select disabled id="archive_formats" onChange={e => setSelectedFormat(e.target.value as keyof ArchiveInfoV1["file_formats"])} value={selectedFormat}>
                                             //     <option value={undefined} disabled hidden>Select Format</option>
                                             //     {/* {Object.keys(info.file_formats).map(format => <option value={format}>{format}</option>)} */}
                                             //     { Object.entries(info.file_formats).map(([itagMime, format]) => <option value={itagMime}>{format.quality ?? itagMime}</option>) }
-                                                // </select>
+                                            // </select>
 
-                                                <div style={{ display: 'flex' }}>
-                                                    <button 
-                                                        onClick={() => {handleArchiveBtnClick()}}
+
+                                            <div style={{ display: 'flex' }}>
+                                                <button
+                                                    onClick={() => { handleArchiveBtnClick() }}
+                                                    style={{ marginRight: '10px' }}
+                                                >
+                                                    Best
+                                                </button>
+                                                {Object.entries(info.file_formats).map(([itagMime, format]) => (
+                                                    <button
+                                                        key={itagMime}
+                                                        onClick={() => handleArchiveBtnClick(format.quality_label)}
                                                         style={{ marginRight: '10px' }}
-                                                        >
-                                                            Best
-                                                            </button>
-                                                    {Object.entries(info.file_formats).map(([itagMime, format]) => (
-                                                        <button
-                                                            key={itagMime}
-                                                            onClick={() => handleArchiveBtnClick(format.quality_label)}
-                                                            style={{ marginRight: '10px' }}
-                                                        >
-                                                            {(format.quality_label ?? "???") + " [" + format.itag + "]"}
-                                                        </button>
-                                                    ))}
-                                                </div>
-                                            }
-                                        </div>
-                                        <div className="ctrlSubgrp secondCtrlSubgrp">
-                                        </div>
+                                                    >
+                                                        {(format.quality_label ?? "???") + " [" + format.itag + "]"}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        }
                                     </div>
-                                </fieldset>
-                            </pre>
+                                }
+                                <div className="ctrlSubgrp secondCtrlSubgrp">
+                                </div>
+                            </div>
                         </div>
                     }
                 </div>
