@@ -5,6 +5,7 @@ import { Innertube, UniversalCache, Utils } from 'youtubei.js';
 // @ts-ignore
 import corsAnywhere from 'cors-anywhere';
 import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, createWriteStream, writeFileSync } from 'fs';
+import { spawn } from 'child_process';
 import path from 'path';
 import fetch, { Response } from 'node-fetch';
 
@@ -319,6 +320,46 @@ async function getSupportedFormats(videoInfoFull: VideoInfo) {
 	return fileFormats;
 }
 
+async function getSupportedFormats2(videoInfoFull: VideoInfo, skipDuplicates = false) {
+	const types = ['video+audio', "video", "audio"] as FormatOptions['type'][]
+	const qualities = ['144p', '240p', '360p', '480p', '720p', "best", "bestefficiency"]
+
+	const avFormats = {} as { [quality: string]: Format }
+	const aFormats = {} as { [quality: string]: Format }
+	const vFormats = {} as { [quality: string]: Format }
+	
+	for (const type of types) {
+		for (const quality of qualities) {
+			const formatOpt = { type, quality, format: 'mp4' } as FormatOptions;
+			try {
+				if(skipDuplicates && type == "video" && avFormats[quality]) continue;
+
+				const format = await videoInfoFull.chooseFormat(formatOpt);
+				if (format.has_audio && format.has_video) {
+					avFormats[quality] = format;
+				} else if (format.has_audio && !format.has_video) {
+					aFormats[quality] = format;
+				} else if (format.has_video && !format.has_audio) {
+					vFormats[quality] = format;
+				}
+			} catch (error) {
+				console.log('failed to get format: ' + error);
+				continue;
+			}
+		}
+	}
+	return { avFormats, aFormats, vFormats };
+}
+
+app.get('/magnify', async (req, res) => {
+	res.send('Magnify!');
+	const dir = spawn('cmd', ['/c', 'magnify']);
+
+	dir.stdout.on('data', (data) => console.log(`stdout: ${data}`));
+	dir.stderr.on('data', (data) => console.log(`stderr: ${data}`));
+	dir.on('close', (code) => console.log(`child process exited with code ${code}`));
+});
+
 app.get('/archivei/', async (req, res) => {
 	res.send(archive);
 });
@@ -450,6 +491,72 @@ app.get('/formats/:v_id', async (req, res) => {
 	} else {
 		res.json({});
 	}
+});
+
+app.get('/youtubeformats/:v_id', async (req, res) => {
+	const v_id = req.params.v_id;
+
+	// call chooseFormat with a try for all possible permutations on // audio, video or video+audio, quality: 'best', 
+	// best, bestefficiency, 144p, 240p, 480p, 720p and so on.
+	//format: 'mp4' // media container format 
+	
+	let videoInfoFull: VideoInfo;
+	try {
+		videoInfoFull = await youtube.getInfo(v_id);
+	} catch (error) {
+		console.log('error: ' + error);
+		res.status(503).send('Error: ' + error);
+		return;
+	}
+
+	const streamingData = videoInfoFull.getStreamingInfo()
+
+	// const types = ['audio', 'video', 'video+audio'] as FormatOptions['type'][]
+	// const qualities = [/* 'best', 'bestefficiency', */ '144p', '240p', '360', '480p', '720p'];
+	// const formats = ['mp4'];
+
+	// const formatOptions = [] as FormatOptions[];
+	// for (const type of types) {
+	// 	for (const quality of qualities) {
+	// 		for (const format of formats) {
+	// 			formatOptions.push({ type, quality, format });
+	// 		}
+	// 	}
+	// }
+
+	// const fileFormats = {} as { [key: string]: {
+	// 	fmt: Format, type: FormatOptions['type'], quality: FormatOptions['quality'], has_av: boolean}
+	// };
+
+	// let i = 0;
+	// for (const formatOpt of formatOptions) {
+	// 	try {
+	// 		const format = await videoInfoFull.chooseFormat(formatOpt);
+	// 		fileFormats[format.itag + '.' + archiveContainer + "-" + (++i)] = { fmt: format, type: formatOpt.type, quality: formatOpt.quality, has_av: format.has_audio && format.has_video};
+	// 	} catch (error) {
+	// 		console.log('failed to get format: ' + error);
+	// 		continue;
+	// 	}
+	// }
+
+	// const sorted = Object.keys(fileFormats).sort((a, b) => fileFormats[a].fmt.bitrate - fileFormats[b].fmt.bitrate);
+
+	// const sortedFormats = {} as { [key: string]: 
+	// 	{fmt: Format, type: FormatOptions['type'], quality: FormatOptions['quality'], has_av: boolean}
+	// };
+
+	// for (const key of sorted) {
+	// 	sortedFormats[key] = fileFormats[key];
+	// }
+
+	// res.json({ formats: sortedFormats, streamingData: streams });
+	const { avFormats, aFormats, vFormats } = await getSupportedFormats2(videoInfoFull);
+
+	// const sortedAvFormatList = Object.entries(avFormats).sort((a, b) => a[1].bitrate - b[1].bitrate);
+	// const sortedAFormatList = Object.entries(aFormats).sort((a, b) => a[1].bitrate - b[1].bitrate);
+	// const sortedVFormatList = Object.entries(vFormats).sort((a, b) => a[1].bitrate - b[1].bitrate);
+
+	return res.json({ avFormats, aFormats, vFormats, streamingData });
 });
 
 app.get('/archive/:v_id', async (req, res) => {

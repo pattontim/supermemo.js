@@ -113,6 +113,16 @@ export default function ClipTool<T extends unknown>({ v_id, info, handleCopyVide
         window.open(`microsoft-edge:https://www.summarize.tech/https://www.youtube.com/watch?v=${v_id}`);
     }
 
+    const handleOpenMagnifier = () => {
+        //send get to localhost:5000/magnify
+        //open magnifier
+        const url = `http://localhost:3000/magnify`;
+        //xmlhttprequest
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', url, true);
+        xhr.send();
+    }
+
     return (
         <>
             <div className="accordion">
@@ -129,6 +139,7 @@ export default function ClipTool<T extends unknown>({ v_id, info, handleCopyVide
                                     <button type="button" id="copyCaptionBtn" onClick={handleCaptionCopyBtnClick}>Copy Cap</button>
                                     <button type="button" id="translateCapBtn" onClick={handleTranslateCaptionBtnClick}>Open TL</button>
                                     <button type="button" id="summarizeBtn" onClick={handleOpenSummarizer}>Summarize</button>
+                                    <button type="button" id="magnifyBtn" onClick={handleOpenMagnifier}>Magnify</button>
                                     {Object.keys(info?.archived_on ?? []).length === 0 &&
                                         <>
                                             {/* <button onClick={() => setResolution("360")}>360p</button> */}
