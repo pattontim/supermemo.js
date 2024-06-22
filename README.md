@@ -37,7 +37,7 @@ I now consider this a beta and usable, it won't overwrite your cards under expec
 
 * run `npm install` in supermemo.js root folder
 
-* cd to ytjs folder: `cd yts`
+* cd to ytjs folder: `cd ytjs`
 
 * run `npm install` again to install deps for the ytjs server
 
@@ -96,9 +96,17 @@ Backup your supermemo collection via the regular process. Archived videos are st
 
 1. Run `git pull` in the root folder
 
-2. Run `npm run build` in the root folder
+2. run `npm install` in supermemo.js root folder
 
-3. Run `npm run ytjs` in the root folder
+3. cd to ytjs folder: `cd ytjs`
+
+4. run `npm install` again to install deps for the ytjs server
+
+5. cd to root folder: `cd ..`
+
+6. run `npm run build` to build the react app that SuperMemo will load
+
+7. run `npm run ytjs` to start the video server
 
 ### One of my extract timestamps wiped!?
 

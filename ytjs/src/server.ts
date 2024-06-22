@@ -484,37 +484,6 @@ app.get('/v1fix/', async (req, res) => {
 	console.log("done updating archive to version 2");
 	res.send('done');
 
-	// 	const [currentVersion, newVersion, description, confirmation] = fixVerPairs;
-
-	// 	try {
-	// 		// 0. Check if the info.version is 1
-	// 		const infoData = await getInfoData(v_id);
-	// 		if (infoData.version !== currentVersion) {
-	// 			return res.status(400).send(`Invalid version. Expected ${currentVersion}, got ${infoData.version}.`);
-	// 		}
-
-	// 		// 1. Find all the ASR pairs in the archive
-	// 		const asrPairs = await findASRPairs(infoData);
-
-	// 		// 2. For each pair, call patchCaptions
-	// 		const updatedCaptionTracks = [];
-	// 		for (const pair of asrPairs) {
-	// 			const { captionTracks, captionStreams, captionsDir, fullUrl, renameExisting } = pair;
-	// 			const updated = await patchCaptions(captionTracks, captionStreams, captionsDir, fullUrl, v_id, infoData.path, renameExisting);
-	// 			updatedCaptionTracks.push(...updated);
-	// 		}
-
-	// 		// 3. Update the info.json file and increment the version number
-	// 		await updateInfoJson(infoData.path, newVersion, updatedCaptionTracks);
-
-	// 		res.send(`Fixed caption pairs for version ${newVersion}. ${description}`);
-	// 	} catch (error) {
-	// 		console.error(error);
-	// 		res.status(500).send('An error occurred while fixing caption pairs.');
-	// 	}
-	// });
-
-
 });
 
 app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
@@ -938,41 +907,6 @@ app.get('/archive/:v_id', async (req, res) => {
 				res.status(503).send('Error: ' + error);
 				return;
 			}
-			/*for (const captionTrack of captionTracks ?? []) {
-				// URL request
-				const captionUrl = new URL(captionTrack.base_url);
-				captionUrl.searchParams.set('fmt', 'vtt');
-				let captionStream: Response;
-				try {
-					captionStream = await fetchWait(captionUrl, true, 500, 50);
-				} catch (error) {
-					console.log('error: ' + error);
-					res.status(503).send('Error: ' + error);
-					return;
-				}
-				if (captionStream.status !== 200) {
-					console.log('error in caption stream, code: ' + captionStream?.status);
-					res.status(503).send('Error: ' + captionStream?.status);
-					return;
-				}
-				
-				try {
-					const captionFile = createWriteStream(path.join(captionsDir, formatCaptionFileName(captionTrack)));
-					await new Promise((resolve, reject) => {
-						captionStream.body.pipe(captionFile);
-						captionStream.body.on('error', reject);
-						captionStream.body.on('end', resolve);
-					});
-					captionFile.close();
-				} catch (error) {
-					console.log('error: ' + error);
-					res.status(507).send('Error: ' + error);
-					return;
-				}
-				const preFix = "http://" + fullUrl + "/fixvtt/";
-				const fsUrl = `http://${fullUrl}/archive/${v_id}/captions/${formatCaptionFileName(captionTrack)}`;
-				captionTrack.base_url = preFix + fsUrl;
-			}*/
 			let captionStreams = [] as Response['body'][];
 			try {
 				captionStreams = await getCaptionStreams(captionTracks);
