@@ -1,6 +1,18 @@
 import os
 import shutil
 
+# Ask the user to confirm before proceeding
+user_input = input("DANGER: internal testing ONLY: delete all info.json and captions files? (y/n): ")
+
+# Check if the user wants to continue
+if user_input.lower() != 'y':
+    print("Reset operation cancelled.")
+    exit()
+
+# Print a danger message
+print("WARNING: This operation will delete all 'info.json' and 'captions' files in all directories.")
+
+
 # Define the path to the root directory
 root_dir = '../../dist/archive'
 

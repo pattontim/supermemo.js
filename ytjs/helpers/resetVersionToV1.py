@@ -1,6 +1,18 @@
 import os
 import json
 
+# Ask the user to confirm before proceeding
+user_input = input("DANGER: internal testing ONLY: Are you sure you want to reset the version to V1? (y/n): ")
+
+# Check if the user wants to continue
+if user_input.lower() != 'y':
+    print("Reset operation cancelled.")
+    exit()
+
+# Print a danger message
+print("WARNING: This operation will reset the version to V1 for all directories containing 'info.json'.")
+
+
 # Define the path to the root directory
 root_dir = '../../dist/archive'
 
