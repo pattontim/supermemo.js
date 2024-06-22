@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { ArchiveInfoV1 } from '../../../../ytjs/src/utils/archive';
+import { ArchiveInfo } from '../../../../ytjs/src/utils/archive';
 
 interface ArchiveProps<T> {
     // TODO
     v_id: string;
-    info: ArchiveInfoV1 | undefined
-    setInfo: React.Dispatch<React.SetStateAction<ArchiveInfoV1 | undefined>>
+    info: ArchiveInfo | undefined
+    setInfo: React.Dispatch<React.SetStateAction<ArchiveInfo | undefined>>
 }
 
 function isValidSMId(id: string, expectedLen = 11) {
@@ -22,8 +22,8 @@ function isValidSMJSId(id: string) {
 export default function Archive<T extends unknown> ({ v_id, info, setInfo: setArchiveInfo } : ArchiveProps<T>) {
     const [isActive, setIsActive] = useState(false);
     const [archiveId, setArchiveId] = useState(v_id);
-    // const [availableFormats, setAvailableFormats] = useState< ArchiveInfoV1["file_formats"] >({});
-    const [selectedFormat, setSelectedFormat] = useState<keyof ArchiveInfoV1["file_formats"] | undefined>(undefined);
+    // const [availableFormats, setAvailableFormats] = useState< ArchiveInfo["file_formats"] >({});
+    const [selectedFormat, setSelectedFormat] = useState<keyof ArchiveInfo["file_formats"] | undefined>(undefined);
 
     function handleClick() {
        setIsActive(!isActive)
@@ -47,13 +47,13 @@ export default function Archive<T extends unknown> ({ v_id, info, setInfo: setAr
             }
             console.log("Metadata:" + archiveReq.response);
             //incomplete data
-            //if(archiveId == v_id) setArchiveInfo(JSON.parse(archiveReq.response) as ArchiveInfoV1);
+            //if(archiveId == v_id) setArchiveInfo(JSON.parse(archiveReq.response) as ArchiveInfo);
             alert("Successfully Archived!");
         }
         archiveReq.send();
     }
 
-    function getQualityLabel(archiveInfo?: ArchiveInfoV1) {
+    function getQualityLabel(archiveInfo?: ArchiveInfo) {
         return Object.values(archiveInfo?.file_formats ?? []).at(0)?.quality_label ?? "???";
     }
     
@@ -88,7 +88,7 @@ export default function Archive<T extends unknown> ({ v_id, info, setInfo: setAr
                                         <label>DL & Archive</label>
                                         {info && info.file_formats && Object.keys(info.file_formats).length != 0 &&
                                             // {/* TODO this violates OPTION restriction and will need a workaround  */}
-                                            // <select disabled id="archive_formats" onChange={e => setSelectedFormat(e.target.value as keyof ArchiveInfoV1["file_formats"])} value={selectedFormat}>
+                                            // <select disabled id="archive_formats" onChange={e => setSelectedFormat(e.target.value as keyof ArchiveInfo["file_formats"])} value={selectedFormat}>
                                             //     <option value={undefined} disabled hidden>Select Format</option>
                                             //     {/* {Object.keys(info.file_formats).map(format => <option value={format}>{format}</option>)} */}
                                             //     { Object.entries(info.file_formats).map(([itagMime, format]) => <option value={itagMime}>{format.quality ?? itagMime}</option>) }

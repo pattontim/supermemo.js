@@ -53,14 +53,54 @@ export class CacheInfoV1 extends ArchiveInfoV1 {
   }
 }
 
-type ArchiveInfo = ArchiveInfoV1 // | ArchiveInfoV2
-type CacheInfo = CacheInfoV1 // | CacheInfoV2
+export class CacheInfoV2 extends CacheInfoV1 {
+  version: number;
+  constructor(videoInfo: VideoInfo, mpd_manifest: string, browser_target: string, yti_version: string) {
+    super(videoInfo, mpd_manifest, browser_target, yti_version);
+    this.version = 2;
+  }
+}
+
+export class ArchiveInfoV2 extends ArchiveInfoV1 {
+  version: number;
+  constructor(videoInfo: VideoInfo, yti_version: string) {
+    super(videoInfo, yti_version)
+    this.version = 2;
+  }
+}
+
+/* Always use version tag to infer type **/
+export type ArchiveInfo = ArchiveInfoV1 | ArchiveInfoV2
+export type CacheInfo = CacheInfoV1 | CacheInfoV2 // versioning isnt really needed but for uniformity
+export type ArchiveInfoLatest = ArchiveInfoV2
+export type CacheInfoLatest = CacheInfoV2
 
 export interface Archive {
   [key: string]: ArchiveInfo;
 }
 
-
 export interface Cache {
   [key: string]: CacheInfo;
+}
+
+export function newArchiveFromJSON(json: string): ArchiveInfoV1 | ArchiveInfoV2 | undefined {
+  try {
+    const jsonData = JSON.parse(json) as ArchiveInfo
+    if(jsonData.version == 1){
+      return jsonData as ArchiveInfoV1;
+    } else if (jsonData.version == 2){
+      return jsonData as ArchiveInfoV2;
+    }
+  } catch (error) {
+    console.log()
+    return undefined;
+  }
+} 
+
+export function latestArchiveConstructor(videoInfo: VideoInfo, yti_version: string): ArchiveInfoLatest {
+  return new ArchiveInfoV2(videoInfo, yti_version);
+}
+
+export function latestCacheConstructor(videoInfo: VideoInfo, mpd_manifest: string, browser_target: string, yti_version: string): CacheInfoLatest {
+  return new CacheInfoV2(videoInfo, mpd_manifest, browser_target, yti_version);
 }

@@ -74,6 +74,32 @@ Videos are stored in <SUPERMEMO_JS_FOLDER>/dist/archive. You can delete folders 
 
 ## Help
 
+### Manual subtitles are not saved / V2 migration
+
+There was a bug in the code that caused ONLY the auto caption to be saved if both the manual subs and ASR are on the video. This has been fixed in archive elements with version 2. If you are a new user, you don't need to do anything. Otherwise, follow these instructions:
+
+1. Follow the [backup instructions](#backup-your-collection-and-archive)
+
+2. Follow the [the update instructions](#updating).
+
+3. Ensure you are on a stable internet connection with full battery and will not put your computer to sleep for tle next hour.
+
+4. Open a browser and navigate to http://localhost:3000/v1fix/ . Wait until you see 'done' in the browser and in the console you see the console text 'done updating archive to version 2'. Do not use your collection during this time. Do not refresh the page. Make sure you close the browser tab after you see done message.
+
+### Backup your collection and archive
+
+Backup your supermemo collection via the regular process. Archived videos are stored in <root_folder>/dist/archive, back this up as well.
+
+### Updating
+
+0. Stop the server if it's running
+
+1. Run `git pull` in the root folder
+
+2. Run `npm run build` in the root folder
+
+3. Run `npm run ytjs` in the root folder
+
 ### One of my extract timestamps wiped!?
 
 This can rarely happen if you hold ALT+LEFT or ALT+RIGHT and cycle theough many cards quickly. You may recover the times from the title of the card.
@@ -84,10 +110,10 @@ Restart the server and report the error on issues.
 
 ### I'm not sure how to use this...
 
-1. Download the zip off github. 
+1. Download the zip off github.
 1. Unzip it and go into the unzipped folder. 
 1. Copy YouTube.htm and paste it in C:/SuperMemo/bin, replacing the existing YouTube.htm.  
-1. Go back to the unzipped folder. [WINDOWS] Hold shift key and right click, select the menu option "open in terminal". You might have to select the more options menu for it to appear. 
+1. Go back to the unzipped folder. [WINDOWS] Hold shift key and right click, select the menu option "open in terminal". You might have to select the more options menu for it to appear.
 1. Run all the commands in Getting Started
 
 ### Want to change port
@@ -132,12 +158,16 @@ Change prefLangLabel '' to whatever lang you want and run a build, eg English, J
     * Server can locally archive and load videos
     * Offline mode for watching archived videos
     * More robust to errors
+* 2.0
+    * Archive quality selector
+    * Fixes to downloaded subtitles
+    * Cleaner sleek UI that fits on one page, expands based on video type
 
 ### Roadmap
 
 * Add Archive component which lets send a video to be archived
-- Archive quality selector
-- Settings page: subtitle settings, auto archive videos, etc.
+* Archive quality selector
+* Settings page: subtitle settings, auto archive videos, etc.
 
 ## License
 

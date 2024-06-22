@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { ArchiveInfoV1 } from "../../../../ytjs/src/utils/archive";
+import { ArchiveInfo } from "../../../../ytjs/src/utils/archive";
 import React from "react";
 
 interface ClipToolProps<T> {
     v_id: string;
-    info: ArchiveInfoV1 | undefined
+    info: ArchiveInfo | undefined
     handleCopyVideoDetails: () => void;
     setResolution: (resolution: string) => void;
 }

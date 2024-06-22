@@ -8,8 +8,7 @@ import ClipExtractor from '../../features/extractors/ClipExtractor';
 import CaptionsTracks from '../../features/language/CaptionsTracks';
 // import Counter from './features/counter/Counter.js';
 // import Subtitles from './features/language/Subtitles.js';
-import { ArchiveInfoV1 } from '../../../../ytjs/src/utils/archive';
-type ArchiveInfo = ArchiveInfoV1 // | ArchiveInfoV2; // totally extensible
+import { ArchiveInfo } from '../../../../ytjs/src/utils/archive';
 
 import { convertHHMMSS2Seconds, convertSeconds2HHMMSS, constrainToRange, formatTime, convertHHMMSS2Vector3D } from '../../utils/Duration';
 import Archive from '../../features/archive/Archive';

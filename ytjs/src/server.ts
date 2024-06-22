@@ -1,15 +1,16 @@
+import { CaptionTrack } from './../../src/app/utils/types';
 import express from 'express';
 import { SERVER_CONFIG } from '../../server-config';
 import { Innertube, UniversalCache, Utils } from 'youtubei.js';
 
 // @ts-ignore
 import corsAnywhere from 'cors-anywhere';
-import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, createWriteStream, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, createWriteStream, writeFileSync, renameSync, createReadStream, unlinkSync } from 'fs';
 import { spawn } from 'child_process';
 import path from 'path';
 import fetch, { Response } from 'node-fetch';
 
-import { Archive, ArchiveInfoV1, Cache, CacheInfoV1 } from './utils/archive';
+import { Archive, ArchiveInfo, ArchiveInfoLatest, ArchiveInfoV1, ArchiveInfoV2, Cache, CacheInfoLatest, latestArchiveConstructor, latestCacheConstructor, newArchiveFromJSON } from './utils/archive';
 import { Format } from 'youtubei.js/dist/src/parser/misc';
 import { FormatOptions } from 'youtubei.js/dist/src/types/FormatUtils';
 import { VideoInfo } from 'youtubei.js/dist/src/parser/youtube';
@@ -95,12 +96,11 @@ function loadJsonFilesIntoArchive(archiveDir: string, archive: Archive) {
 			const key = path.basename(archiveDir);
 			const jsonContent = readFileSync(filePath, 'utf-8');
 
-			try {
-				const jsonData: ArchiveInfoV1 = JSON.parse(jsonContent);
+			const jsonData = newArchiveFromJSON(jsonContent)
+			if (jsonData) {
 				archive[key] = jsonData;
-			} catch (error) {
+			} else {
 				console.error(`Failed to parse JSON file: ${filePath}`);
-				console.error(error);
 			}
 		}
 	});
@@ -109,14 +109,18 @@ function loadJsonFilesIntoArchive(archiveDir: string, archive: Archive) {
 function transformWebVTT(vtt: string) {
 	const kindRegex = /Kind: (.*)\n/;
 	const langKindRegex = /Language: (.*)\n/;
-	return vtt.replace(kindRegex, '').replace(langKindRegex, '');
+	// const styleRegex = /Style:\n(::cue\(.*?\)\s*{\s*.*?\s*}\n?)*/gs;
+	const styleRegex = /Style:\n(::cue\(.*?\)\s*{\s*.*?\s*}\n?)*\n?##\n?/gs;
+	// const alignRegex = /align:start position:0%\n/;
+	return vtt.replace(kindRegex, '').replace(langKindRegex, '').replace(styleRegex, '');
+	// .replace(alignRegex, 'align:start position:0%\n');
 }
 
-async function getCacheWait(v_id: string, retry: boolean = true, interval: number = 100, timeout = 10000) {
+async function getCacheWait(v_id: string, retry: boolean = true, interval: number = 100, timeout = 10000): Promise<ArchiveInfo | CacheInfoLatest | null | undefined> {
 	if (!online || archive[v_id]) {
-		return archive[v_id];
+		return archive[v_id] as ArchiveInfo;
 	} else if (cache[v_id]) {
-		return cache[v_id];
+		return cache[v_id] as CacheInfoLatest;
 	} else if (retry) {
 		console.log(`Waiting for cache: ${v_id}, retry: ${retry}, interval: ${interval}, timeout: ${timeout}`);
 		let start = Date.now();
@@ -167,7 +171,7 @@ async function fetchTransformedVTT(url: URL) {
 		const text = await res.text();
 		return transformWebVTT(text);
 	} catch (error: any) {
-		// console.error(`Error fetching VTT file: ${error.message}`);
+		console.error(`Error fetching VTT file: ${error.message}`);
 		// return null;
 		throw error;
 	}
@@ -368,6 +372,151 @@ app.get('/cachei/', async (req, res) => {
 	res.send(cache);
 });
 
+app.get('/v1fix/', async (req, res) => {
+	const fixVerPairs = [1, 2, "archived captions saved the auto transcription\
+	 instead of manual subs. This will query every youtube video and dl the right\
+	versions. It will also rename all of the asr captions to a.[LANG] and manual\
+	to .[LANG]", "This will query youtube for several tens or hundreds of videos in your collection, do you wish to continue? (y/n)"];
+
+	// 0. check the info.version is 1
+	// 1. find all the ASR pairs in archive, that is - if the same language code appears twice and one of them have "kind": "asr" set. Use
+	// 2. for each pair, call patchCaptions
+	// 3. update the info.json file and increment the version number to 2
+	for (const v_id of Object.keys(archive)) {
+	// for( const v_id of ["5y3sSEvT4cE"]) {
+		const info = archive[v_id];
+
+		if(info.version != 1) {
+			console.log("skipping, " + v_id + " due to version != 1.");
+			continue;
+		}
+
+		if (!info?.captions) {
+			console.log("skipping, " + v_id + " due to no captions.");
+			continue;
+		}
+
+		// const langCodes = info.captions.translation_languages?.map(lang => lang.language_code);
+		const captionTracks = info.captions.caption_tracks;
+		const archiveEntryDir = path.join(archiveDir, v_id);
+		const captionsDir = path.join(archiveEntryDir, 'captions');
+		const infoPath = path.join(archiveEntryDir, 'info.json');
+
+		// if(!langCodes || !captionTracks) {
+		// 	return res.status(400).send("No translation languages found in archive for " + v_id);
+		// }
+		if(!captionTracks) {
+			console.log("skipping, " + v_id + " due to no caption tracks.");
+			continue;
+		}
+
+		// const asrManualPair = langCodes.find(code => captionTracks.find
+		const asrPair = captionTracks.filter(track =>
+			captionTracks.filter(t => t.language_code == track.language_code).length > 1
+			&& captionTracks.find(t => t.language_code == track.language_code && t.kind == "asr") != null
+		)
+
+		if (asrPair.length == 0) {
+			const asrOnlyCap = captionTracks.find(track => track.kind == "asr");
+			if(asrOnlyCap){
+				const indexedStreams = new Array(captionTracks.length).fill(null) as (NodeJS.ReadableStream | null)[];
+				const asrStream = createReadStream(path.join(captionsDir, asrOnlyCap.language_code + '.vtt'));
+				indexedStreams[captionTracks.indexOf(asrOnlyCap)] = asrStream;
+				console.log("updating captions for " + v_id + " with single ASR");
+				const patched = await patchCaptions(captionTracks, indexedStreams, captionsDir, fullUrl, v_id, infoPath, true);
+				if(patched.length == 1){
+					// remove old (bad) ASR caption
+					const oldCapPath = path.join(captionsDir, asrOnlyCap.language_code + '.vtt');
+					if(existsSync(oldCapPath)){
+						unlinkSync(oldCapPath);
+					}
+				}
+			} else {
+				console.log("skipping, " + v_id + " due to no ASR pair and no single ASR");
+			}
+			continue;
+		}
+
+		if (asrPair.length != 2) {
+			console.log("skipping, " + v_id + " due to non-2len-ASR pair.");
+			continue;
+		}
+
+		let videoInfo: VideoInfo
+		try {
+			videoInfo = await youtube.getInfo(v_id);
+		} catch (error) {
+			console.log('skipping, ' + v_id + ' due to getVideoInfo error.');
+			await new Promise(r => setTimeout(r, 21000));
+			continue;
+		}
+
+		const newCaptionTracks = videoInfo.captions?.caption_tracks;
+		const newCaptionStreams = await getCaptionStreams(newCaptionTracks);
+
+		if(newCaptionStreams.length == 0) {
+			console.log("skipping, " + v_id + " due to no new caption streams.");
+			continue;
+		}
+
+		console.log("updating complete captions for " + v_id);
+		const updatedCaptionTracks = await patchCaptions(newCaptionTracks, newCaptionStreams, captionsDir, fullUrl, v_id, infoPath, true);
+
+		// if (updatedCaptionTracks.length == newCaptionStreams.length) {
+		// 	console.log("successfully updated captions for " + v_id);
+		// }
+
+		await new Promise(r => setTimeout(r, 15000));
+	}
+
+	// update all the info.json files to be version 2
+	for (const v_id of Object.keys(archive)) {
+		const archiveEntryDir = path.join(archiveDir, v_id);
+		const infoPath = path.join(archiveEntryDir, 'info.json');
+		const info = newArchiveFromJSON(readFileSync(infoPath, 'utf-8')) as ArchiveInfoV1;
+
+		if(info.version == 1) {
+			info.version = 2;
+			writeFileSync(infoPath, JSON.stringify(info, null, 2));
+		}
+	}
+
+	console.log("done updating archive to version 2");
+	res.send('done');
+
+	// 	const [currentVersion, newVersion, description, confirmation] = fixVerPairs;
+
+	// 	try {
+	// 		// 0. Check if the info.version is 1
+	// 		const infoData = await getInfoData(v_id);
+	// 		if (infoData.version !== currentVersion) {
+	// 			return res.status(400).send(`Invalid version. Expected ${currentVersion}, got ${infoData.version}.`);
+	// 		}
+
+	// 		// 1. Find all the ASR pairs in the archive
+	// 		const asrPairs = await findASRPairs(infoData);
+
+	// 		// 2. For each pair, call patchCaptions
+	// 		const updatedCaptionTracks = [];
+	// 		for (const pair of asrPairs) {
+	// 			const { captionTracks, captionStreams, captionsDir, fullUrl, renameExisting } = pair;
+	// 			const updated = await patchCaptions(captionTracks, captionStreams, captionsDir, fullUrl, v_id, infoData.path, renameExisting);
+	// 			updatedCaptionTracks.push(...updated);
+	// 		}
+
+	// 		// 3. Update the info.json file and increment the version number
+	// 		await updateInfoJson(infoData.path, newVersion, updatedCaptionTracks);
+
+	// 		res.send(`Fixed caption pairs for version ${newVersion}. ${description}`);
+	// 	} catch (error) {
+	// 		console.error(error);
+	// 		res.status(500).send('An error occurred while fixing caption pairs.');
+	// 	}
+	// });
+
+
+});
+
 app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 	const v_id = req.params[0]
 	const target = req.query.target as string;
@@ -444,7 +593,7 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 			try {
 				const videoInfoFull = await youtube.getInfo(v_id);
 				videoInfoFull.captions = videoInfo.captions;
-				cache[v_id] = new CacheInfoV1(videoInfoFull, manifest, target, yti_version);
+				cache[v_id] = latestCacheConstructor(videoInfoFull, manifest, target, yti_version);
 				// TODO update to use video_sets instead of file_formats
 				cache[v_id].file_formats = await getSupportedFormats(videoInfoFull);
 			} catch (error) {
@@ -467,7 +616,7 @@ app.get('/captions/:v_id', async (req, res) => {
 	res.json({});
 });
 
-app.get('/fixvtt/*', async (req, res) => {
+app.get(/^\/fixvtt\/(.*\..*$)/, async (req, res) => {
 	const url = new URL(req.url.replace('/fixvtt/', ''));
 	try {
 		const vtt = await fetchTransformedVTT(url);
@@ -559,6 +708,124 @@ app.get('/youtubeformats/:v_id', async (req, res) => {
 	return res.json({ avFormats, aFormats, vFormats, streamingData });
 });
 
+function formatCaptionFileName(captionTrack: CaptionTrack) {
+	let capFilename = captionTrack.vss_id + '.vtt';
+	if (capFilename.startsWith('.')) {
+		//remove leading dot to allow reading from static file server
+		capFilename = capFilename.substring(1);
+	}
+	return capFilename;
+}
+
+/**
+ * Get the caption streams from the caption tracks
+ * @requires captionTracks to be from videoInfo.captions.caption_tracks
+ */
+async function getCaptionStreams(captionTracks: PlayerCaptionsTracklist["caption_tracks"]) {	
+	const captionStreams = [] as Response['body'][];
+	for (const captionTrack of captionTracks ?? []) {
+		// URL request
+		const captionUrl = new URL(captionTrack.base_url);
+		captionUrl.searchParams.set('fmt', 'vtt');
+		let captionResp = await fetchWait(captionUrl, true, 500, 50);
+		if (captionResp.status != 200) {
+			return [];
+		}
+		let captionBody = captionResp.body;
+		captionStreams.push(captionBody);
+	}
+	return captionStreams;
+}
+
+/**
+ * Patch fs archive captions with the correct URL and save to disk. Updates both the captionTracks base url and rets updated.
+ * Patches info.json if it exists
+ * @param captionTracks 
+ * @param captionStreams 
+ * @param captionsDir 
+ * @param fullUrl 
+ * @param v_id 
+ * @param renameExisting 
+ * @returns the caption tracks that were updated
+ */
+async function patchCaptions(captionTracks: PlayerCaptionsTracklist['caption_tracks'], captionStreams: (Response['body'] | null)[],
+	captionsDir: string, fullUrl: string, v_id: string, infoJsonPath: string | undefined, renameExisting: boolean) {
+	if(!captionTracks || !captionStreams){
+		console.warn("no caption tracks or streams found in patchCaptions")
+		return [];
+	}
+
+	let info: ArchiveInfo | undefined;
+	if (infoJsonPath) {
+		info = newArchiveFromJSON(readFileSync(infoJsonPath, 'utf-8'));
+	}
+	const updatedCaptionTracks = [];
+
+	for (const captionTrack of captionTracks) {
+		const captionStream = captionStreams.shift();
+		if (captionStream && captionStream != null) {
+			const captionFileName = formatCaptionFileName(captionTrack);
+			const captionFilePath = path.join(captionsDir, captionFileName);
+
+			if (renameExisting && existsSync(captionFilePath)) {
+				const captionFileDir = path.dirname(captionFilePath);
+				const captionFileBase = path.basename(captionFilePath, path.extname(captionFilePath));
+				// TODO don't hardcode the version number
+				const newCaptionFilePath = path.join(captionFileDir, `${captionFileBase}_v1${path.extname(captionFilePath)}`);
+				renameSync(captionFilePath, newCaptionFilePath);
+			}
+
+			const captionFile = createWriteStream(captionFilePath);
+
+			await new Promise<void>((resolve, reject) => {
+				captionStream.pipe(captionFile);
+				captionStream.on('end', () => { resolve() });
+				captionStream.on('error', (error) => { reject(error) });
+			});
+
+			captionFile.close();
+
+			const preFix = "http://" + fullUrl + "/fixvtt/";
+			const fsUrl = `http://${fullUrl}/archive/${v_id}/captions/${captionFileName}`;
+			captionTrack.base_url = preFix + fsUrl;
+			updatedCaptionTracks.push(captionTrack);
+		}
+	}
+
+	if(updatedCaptionTracks.length != 0 && infoJsonPath){
+		if(!info || !info.captions || !info.captions.caption_tracks){
+			console.warn("info.json or its captions not found at path")
+			return [];
+		}
+		// info.captions.caption_tracks = updatedCaptionTracks;
+		if (existsSync(infoJsonPath)) {
+			const infoFileDir = path.dirname(infoJsonPath);
+			const infoFileBase = path.basename(infoJsonPath, path.extname(infoJsonPath));
+			let i = 0;
+			let newInfoFilePath;
+			do {
+				newInfoFilePath = path.join(infoFileDir, `${infoFileBase}_old${i}${path.extname(infoJsonPath)}`);
+				i++;
+			} while (existsSync(newInfoFilePath));
+			renameSync(infoJsonPath, newInfoFilePath);
+		} 
+		// else if(updatedCaptionTracks.length != captionTracks.length){
+		// 	throw new Error("captionsTrack didn't match expected length")
+		// }
+		for (const updatedCaptionTrack of updatedCaptionTracks) {
+			const captionIndex = info.captions.caption_tracks.findIndex(track => track.vss_id == updatedCaptionTrack.vss_id);
+			if (captionIndex != -1) {
+				info.captions.caption_tracks[captionIndex] = updatedCaptionTrack;
+			}
+		}
+
+		writeFileSync(infoJsonPath, JSON.stringify(info, null, 2));
+	}
+
+	return updatedCaptionTracks;
+}
+
+
 app.get('/archive/:v_id', async (req, res) => {
 	const v_id = req.params.v_id;
 	console.log('archive request for ' + v_id);
@@ -615,10 +882,10 @@ app.get('/archive/:v_id', async (req, res) => {
 		fileFormats[format.itag + '.' + archiveContainer] = format;
 
 		console.log('downloading video, format ' + format.quality_label + ' ' + format.itag)
-		const dir = path.join(archiveDir, v_id);
-		if (!existsSync(dir)) {
+		const archiveEntryDir = path.join(archiveDir, v_id);
+		if (!existsSync(archiveEntryDir)) {
 			try {
-				mkdirSync(dir);
+				mkdirSync(archiveEntryDir);
 			} catch (error) {
 				console.log('error: ' + error);
 				res.status(507).send('Error: ' + error);
@@ -627,7 +894,7 @@ app.get('/archive/:v_id', async (req, res) => {
 		}
 		
 		try {
-			const file = createWriteStream(path.join(dir, fileNameItag));
+			const file = createWriteStream(path.join(archiveEntryDir, fileNameItag));
 			for await (const chunk of Utils.streamToIterable(stream)) {
 				file.write(chunk);
 			}
@@ -640,9 +907,9 @@ app.get('/archive/:v_id', async (req, res) => {
 			stream.cancel();
 		}
 
-		let newInfo;
+		let newInfo: ArchiveInfoLatest;
 		try {
-			newInfo = new ArchiveInfoV1(videoInfoFull, yti_version);
+			newInfo = latestArchiveConstructor(videoInfoFull, yti_version);
 		} catch (error) {
 			console.log('error: ' + error);
 			res.status(503).send('Error: ' + error);
@@ -651,7 +918,7 @@ app.get('/archive/:v_id', async (req, res) => {
 		newInfo.file_formats = fileFormats;
 
 		if (newInfo.captions) {
-			const captionsDir = path.join(dir, 'captions');
+			const captionsDir = path.join(archiveEntryDir, 'captions');
 			if (!existsSync(captionsDir)) {
 				try {
 					mkdirSync(captionsDir);
@@ -671,7 +938,7 @@ app.get('/archive/:v_id', async (req, res) => {
 				res.status(503).send('Error: ' + error);
 				return;
 			}
-			for (const captionTrack of captionTracks ?? []) {
+			/*for (const captionTrack of captionTracks ?? []) {
 				// URL request
 				const captionUrl = new URL(captionTrack.base_url);
 				captionUrl.searchParams.set('fmt', 'vtt');
@@ -690,7 +957,7 @@ app.get('/archive/:v_id', async (req, res) => {
 				}
 				
 				try {
-					const captionFile = createWriteStream(path.join(captionsDir, captionTrack.language_code + '.vtt'));
+					const captionFile = createWriteStream(path.join(captionsDir, formatCaptionFileName(captionTrack)));
 					await new Promise((resolve, reject) => {
 						captionStream.body.pipe(captionFile);
 						captionStream.body.on('error', reject);
@@ -703,19 +970,49 @@ app.get('/archive/:v_id', async (req, res) => {
 					return;
 				}
 				const preFix = "http://" + fullUrl + "/fixvtt/";
-				const fsUrl = `http://${fullUrl}/archive/${v_id}/captions/${captionTrack.language_code}.vtt`;
+				const fsUrl = `http://${fullUrl}/archive/${v_id}/captions/${formatCaptionFileName(captionTrack)}`;
 				captionTrack.base_url = preFix + fsUrl;
+			}*/
+			let captionStreams = [] as Response['body'][];
+			try {
+				captionStreams = await getCaptionStreams(captionTracks);
+			} catch (error) {
+				console.log('error: ' + error);
+				res.status(503).send('Error: ' + error);
+				return;
+			}
+			if(captionStreams.length == 0){
+				console.log('error in caption stream');
+				res.status(503).send('Error: ' + 'could not get all caption streams');
+				return;
+			}
+			
+			let updatedCaptionTracks = [] as PlayerCaptionsTracklist["caption_tracks"];
+			try {
+				updatedCaptionTracks = await patchCaptions(captionTracks, captionStreams, captionsDir, fullUrl, v_id, undefined, true);
+				
+			} catch {
+				console.log('error in updating caption tracks');
+				res.status(503).send('Error: ' + 'error in patching caption files and updating caption tracks');
+				return;
+			}
+			// if this fails, the captions will not be updated
+			if(updatedCaptionTracks.length != captionTracks.length){
+				console.log('error in updating caption tracks');
+				res.status(503).send('Error: ' + 'error in patching caption tracks, not all successfully patched');
+				return;
 			}
 		}
 
 		try {
-			writeFileSync(path.join(dir, 'info.json'), JSON.stringify(newInfo, null, 2));
+			writeFileSync(path.join(archiveEntryDir, 'info.json'), JSON.stringify(newInfo, null, 2));
 		} catch (error) {
 			console.log('error: ' + error);
 			res.status(507).send('Error: ' + error);
 			return;
 		}
 		archive[v_id] = newInfo;
+		console.log('video archived');
 		res.status(200).send('OK');
 	}
 
