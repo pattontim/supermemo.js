@@ -40,7 +40,7 @@ function App() {
   const [playing, setPlaying] = useState(false);
   const [controls, setControls] = useState(true);
   const [light, setLight] = useState(false);
-  const [volume, setVolume] = useState(0.8);
+  const [volume, setVolume] = useLocalStorage('vol-' + videoid, 0.8);
   const [muted, setMuted] = useState(false);
   const [played, setPlayed] = useState(start ? convertHHMMSS2Seconds(start) : 0);
   const [loaded, setLoaded] = useState(0);
@@ -270,7 +270,7 @@ function App() {
     setRepeat(!repeat);
   }
 
-  function handlePlayerReady( player: any ) {
+  function handlePlayerReady( player: ReactPlayer ) {
     fetchArchiveInfo(queryParameters.get('videoid') as string);
 
     const videoElement = document.getElementsByTagName('video')[0];
@@ -285,6 +285,10 @@ function App() {
         matchingTextTrack.mode = "showing";
       }
       }, 2000);
+
+      videoElement.addEventListener('volumechange', volume => {
+        setVolume(videoElement.volume);
+      }); 
     }
 
     seekVideo(start);
