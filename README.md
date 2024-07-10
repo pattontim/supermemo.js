@@ -106,7 +106,9 @@ Backup your supermemo collection via the regular process. Archived videos are st
 
 6. run `npm run build` to build the react app that SuperMemo will load
 
-7. run `npm run ytjs` to start the video server
+7. delete all of the files in the ./cache folder to clear the innertube cache
+
+8. run `npm run ytjs` to start the video server
 
 ### One of my extract timestamps wiped!?
 
