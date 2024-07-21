@@ -62,7 +62,7 @@ export default function ClipTool<T extends unknown>({ v_id, info, handleCopyVide
 
     }
 
-    function getActiveCueText() {
+    function getActiveCueText(linesContext = 0) {
         const videoElement = document.getElementsByTagName('video')[0];
 
         const activeTextTrack = Array.from(videoElement.textTracks)
@@ -79,11 +79,23 @@ export default function ClipTool<T extends unknown>({ v_id, info, handleCopyVide
             return;
         }
 
-        return activeCue.text.replace(/<\/?[^>]+(>|$)/g, '').replace(/\n/g, '').trim();
+        const activeCueIndex = Array.from(activeTextTrack.cues).indexOf(activeCue);
+        const cues = Array.from(activeTextTrack.cues);
+
+        const start = Math.max(0, activeCueIndex - linesContext);
+        const end = Math.min(cues.length - 1, activeCueIndex + linesContext);
+
+        let activeCueText = '';
+        for(let i = start; i <= end; i++) {
+            const cue = cues[i] as VTTCue;
+            activeCueText += cue.text.replace(/<\/?[^>]+(>|$)/g, '').replace(/\n/g, '').trim();
+        }
+
+        return activeCueText;
     }
 
-    const handleCaptionCopyBtnClick = () => {
-        const activeCueText = getActiveCueText();
+    const handleCaptionCopyBtnClick = (linesContext = 0) => {
+        const activeCueText = getActiveCueText(linesContext);
         if(!activeCueText) {
             return;
         }
@@ -96,8 +108,8 @@ export default function ClipTool<T extends unknown>({ v_id, info, handleCopyVide
         document.body.removeChild(textArea);
     };
 
-    const handleTranslateCaptionBtnClick = () => {
-        const activeCueText = getActiveCueText();
+    const handleTranslateCaptionBtnClick = (linesContext = 0) => {
+        const activeCueText = getActiveCueText(linesContext);
         if(!activeCueText) {
             return;
         }
@@ -133,22 +145,26 @@ export default function ClipTool<T extends unknown>({ v_id, info, handleCopyVide
                     {isActive &&
                         <div className="accordion-content">
                             <div className="row">
-                                <div className="col">
-                                    <button type="button" id="copyBtn" onClick={handleCopyVideoDetails}>Copy Details</button>
-                                    <button type="button" id="screenshotBtn" onClick={handleScreenshotClick}>Screenshot</button>
-                                    <button type="button" id="copyCaptionBtn" onClick={handleCaptionCopyBtnClick}>Copy Cap</button>
-                                    <button type="button" id="translateCapBtn" onClick={handleTranslateCaptionBtnClick}>Open TL</button>
-                                    <button type="button" id="summarizeBtn" onClick={handleOpenSummarizer}>Summarize</button>
-                                    <button type="button" id="magnifyBtn" onClick={handleOpenMagnifier}>Magnify</button>
-                                    {Object.keys(info?.archived_on ?? []).length === 0 &&
-                                        <>
-                                            {/* <button onClick={() => setResolution("360")}>360p</button> */}
-                                            <button onClick={() => setResolution("480")}>480p</button>
-                                            <button onClick={() => setResolution("720")}>720p</button>
-                                            <button onClick={() => setResolution("1080")}>1080p</button>
-                                        </>
-                                    }
-                                </div>
+                                <button type="button" id="copyBtn" onClick={handleCopyVideoDetails} title="Copy details">📋 Details</button>
+                                <button type="button" id="copyCaptionBtn" onClick={() => handleCaptionCopyBtnClick()} title="Copy captions">📋 Cap</button>
+                                <button type="button" id="copyCaptionContextBtn" onClick={() => handleCaptionCopyBtnClick(1)} title="Copy captions context">💫</button>
+                                |
+                                <button type="button" id="translateCapBtn" onClick={() => handleTranslateCaptionBtnClick()} title="Open translation">🌎 TL</button>
+                                <button type="button" id="translateCapContextBtn" onClick={() => handleTranslateCaptionBtnClick(1)} title="Open translation with context">💫</button>
+                                |
+                                <button type="button" id="summarizeBtn" onClick={handleOpenSummarizer} title="Open a summary on summarize.tech">Summarize</button>
+                                |
+                                {Object.keys(info?.archived_on ?? []).length === 0 &&
+                                    <>
+                                        {/* <button onClick={() => setResolution("360")}>360p</button> */}
+                                        <button onClick={() => setResolution("480")} title="set 480p resolution">480p</button>
+                                        <button onClick={() => setResolution("720")} title="set 720p resolution">720p</button>
+                                        <button onClick={() => setResolution("1080")} title="set 1080p resolution">1080p</button>
+                                    </>
+                                }
+                                |
+                                <button type="button" id="screenshotBtn" onClick={handleScreenshotClick} title="Screenshot">🖼️</button>
+                                <button type="button" id="magnifyBtn" onClick={handleOpenMagnifier} title="Open windows magnifier">🔎</button>
                             </div>
                         </div>
                     }
