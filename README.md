@@ -74,6 +74,12 @@ Videos are stored in <SUPERMEMO_JS_FOLDER>/dist/archive. You can delete folders 
 
 ## Help
 
+### Videos won't load
+
+YouTube is currently experimenting with their API and so videos intermittently might not load. First follow the update instructions to see if a fix is available. If you are having still having trouble, please open an issue. Alternatively, you can scan the FreeTube and NewPipe projects issue pages. These usually indicate when a fix is coming first.
+
+Most recent downtime: 1 day (2024-07-24), [Fixed 2024-07-25]
+
 ### Manual subtitles are not saved / V2 migration
 
 There was a bug in the code that caused ONLY the auto caption to be saved if both the manual subs and ASR are on the video. This has been fixed in archive elements with version 2. If you are a new user, you don't need to do anything. Otherwise, follow these instructions:
