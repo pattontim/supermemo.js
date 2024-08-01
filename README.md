@@ -78,7 +78,11 @@ Videos are stored in <SUPERMEMO_JS_FOLDER>/dist/archive. You can delete folders 
 
 YouTube is currently experimenting with their API and so videos intermittently might not load. First follow the update instructions to see if a fix is available. If you are having still having trouble, please open an issue. Alternatively, you can scan the FreeTube and NewPipe projects issue pages. These usually indicate when a fix is coming first.
 
-Most recent downtime: 1 day (2024-07-24), [Fixed 2024-07-25]
+Most recent downtimes: 
+
+> 1 day (2024-07-24), [Fixed 2024-07-25]
+
+> 1 day (2024-07-31), [Fixed 2024-08-01]
 
 ### Manual subtitles are not saved / V2 migration
 
