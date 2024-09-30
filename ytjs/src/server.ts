@@ -16,6 +16,11 @@ import { FormatOptions } from 'youtubei.js/dist/src/types/FormatUtils';
 import { VideoInfo } from 'youtubei.js/dist/src/parser/youtube';
 import { PlayerCaptionsTracklist } from 'youtubei.js/dist/src/parser/nodes';
 import { ElementInfo, ElementInfoV1 } from './utils/element';
+import { commandExistsSync, getCommandOutput } from './utils/lib';
+// @ts-ignore
+type JSDOMType = typeof import('jsdom')['JSDOM'];
+// @ts-ignore
+type BGType = typeof import('bgutils-js')['BG'];
 
 const app = express();
 
@@ -27,12 +32,16 @@ let cacheDir = './.cache';
 let archiveDir = './dist/archive';
 let elementsDir = './dist/elements';
 let yti_version = '0.0.0';
-let youtube: Innertube;
 let archive = {} as Archive;
 let cache = {} as Cache;
 let archiveContainer = 'mp4';
-let online = false;
 let onlineTimeoutMs = 10000;
+
+// const outputDir = 'output_test';
+// // Ensure output directory exists
+// if (!existsSync(outputDir)) {
+//   mkdirSync(outputDir);
+// }
 
 const proxy = corsAnywhere.createServer({
 	originWhitelist: [], // Allow all origins
@@ -68,6 +77,49 @@ const formatsToUse = [
 	// 1080p > H.264 - High Profile - Level 4.0
 	'avc1.640028',
 ];
+
+declare global {
+  var youtube: Innertube | undefined;
+  var online: boolean;
+}
+
+async function loadJSDOM(): Promise<JSDOMType | null> {
+  try {
+    const jsdom = await import('jsdom');
+    return jsdom.JSDOM;
+  } catch (error) {
+    console.warn('JSDOM could not be loaded');
+    return null;
+  }
+}
+
+async function loadBG(): Promise<BGType | null> {
+  try {
+	// @ts-ignore
+	const bg = await import('bgutils-js');
+	return bg.BG;
+  } catch (error) {
+	console.warn('BotGuard utils could not be loaded:');
+	return null;
+  }
+}
+
+
+function setYoutube(itube: Innertube) {
+	globalThis.youtube = itube;
+}
+
+function getYouTube(): Innertube | undefined {
+	return globalThis.youtube;
+}
+
+function setOnline(online: boolean) {
+	globalThis.online = online;
+}
+
+function isOnline(): boolean {
+	return globalThis.online;
+}
 
 const getBrowserName = (userAgent: string) => {
 	if (userAgent.includes('Edge')) {
@@ -117,7 +169,7 @@ function transformWebVTT(vtt: string) {
 }
 
 async function getCacheWait(v_id: string, retry: boolean = true, interval: number = 100, timeout = 10000): Promise<ArchiveInfo | CacheInfoLatest | null | undefined> {
-	if (!online || archive[v_id]) {
+	if (!isOnline() || archive[v_id]) {
 		return archive[v_id] as ArchiveInfo;
 	} else if (cache[v_id]) {
 		return cache[v_id] as CacheInfoLatest;
@@ -199,6 +251,21 @@ const setNoCacheHeaders = (
 
 app.use(express.static('dist'), setNoCacheHeaders);
 
+// Custom middleware to log all requests
+app.use((req, res, next) => {
+  const timestamp = new Date().toISOString();
+  const method = req.method;
+  let url = req.url;
+  const ip = req.ip;
+
+  if(url.startsWith("/proxy/")){
+	url = url.substring(0, 20) + '...' + url.substring(url.length - 20); 
+  }
+  console.log(`[${timestamp}] ${method} ${url}`);
+
+  next(); // Call next() to pass control to the next middleware
+});
+
 /* Attach our cors proxy to the existing API on the /proxy endpoint. */
 app.get('/proxy/:proxyUrl*', async (req, res) => {
   req.url = req.url.replace('/proxy/', '/'); // Strip '/proxy' from the front of the URL, else the proxy won't work.
@@ -232,6 +299,220 @@ app.get('/templateUrl/:id', async (req, res) => {
 	// const template = JSON.parse(readFileSync(path.join(archiveDir, 'templates', info.templateId + '.json'), 'utf-8'));
 
 	res.send(`http://${fullUrl}/templates/${info.templateId}.html`);
+});
+
+app.get('/status/', async (req, res) => {
+	// if(checkCommandExists('ffmpeg')){
+	// 	res.send('ffmpeg exists');
+	// } else {
+	// 	res.send('ffmpeg does not exist');
+	// }
+	const ffmpegExists = commandExistsSync('ffmpeg');
+	const ytdlpExists = commandExistsSync('yt-dlp');
+	res.send(
+		{
+			youtubeijs: true,
+			youtubeijs_version: yti_version,
+			ffmpeg: ffmpegExists, 
+			ffmpeg_version: ffmpegExists ? await getCommandOutput('ffmpeg', ...['-version']) : null,
+			yt_dlp: ytdlpExists,
+			yt_dlp_version: ytdlpExists ? await getCommandOutput('yt-dlp', ...['--version']) : null
+		});
+});
+
+app.get('/ffmpeg/:id', async (req, res) => {
+	const id = req.params.id;
+
+	// Set headers for HLS streaming
+  res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  // Construct yt-dlp command
+  const ytDlpArgs = [
+    'https://www.youtube.com/watch?v=' + id,
+    '--format', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+    '-o', '-'  // Output to stdout
+  ];
+
+  // Construct ffmpeg command
+  const ffmpegArgs = [
+    '-i', 'pipe:0',  // Read from stdin
+    '-c:v', 'libx264',
+    '-c:a', 'aac',
+    '-f', 'hls',
+    '-hls_time', '10',
+    '-hls_list_size', '0',
+    '-hls_segment_type', 'mpegts',
+    '-hls_flags', 'delete_segments+omit_endlist',
+    'pipe:1'  // Output to stdout
+  ];
+
+	if (commandExistsSync('ffmpeg') && commandExistsSync('yt-dlp')) {
+		// Spawn yt-dlp process
+		const ytDlp = spawn('yt-dlp', ytDlpArgs);
+		// Spawn ffmpeg process
+		const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+
+
+		// Pipe yt-dlp output to ffmpeg input
+		ytDlp.stdout.pipe(ffmpeg.stdin);
+
+		// Pipe ffmpeg output to response
+		ffmpeg.stdout.pipe(res);
+
+		ytDlp.stderr.on('data', (data) => {
+			console.error(`yt-dlp error: ${data}`);
+		});
+
+		ffmpeg.stderr.on('data', (data) => {
+			console.error(`ffmpeg error: ${data}`);
+		});
+
+		ytDlp.on('close', (code) => {
+			console.log(`yt-dlp process exited with code ${code}`);
+			if (code !== 0) {
+				console.error('Error during video download');
+			}
+		});
+
+		ffmpeg.on('close', (code) => {
+			console.log(`ffmpeg process exited with code ${code}`);
+			if (code === 0) {
+				console.log('Transcoding finished successfully');
+			} else {
+				console.error('Error during transcoding');
+			}
+			res.end();
+		});
+
+		// Handle client disconnect
+		req.on('close', () => {
+			ytDlp.kill();
+			ffmpeg.kill();
+			console.log('Client disconnected, killed processes');
+		});
+
+
+	} else {
+		res.send('ffmpeg does not exist');
+	}
+
+});
+
+app.get('/vidtest/:videoId.mp4', (req, res) => {
+    const videoId = req.params.videoId;
+    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+
+    // Get video info first
+    const infoProcess = spawn('yt-dlp', [
+        videoUrl,
+        '--format', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        '--print', 'filesize',
+        '--no-download'
+    ]);
+
+    let fileSize = '';
+    infoProcess.stdout.on('data', (data) => {
+        fileSize += data.toString();
+    });
+
+    infoProcess.on('close', (code) => {
+        if (code !== 0) {
+            console.error('Error getting video info');
+            return res.sendStatus(500);
+        }
+
+        fileSize = parseInt(fileSize.trim()).toString();
+
+        const range = req.headers.range;
+        if (range) {
+            const parts = range.replace(/bytes=/, "").split("-");
+            const start = parseInt(parts[0], 10);
+            const end = parts[1] ? parseInt(parts[1], 10) : Number(fileSize) - 1;
+            const chunksize = (end - start) + 1;
+            const headers = {
+                'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+                'Accept-Ranges': 'bytes',
+                'Content-Length': chunksize,
+                'Content-Type': 'video/mp4',
+            };
+            res.writeHead(206, headers);
+
+            const ytDlpProcess = spawn('yt-dlp', [
+                videoUrl,
+                '--format', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                '-o', '-'
+            ]);
+
+            const ffmpegProcess = spawn('ffmpeg', [
+                '-i', 'pipe:0',
+                '-ss', `${Number(start) / Number(fileSize) * 100}%`,
+                '-i', 'pipe:0',
+                '-t', `${Number(chunksize) / Number(fileSize) * 100}%`,
+                '-c', 'copy',
+                '-f', 'mp4',
+                'pipe:1'
+            ]);
+
+            ytDlpProcess.stdout.pipe(ffmpegProcess.stdin);
+            ffmpegProcess.stdout.pipe(res);
+
+            ytDlpProcess.stderr.on('data', (data) => {
+                console.error(`yt-dlp error: ${data}`);
+            });
+
+            ffmpegProcess.stderr.on('data', (data) => {
+                console.error(`ffmpeg error: ${data}`);
+            });
+
+            ffmpegProcess.on('close', (code) => {
+                console.log(`ffmpeg process exited with code ${code}`);
+                if (code !== 0) {
+                    console.error('Error during video streaming');
+                }
+                res.end();
+            });
+
+            req.on('close', () => {
+                ytDlpProcess.kill();
+                ffmpegProcess.kill();
+                console.log('Client disconnected, killed processes');
+            });
+        } else {
+            const headers = {
+                'Content-Length': fileSize,
+                'Content-Type': 'video/mp4',
+            };
+            res.writeHead(200, headers);
+
+            const ytDlpArgs = [
+                videoUrl,
+                '--format', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                '--output', '-'
+            ];
+
+            const ytDlp = spawn('yt-dlp', ytDlpArgs);
+            ytDlp.stdout.pipe(res);
+
+            ytDlp.stderr.on('data', (data) => {
+                console.error(`yt-dlp error: ${data}`);
+            });
+
+            ytDlp.on('close', (code) => {
+                console.log(`yt-dlp process exited with code ${code}`);
+                if (code !== 0) {
+                    console.error('Error during video streaming');
+                }
+                res.end();
+            });
+
+            req.on('close', () => {
+                ytDlp.kill();
+                console.log('Client disconnected, killed yt-dlp process');
+            });
+        }
+    });
 });
 
 // TODO quality selection
@@ -314,6 +595,7 @@ async function getSupportedFormats(videoInfoFull: VideoInfo) {
 		// assume chooseFormat is used internally deterministically
 		try {
 			const format = await videoInfoFull.chooseFormat(formatOpt);
+			// console.log("deciphered: ", JSON.stringify(format.decipher(getYouTube()!.session.player)));
 			fileFormats[format.itag + '.' + archiveContainer] = format;
 		} catch (error) {
 			console.log('failed to get format: ' + error);
@@ -444,7 +726,7 @@ app.get('/v1fix/', async (req, res) => {
 
 		let videoInfo: VideoInfo
 		try {
-			videoInfo = await youtube.getInfo(v_id);
+			videoInfo = await getYouTube()!.getInfo(v_id);
 		} catch (error) {
 			console.log('skipping, ' + v_id + ' due to getVideoInfo error.');
 			await new Promise(r => setTimeout(r, 21000));
@@ -498,12 +780,13 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 		return;
 	}
 
-	if(youtube == undefined){
+	if(getYouTube() === undefined){
 		try {
 			console.log("Attempting Innertube reconnect...")
-			youtube = await callRejectAfter(connectInnertube(), onlineTimeoutMs/3).catch() as Innertube 
+			const itube = await callRejectAfter(connectInnertube(), onlineTimeoutMs/3).catch() as Innertube 
+			setYoutube(itube);
 			console.log("Successfully reconnected.")
-			online = true
+			setOnline(true);
 		} catch(error) {
 			console.log("network still down.")
 			res.status(504).send('Error: ' + error);
@@ -513,7 +796,7 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 
 	let videoInfo: VideoInfo;
 	try {
-		videoInfo = await youtube.getBasicInfo(v_id);
+		videoInfo = await getYouTube()!.getBasicInfo(v_id);
 	} catch (error) {
 		console.log('error: ' + error);
 		console.log('failed to get basic info');
@@ -560,7 +843,7 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 	if (!cache[v_id]) {
 		new Promise(r => setTimeout(r, 2000)).then(async () => {
 			try {
-				const videoInfoFull = await youtube.getInfo(v_id);
+				const videoInfoFull = await getYouTube()!.getInfo(v_id);
 				videoInfoFull.captions = videoInfo.captions;
 				cache[v_id] = latestCacheConstructor(videoInfoFull, manifest, target, yti_version);
 				// TODO update to use video_sets instead of file_formats
@@ -620,7 +903,7 @@ app.get('/youtubeformats/:v_id', async (req, res) => {
 	
 	let videoInfoFull: VideoInfo;
 	try {
-		videoInfoFull = await youtube.getInfo(v_id);
+		videoInfoFull = await getYouTube()!.getInfo(v_id);
 	} catch (error) {
 		console.log('error: ' + error);
 		res.status(503).send('Error: ' + error);
@@ -812,7 +1095,7 @@ app.get('/archive/:v_id', async (req, res) => {
 	} else {
 		let videoInfoFull: VideoInfo
 		try {
-			videoInfoFull = await youtube.getInfo(v_id);
+			videoInfoFull = await getYouTube()!.getInfo(v_id);
 		} catch (error) {
 			console.log('error: ' + error);
 			res.status(503).send('Error: ' + error);
@@ -954,13 +1237,82 @@ app.get('/archive/:v_id', async (req, res) => {
 
 async function callRejectAfter(call: Promise<unknown>, timeMs: number) {
 	return Promise.race([
-			call,
+			await call,
 			new Promise((resolve, reject) => setTimeout(() => { reject() }, timeMs))
 		])
 }
 
-function connectInnertube() {
+async function connectInnertube() {
+	let innertube = await Innertube.create({ retrieve_player: false });
+
+	const requestKey = 'O43z0dpjhgX20SCx4KAo';
+	const visitorData = innertube.session.context.client.visitorData;
+
+	const [JSDOM, BG] = await Promise.all([loadJSDOM(), loadBG()]);
+	let dom: any;
+	let poToken: string | undefined;
+
+	if (!JSDOM || !BG) {
+		console.log("Continuing without Botguard bypass, videos may fail to load after ~30s")
+	} else if (JSDOM) {
+		console.log("BGUtils detected. Attempting Botguard bypass...")
+		dom = new JSDOM();
+		Object.assign(globalThis, {
+			window: dom.window,
+			document: dom.window.document
+		});
+		const bgConfig = {
+			// @ts-expect-error
+			fetch: (url, options) => fetch(url, options),
+			globalObj: globalThis,
+			identifier: visitorData,
+			requestKey,
+		};
+
+		try {
+			// @ts-ignore
+			const challenge = await BG.Challenge.create(bgConfig);
+
+			if (!challenge)
+				throw new Error('Could not get challenge');
+
+			if (challenge.script) {
+				// @ts-ignore
+				const script = challenge.script.find((sc) => sc !== null);
+				if (script)
+					new Function(script)();
+			} else {
+				console.warn('Unable to load Botguard.');
+			}
+
+			poToken = await BG.PoToken.generate({
+				program: challenge.challenge,
+				globalName: challenge.globalName,
+				// @ts-ignore
+				bgConfig
+			});
+
+			// @ts-ignore
+			const placeholderPoToken = BG.PoToken.generatePlaceholder(visitorData);
+
+			console.log("Session Info:", {
+				visitorData,
+				placeholderPoToken,
+				poToken,
+			})
+
+			console.log('\n');
+
+			console.log("Botguard bypass successful!")
+		} catch (error) {
+			console.log("Error in Botguard bypass: " + error);
+		}
+	}
+
 	return Innertube.create({
+		po_token: poToken,
+		visitor_data: visitorData,
+		// fetch: fetchFn,
 		cache: new UniversalCache(true, cacheDir),
 		generate_session_locally: true,
 	})
@@ -981,18 +1333,32 @@ function startServer() {
 			mkdirSync(cacheDir);
 		}
 
-		setTimeout(async () => {
-			console.log("Attempting to create Innertube instance...")
+		async function createInnertubeWithRetry(retryCount: number): Promise<Innertube> {
 			try {
-				// youtube = await createInnertubeRejectAfter(onlineTimeoutMs).catch()
-				youtube = await callRejectAfter(connectInnertube(), onlineTimeoutMs).catch() as Innertube
-				online = true;
-				console.log("Innertube instance created successfully.")
-			} catch {
-				online = false;
-				console.log("Innertube could not be fetched. Running in offline (archive only) mode...")
+				return await callRejectAfter(connectInnertube(), onlineTimeoutMs) as Innertube;
+			} catch(error) {
+				console.log(error);
+				if (retryCount > 0) {
+					console.log("Innertube connection failed, retry attempt: " + (4 - retryCount));
+					return createInnertubeWithRetry(retryCount - 1);
+				} else {
+					throw new Error('Innertube could not be fetched. Running in offline (archive only) mode...');
+				}
 			}
-		})		
+		}
+
+		setTimeout(async () => {
+			console.log("Attempting to create Innertube instance...");
+			try {
+				const itube = await createInnertubeWithRetry(3);
+				setYoutube(itube);
+				setOnline(true);
+				console.log("Innertube instance created successfully.");
+			} catch (error) {
+				setOnline(false);
+				console.log("Innertube could not be fetched. Running in offline (archive only) mode...");
+			}
+		});
 
 		// TODO support symlink
 		if (!existsSync(archiveDir)) {
@@ -1004,6 +1370,8 @@ function startServer() {
 		}
 		const curDir = process.cwd();
 		console.log(`Video archive loaded using path: ${path.join(curDir, archiveDir)}`)
+
+		console.log("Ready to accept requests.")
 	});
 }
 
