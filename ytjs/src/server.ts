@@ -1,32 +1,45 @@
 import { CaptionTrack } from './../../src/app/utils/types';
-import express from 'express';
-import { SERVER_CONFIG } from '../../server-config';
-import { Innertube, UniversalCache, Utils } from 'youtubei.js';
-
+import express, { NextFunction } from 'express';
 // @ts-ignore
 import corsAnywhere from 'cors-anywhere';
 import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, createWriteStream, writeFileSync, renameSync, createReadStream, unlinkSync } from 'fs';
 import { spawn } from 'child_process';
 import path from 'path';
 import fetch, { Response } from 'node-fetch';
+import dotenv from 'dotenv';
+import { Response as EResponse } from "express"
 
 import { Archive, ArchiveInfo, ArchiveInfoLatest, ArchiveInfoV1, ArchiveInfoV2, Cache, CacheInfoLatest, latestArchiveConstructor, latestCacheConstructor, newArchiveFromJSON } from './utils/archive';
 import { Format } from 'youtubei.js/dist/src/parser/misc';
 import { FormatOptions } from 'youtubei.js/dist/src/types/FormatUtils';
 import { VideoInfo } from 'youtubei.js/dist/src/parser/youtube';
 import { PlayerCaptionsTracklist } from 'youtubei.js/dist/src/parser/nodes';
-import { ElementInfo, ElementInfoV1 } from './utils/element';
-import { commandExistsSync, getCommandOutput } from './utils/lib';
+import { ElementInfo } from './utils/element';
+import { commandExists, getCommandOutput } from './utils/lib';
+import util from 'util';
+import { BgConfig } from 'bgutils-js';
+import Innertube, { ClientType, UniversalCache } from 'youtubei.js';
+import { Utils } from 'youtubei.js';
+
 // @ts-ignore
 type JSDOMType = typeof import('jsdom')['JSDOM'];
 // @ts-ignore
 type BGType = typeof import('bgutils-js')['BG'];
+
+process.env.UV_THREADPOOL_SIZE="64";
+
+dotenv.config();
+const args = process.argv.slice(2);
+const useBotGuardBypass = !args.includes('--nobg') && process.env.USE_BOTGUARD_BYPASS !== 'false';
+const useOnline = !args.includes('--offline') && process.env.USE_ONLINE !== 'false';
 
 const app = express();
 
 //let fullUrl = SERVER_CONFIG.development.url + ":" + SERVER_CONFIG.development.port;
 let port = 3000;
 let fullUrl = "localhost" + ":" + port;
+const fullUrlForClient = "10.0.2.2" + ":" + port;
+const defaultLocalUrl = 'localhost:3000';
 // let port = SERVER_CONFIG.development.port;
 let cacheDir = './.cache';
 let archiveDir = './dist/archive';
@@ -61,7 +74,7 @@ const formatsToUse = [
 	// 599 m4a audio only | mp4a.40.5 22050Hz ultralow, m4a_dash
 	'mp4a.40.5',
 	// 133 mp4 426x240 30 | avc1.4d4015 240p, mp4_dash
-	'avc1.4d4015',
+	// 'avc1.4d4015',
 	// 134 mp4 640x360 30 | avc1.4d401e 360p, mp4_dash
 	'avc1.4d401e',
 	// 140 m4a audio only | mp4a.40.2 44100Hz medium, m4a_dash
@@ -81,16 +94,32 @@ const formatsToUse = [
 declare global {
   var youtube: Innertube | undefined;
   var online: boolean;
+  var JSDOM: JSDOMType | null;
+  var BG: BGType | null;
+  var ffmpeg_version: string | null | undefined;
+  var yt_dlp_version: string | null | undefined;
 }
 
+globalThis.youtube = undefined;
+globalThis.online = false;
+globalThis.JSDOM = null;
+globalThis.BG = null;
+globalThis.ffmpeg_version = undefined;
+globalThis.yt_dlp_version = undefined;
+
 async function loadJSDOM(): Promise<JSDOMType | null> {
-  try {
-    const jsdom = await import('jsdom');
-    return jsdom.JSDOM;
-  } catch (error) {
-    console.warn('JSDOM could not be loaded');
-    return null;
-  }
+	if (globalThis.JSDOM) {
+		return globalThis.JSDOM;
+	} else {
+		try {
+			const jsdom = await import('jsdom');
+			globalThis.JSDOM = jsdom.JSDOM;
+			return jsdom.JSDOM;
+		} catch (error) {
+			console.warn('JSDOM could not be loaded');
+			return null;
+		}
+	}
 }
 
 async function loadBG(): Promise<BGType | null> {
@@ -158,6 +187,32 @@ function loadJsonFilesIntoArchive(archiveDir: string, archive: Archive) {
 	});
 }
 
+const longRunningRequestMiddleware = (threshold: number = 5000) => {
+  return (req: Request, res: EResponse, next: NextFunction) => {
+    const start = Date.now();
+    let requestEnded = false;
+
+    // Function to log long-running request
+    const logLongRunningRequest = () => {
+      if (!requestEnded) {
+        const duration = Date.now() - start;
+        console.warn(`Long-running request detected: ${req.method} ${req.url} - Duration: ${duration}ms`);
+      }
+    };
+
+    // Set a timeout to check if the request is still running after the threshold
+    const timeoutId = setTimeout(logLongRunningRequest, threshold);
+
+    // Capture when the response finishes
+    res.on('finish', () => {
+      requestEnded = true;
+      clearTimeout(timeoutId);
+    });
+
+    next();
+  };
+};
+
 function transformWebVTT(vtt: string) {
 	const kindRegex = /Kind: (.*)\n/;
 	const langKindRegex = /Language: (.*)\n/;
@@ -178,6 +233,9 @@ async function getCacheWait(v_id: string, retry: boolean = true, interval: numbe
 		let start = Date.now();
 		while (!cache[v_id] && Date.now() - start < timeout) {
 			await new Promise(r => setTimeout(r, interval));
+		}
+		if(Date.now() - start >= timeout){
+			console.log(`Timeout waiting for cache: ${v_id} after reaching max for call ${timeout}ms`);
 		}
 		return cache[v_id] ? cache[v_id] : null;
 	}
@@ -249,10 +307,11 @@ const setNoCacheHeaders = (
 };
 
 
-app.use(express.static('dist'), setNoCacheHeaders);
+app.use(express.static('./dist'), setNoCacheHeaders);
+app.use(express.static('../dist'), setNoCacheHeaders);
 
 // Custom middleware to log all requests
-app.use((req, res, next) => {
+app.use(async (req, res, next) => {
   const timestamp = new Date().toISOString();
   const method = req.method;
   let url = req.url;
@@ -265,6 +324,9 @@ app.use((req, res, next) => {
 
   next(); // Call next() to pass control to the next middleware
 });
+
+// @ts-ignore
+app.use(longRunningRequestMiddleware(5000))
 
 /* Attach our cors proxy to the existing API on the /proxy endpoint. */
 app.get('/proxy/:proxyUrl*', async (req, res) => {
@@ -282,7 +344,8 @@ app.get('/mpd/invalidate/:v_id', async (req, res) => {
 app.get('/templateUrl/:id', async (req, res) => {
 	const id = req.params.id;
 	if(id.length == 11){
-		res.send(`http://${fullUrl}/templates/smplayer.html`);
+		console.log("11 len ID detected, returning the player")
+		res.send(`http://${fullUrlForClient}/templates/smplayer.html`);
 		return;
 	}
 
@@ -298,25 +361,26 @@ app.get('/templateUrl/:id', async (req, res) => {
 	// open at templates/id.html and ret the template
 	// const template = JSON.parse(readFileSync(path.join(archiveDir, 'templates', info.templateId + '.json'), 'utf-8'));
 
-	res.send(`http://${fullUrl}/templates/${info.templateId}.html`);
+	res.send(`http://${fullUrlForClient}/templates/${info.templateId}.html`);
 });
 
 app.get('/status/', async (req, res) => {
-	// if(checkCommandExists('ffmpeg')){
-	// 	res.send('ffmpeg exists');
-	// } else {
-	// 	res.send('ffmpeg does not exist');
-	// }
-	const ffmpegExists = commandExistsSync('ffmpeg');
-	const ytdlpExists = commandExistsSync('yt-dlp');
+
+
+	if(globalThis.ffmpeg_version === undefined || 
+		globalThis.yt_dlp_version === undefined){
+		const [ffmpeg_version, yt_dlp_version] = 
+			await Promise.all([ getCommandOutput('ffmpeg', true, '-version'), 
+				  getCommandOutput('yt-dlp', true, '--version') ]);
+		globalThis.ffmpeg_version = ffmpeg_version as string | null;
+		globalThis.yt_dlp_version = yt_dlp_version as string | null;
+	}
+
 	res.send(
 		{
-			youtubeijs: true,
 			youtubeijs_version: yti_version,
-			ffmpeg: ffmpegExists, 
-			ffmpeg_version: ffmpegExists ? await getCommandOutput('ffmpeg', ...['-version']) : null,
-			yt_dlp: ytdlpExists,
-			yt_dlp_version: ytdlpExists ? await getCommandOutput('yt-dlp', ...['--version']) : null
+			ffmpeg_version,
+			yt_dlp_version,
 		});
 });
 
@@ -348,7 +412,7 @@ app.get('/ffmpeg/:id', async (req, res) => {
     'pipe:1'  // Output to stdout
   ];
 
-	if (commandExistsSync('ffmpeg') && commandExistsSync('yt-dlp')) {
+	if (await commandExists('ffmpeg') && await commandExists('yt-dlp')) {
 		// Spawn yt-dlp process
 		const ytDlp = spawn('yt-dlp', ytDlpArgs);
 		// Spawn ffmpeg process
@@ -534,17 +598,20 @@ app.get('/streamUrl/:v_id', async (req, res) => {
 	const bestFormat = archiveFormats[bestKey];
 
 	if (bestFormat) {
-		const url = new URL(`http://${fullUrl}/archive/${v_id}/${bestKey}`);
+		const url = new URL(`http://${fullUrlForClient}/archive/${v_id}/${bestKey}`);
 		res.send(url.href);
 		return;
 	}
   } else {
-	const url = new URL(`http://${fullUrl}/mpd/${v_id}.mpd`);
+	const url = new URL(`http://${fullUrlForClient}/mpd/${v_id}.mpd`);
 	url.searchParams.set('target', target as string);
 	res.send(url.href + "#" + start + "," + stop);
   }
 });
 
+/** SImply waits for archiveInfo to be loaded, expecting another process to cache it
+ * eg, the initial request to /mpd
+ */
 app.get('/archiveInfo/:v_id', async (req, res) => {
 	const v_id = req.params.v_id;
 	const archiveInfo = await getCacheWait(v_id);
@@ -582,11 +649,11 @@ async function getSupportedFormats(videoInfoFull: VideoInfo) {
 			quality: '240p', // best, bestefficiency, 144p, 240p, 480p, 720p and so on.
 			format: 'mp4' // media container format 
 		},
-		{
-			type: 'video+audio', // audio, video or video+audio
-			quality: '144p', // best, bestefficiency, 144p, 240p, 480p, 720p and so on.
-			format: 'mp4' // media container format 
-		},
+		//{
+		//	type: 'video+audio', // audio, video or video+audio
+		//	quality: '144p', // best, bestefficiency, 144p, 240p, 480p, 720p and so on.
+		//	format: 'mp4' // media container format 
+		//},
 	] as FormatOptions[];
 
 	const fileFormats: { [key: string]: Format } = {};
@@ -705,7 +772,7 @@ app.get('/v1fix/', async (req, res) => {
 				const asrStream = createReadStream(path.join(captionsDir, asrOnlyCap.language_code + '.vtt'));
 				indexedStreams[captionTracks.indexOf(asrOnlyCap)] = asrStream;
 				console.log("updating captions for " + v_id + " with single ASR");
-				const patched = await patchCaptions(captionTracks, indexedStreams, captionsDir, fullUrl, v_id, infoPath, true);
+				const patched = await patchCaptions(captionTracks, indexedStreams, captionsDir, fullUrlForClient, v_id, infoPath, true);
 				if(patched.length == 1){
 					// remove old (bad) ASR caption
 					const oldCapPath = path.join(captionsDir, asrOnlyCap.language_code + '.vtt');
@@ -726,7 +793,7 @@ app.get('/v1fix/', async (req, res) => {
 
 		let videoInfo: VideoInfo
 		try {
-			videoInfo = await getYouTube()!.getInfo(v_id);
+			videoInfo = await getYouTube()!.getInfo(v_id, { client: "MWEB" });
 		} catch (error) {
 			console.log('skipping, ' + v_id + ' due to getVideoInfo error.');
 			await new Promise(r => setTimeout(r, 21000));
@@ -742,7 +809,7 @@ app.get('/v1fix/', async (req, res) => {
 		}
 
 		console.log("updating complete captions for " + v_id);
-		const updatedCaptionTracks = await patchCaptions(newCaptionTracks, newCaptionStreams, captionsDir, fullUrl, v_id, infoPath, true);
+		const updatedCaptionTracks = await patchCaptions(newCaptionTracks, newCaptionStreams, captionsDir, fullUrlForClient, v_id, infoPath, true);
 
 		// if (updatedCaptionTracks.length == newCaptionStreams.length) {
 		// 	console.log("successfully updated captions for " + v_id);
@@ -780,6 +847,11 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 		return;
 	}
 
+	if(!useOnline){
+		res.status(503).send('Error: offline only mode');
+		return;
+	}
+
 	if(getYouTube() === undefined){
 		try {
 			console.log("Attempting Innertube reconnect...")
@@ -796,7 +868,7 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 
 	let videoInfo: VideoInfo;
 	try {
-		videoInfo = await getYouTube()!.getBasicInfo(v_id);
+		videoInfo = await getYouTube()!.getBasicInfo(v_id, { client: "MWEB" });
 	} catch (error) {
 		console.log('error: ' + error);
 		console.log('failed to get basic info');
@@ -806,14 +878,133 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 	let manifest: string;
 
 	// TODO better match the format to the browser
+	const preferredLang = "ja";
+
+	function filterAudioAdaptationSets(manifest: string): string {
+		let dom = new JSDOM!();
+		global.DOMParser = dom.window.DOMParser;
+		global.XMLSerializer = dom.window.XMLSerializer;
+		const parser = new DOMParser();
+		const xmlDoc = parser.parseFromString(manifest, "text/xml");
+		const audioSets = xmlDoc.querySelectorAll('AdaptationSet[contentType="audio"]');
+		
+		// First try to find preferred language track
+		let preferredAudio = Array.from(audioSets).find(set => {
+			const lang = set.getAttribute('lang');
+			return lang === preferredLang;
+		});
+
+		console.log(`Available audio tracks:`);
+		audioSets.forEach(set => {
+			const lang = set.getAttribute('lang');
+			const label = set.querySelector('Label')?.textContent;
+			console.log(`- lang=${lang}, label=${label}`);
+		});
+		console.log(`Preferred audio track: lang=${preferredAudio?.getAttribute('lang')}, label=${preferredAudio?.querySelector('Label')?.textContent}`);
+
+		// If preferred language not found, fallback to original/master audio track
+		if (!preferredAudio) {
+			preferredAudio = Array.from(audioSets).find(set => {
+				const label = set.querySelector('Label')?.textContent;
+				const isMaster = label?.includes('original') || label?.includes('Original') || audioSets.length === 1;
+				if (isMaster) {
+					console.log(`Using master audio track: lang=${set.getAttribute('lang')}, label=${label}`);
+				}
+				return isMaster;
+			});
+		}
+
+		// Keep only the selected audio track
+		audioSets.forEach(set => {
+			if (set !== preferredAudio) {
+				const lang = set.getAttribute('lang');
+				const label = set.querySelector('Label')?.textContent;
+				console.log(`Filtering out audio track: lang=${lang}, label=${label}`);
+				set.parentNode?.removeChild(set);
+			}
+		});
+
+		return new XMLSerializer().serializeToString(xmlDoc);
+	}
+
 	try {
 		if (target == "IE") {
-			manifest = await videoInfo.toDash((url: any) => new URL(`http://${fullUrl}/proxy/${url}`)
-				, (format: any) => !formatsToUse.find(fmt => format.mime_type.includes(fmt))
-			);
+
+			console.log("playable: " + JSON.stringify(videoInfo.playability_status))
+			console.log("vid data: " + JSON.stringify(videoInfo.basic_info))
+
+			const manifestOptions = {
+			url_transformer: (url: URL) => new URL(`http://${fullUrlForClient}/proxy/${url}`),
+			format_filter: (format: Format) => { 
+					const isAudioOnly = format.has_audio && !format.has_video;
+					console.log("format: " + format.itag + " audio: " + format.has_audio + " video: " + format.has_video 
+					+ " mime: " + format.mime_type, " isAudioOnly: " + isAudioOnly + " lang: " + format.language);
+
+					return !formatsToUse.find(fmt => format.mime_type.includes(fmt))
+				}
+			}
+
+
+			manifest = await videoInfo.toDash(manifestOptions);
+			manifest = filterAudioAdaptationSets(manifest);
 		} else {
-			manifest = await videoInfo.toDash((url: any) => new URL(`http://${fullUrl}/proxy/${url}`));
+			const manifestOptions = {
+			url_transformer: (url: URL) => new URL(`http://${fullUrlForClient}/proxy/${url}`),
+			}
+			manifest = await videoInfo.toDash(manifestOptions);
 		}
+		// 		if (target == "IE") {
+
+		// 	console.log("playable: " + JSON.stringify(videoInfo.playability_status))
+		// 	console.log("vid data: " + JSON.stringify(videoInfo.basic_info))
+
+		// 	const manifestOptions = {
+		// 	url_transformer: (url: URL) => new URL(`http://${fullUrl}/proxy/${url}`),
+		// 	format_filter: (format: Format) => { 
+		// 			const isAudioOnly = format.has_audio && !format.has_video;
+		// 			console.log("format: " + format.itag + " audio: " + format.has_audio + " video: " + format.has_video 
+		// 			+ " mime: " + format.mime_type, " isAudioOnly: " + isAudioOnly + " lang: " + format.language);
+
+		// 			return !formatsToUse.find(fmt => format.mime_type.includes(fmt))
+		// 		}
+		// 	}
+
+
+		// 	manifest = await videoInfo.toDash(manifestOptions);
+		// 	manifest = filterAudioAdaptationSets(manifest);
+		// } else {
+		// 	const manifestOptions = {
+		// 	url_transformer: (url: URL) => new URL(`http://${fullUrl}/proxy/${url}`),
+		// 	}
+		// 	manifest = await videoInfo.toDash(manifestOptions);
+		// }
+		// if (target == "IE") {
+
+		// 	console.log("playable: " + JSON.stringify(videoInfo.playability_status))
+		// 	console.log("vid data: " + JSON.stringify(videoInfo.basic_info))
+
+
+		// 	manifest = await videoInfo.toDash(
+		// 		(url: URL) => new URL(`http://${fullUrl}/proxy/${url}`),
+		// 		(format: Format) => { 
+		// 			const isAudioOnly = format.has_audio && !format.has_video;
+		// 			console.log("format: " + format.itag + " audio: " + format.has_audio + " video: " + format.has_video 
+		// 			+ " mime: " + format.mime_type, " isAudioOnly: " + isAudioOnly + " lang: " + format.language);
+
+		// 			return !formatsToUse.find(fmt => format.mime_type.includes(fmt))
+		// 		}
+			
+		// 	);
+		// 	manifest = filterAudioAdaptationSets(manifest);
+		// } else {
+		// 	manifest = await videoInfo.toDash(
+		// 	(url: URL) => new URL(`http://${fullUrl}/proxy/${url}`));
+
+		// 	// const manifestOptions = {
+		// 	// url_transformer: (url: URL) => new URL(`http://${fullUrl}/proxy/${url}`),
+		// 	// }
+		// 	// manifest = await videoInfo.toDash(manifestOptions);
+		// }
 		res.send(manifest);
 	} catch (error) {
 		console.log('error: ' + error);
@@ -822,13 +1013,17 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 		if(videoInfo.basic_info.is_private){
 			console.log('Private video! Please remove!');
 			return;
+		} else if (videoInfo.playability_status && videoInfo.playability_status.status == "UNPLAYABLE"){
+			console.log('Unplayable video likely due to banning embeds');
+			return;
 		}
 		return;
 	}
 
 	try {
 		for (const caption of videoInfo?.captions?.caption_tracks ?? []) {
-			caption.base_url = `http://${fullUrl}/fixvtt/${caption.base_url}`;
+			const captionUrl = new URL(caption.base_url, "https://www.youtube.com");
+			caption.base_url = `http://${fullUrlForClient}/fixvtt/${captionUrl}`;
 		}
 		// TypeError possible
 	} catch (error) {
@@ -842,10 +1037,26 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 	// wait 2000ms before caching the full video info
 	if (!cache[v_id]) {
 		new Promise(r => setTimeout(r, 2000)).then(async () => {
+			// try {
+			// 	cache[v_id] = latestCacheConstructor(videoInfo, manifest, target, yti_version);
+			// 	// videoInfo.captions = videoInfo.captions;
+			// 	cache[v_id].file_formats = await getSupportedFormats(videoInfo);
+			// 	console.log("caching video info: " + JSON.stringify(cache[v_id]));
+			// } catch (error) {
+			// 	console.log('Error: ' + error);
+			// 	console.log('failed to cache video info');
+			// }
 			try {
-				const videoInfoFull = await getYouTube()!.getInfo(v_id);
+				const videoInfoFull = await getYouTube()!.getBasicInfo(v_id, { client: "MWEB" });
+				console.log("got captions")
 				videoInfoFull.captions = videoInfo.captions;
+
+				// const mockVideoInfo: VideoInfo = {
+				// 	...videoInfoFull,
+				// }
+
 				cache[v_id] = latestCacheConstructor(videoInfoFull, manifest, target, yti_version);
+				console.log("constructor ran");
 				// TODO update to use video_sets instead of file_formats
 				cache[v_id].file_formats = await getSupportedFormats(videoInfoFull);
 			} catch (error) {
@@ -858,9 +1069,16 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 
 app.get('/captions/:v_id', async (req, res) => {
 	const v_id = req.params.v_id;
-	let captionTracks = (await getCacheWait(v_id))?.captions
+	let captionTracks: PlayerCaptionsTracklist | undefined = JSON.parse(JSON.stringify((await getCacheWait(v_id))?.captions))
 
 	if (captionTracks) {
+		for(const ct of captionTracks?.caption_tracks || []){
+			for(let i = 0; i < 5; i++){
+				ct.base_url = ct.base_url.replace(defaultLocalUrl, fullUrlForClient)
+			}
+			console.log('serving caption with url as ' + ct.base_url);
+		}
+
 		console.log('serving caption from cache or archive');
 		res.json(captionTracks.caption_tracks);
 		return;
@@ -870,6 +1088,7 @@ app.get('/captions/:v_id', async (req, res) => {
 
 app.get(/^\/fixvtt\/(.*\..*$)/, async (req, res) => {
 	const url = new URL(req.url.replace('/fixvtt/', ''));
+	console.log('fixvtt request for ' + url.href);
 	try {
 		const vtt = await fetchTransformedVTT(url);
 		if (vtt == null) {
@@ -903,7 +1122,8 @@ app.get('/youtubeformats/:v_id', async (req, res) => {
 	
 	let videoInfoFull: VideoInfo;
 	try {
-		videoInfoFull = await getYouTube()!.getInfo(v_id);
+		// FIXME: do not load info multiple times
+		videoInfoFull = await getYouTube()!.getInfo(v_id, { client: "MWEB" });
 	} catch (error) {
 		console.log('error: ' + error);
 		res.status(503).send('Error: ' + error);
@@ -977,8 +1197,16 @@ async function getCaptionStreams(captionTracks: PlayerCaptionsTracklist["caption
 	const captionStreams = [] as Response['body'][];
 	for (const captionTrack of captionTracks ?? []) {
 		// URL request
-		const captionUrl = new URL(captionTrack.base_url);
+		const captionUrl = new URL(captionTrack.base_url, "https://www.youtube.com");
+		// const captionUrl = new URL(captionTrack.base_url, "http://" + fullUrl + "/proxy/https://www.youtube.com");
 		captionUrl.searchParams.set('fmt', 'vtt');
+		captionUrl.searchParams.set("c", youtube?.session.context.client.clientName!);
+		captionUrl.searchParams.set("cver", youtube?.session.context.client.clientVersion!)
+		captionUrl.searchParams.set("potc", "1");
+		// captionUrl.searchParams.set("pot", poToken!);
+
+
+		captionUrl.searchParams.delete("xosf")
 		let captionResp = await fetchWait(captionUrl, true, 500, 50);
 		if (captionResp.status != 200) {
 			return [];
@@ -1087,17 +1315,20 @@ app.get('/archive/:v_id', async (req, res) => {
 		const vid_formats = vid_files.map((file) => {
 			return {
 				"itag": file,
-				"url": `http://${fullUrl}/archive/${v_id}/${file}`
+				"url": `http://${fullUrlForClient}/archive/${v_id}/${file}`
 			}
 		});
 		// vid_formats.sort((a, b) => Number.parseInt(a.itag.split('.')[0]) - b.itag.split('.')[0]);
 		res.status(200).send(vid_formats[0]);
 	} else {
 		let videoInfoFull: VideoInfo
+
+		await new Promise(resolve => setTimeout(resolve, 5000));
+
 		try {
-			videoInfoFull = await getYouTube()!.getInfo(v_id);
+			videoInfoFull = await getYouTube()!.getBasicInfo(v_id, { client: "MWEB" });
 		} catch (error) {
-			console.log('error: ' + error);
+			console.log('error getting vid info before download: ' + error);
 			res.status(503).send('Error: ' + error);
 			return;
 		}
@@ -1106,9 +1337,16 @@ app.get('/archive/:v_id', async (req, res) => {
 			quality: req.query.quality ? req.query.quality : 'best', // best, bestefficiency, 144p, 240p, 480p, 720p and so on.
 			format: req.query.format ? req.query.format : 'mp4' // media container format 
 		} as FormatOptions;
+		// const best_format = { type: "video+audio", itag: 18 } as FormatOptions;
+		
+		// wait 5000 ms
+		await new Promise(resolve => setTimeout(resolve, 5000));
 
+		console.log('choosing format: ' + JSON.stringify(best_format));
 		// assume chooseFormat is used internally deterministically
-		let format = await videoInfoFull.chooseFormat(best_format);
+		let format = await videoInfoFull.chooseFormat(best_format)
+
+		await new Promise(resolve => setTimeout(resolve, 5000));
 
 		if(!(format.has_video && format.has_audio)){
 			console.log('Error: format does not have video and audio, up/downgrading to best quality');
@@ -1121,25 +1359,27 @@ app.get('/archive/:v_id', async (req, res) => {
 		}
 
 		const fileNameItag = format.itag + '.' + archiveContainer; // for now
-
 		let stream;
 		try {
+			console.log('downloading video, format ' + format.quality_label + ' ' + format.itag)
 			stream = await videoInfoFull.download(best_format);
 		} catch (error) {
-			console.log('error: ' + error);
-			res.status(503).send('Error: ' + error);
+			console.log("error during video download: ")
+			console.log(util.inspect(error, { depth: null, colors: true }));
+			// throw error;
+			// console.log('error: ' + error);
+			// res.status(503).send('Error: ' + error);
 			return;
 		}
 		const fileFormats: { [key: string]: Format } = {};
 		fileFormats[format.itag + '.' + archiveContainer] = format;
 
-		console.log('downloading video, format ' + format.quality_label + ' ' + format.itag)
 		const archiveEntryDir = path.join(archiveDir, v_id);
 		if (!existsSync(archiveEntryDir)) {
 			try {
 				mkdirSync(archiveEntryDir);
 			} catch (error) {
-				console.log('error: ' + error);
+				console.log('archive dir write error: ' + error);
 				res.status(507).send('Error: ' + error);
 				return;
 			}
@@ -1152,7 +1392,7 @@ app.get('/archive/:v_id', async (req, res) => {
 			}
 			file.close();
 		} catch (error) {
-			console.log('error: ' + error);
+			console.log('file write stream error: ' + error);
 			res.status(507).send('Error: ' + error);
 			return;
 		} finally {
@@ -1163,7 +1403,7 @@ app.get('/archive/:v_id', async (req, res) => {
 		try {
 			newInfo = latestArchiveConstructor(videoInfoFull, yti_version);
 		} catch (error) {
-			console.log('error: ' + error);
+			console.log('archive constr error: ' + error);
 			res.status(503).send('Error: ' + error);
 			return;
 		}
@@ -1175,7 +1415,7 @@ app.get('/archive/:v_id', async (req, res) => {
 				try {
 					mkdirSync(captionsDir);
 				} catch (error) {
-					console.log('error: ' + error);
+					console.log('mkdir error: ' + error);
 					res.status(507).send('Error: ' + error);
 					return;
 				}
@@ -1186,36 +1426,38 @@ app.get('/archive/:v_id', async (req, res) => {
 			try {
 				captionTracks = newInfo.captions?.caption_tracks ?? [];
 			} catch (error) {
-				console.log('error: ' + error);
+				console.log('caption tracks access error: ' + error);
 				res.status(503).send('Error: ' + error);
 				return;
 			}
+			console.log('caption tracks: ' + JSON.stringify(captionTracks));
+
 			let captionStreams = [] as Response['body'][];
 			try {
 				captionStreams = await getCaptionStreams(captionTracks);
 			} catch (error) {
-				console.log('error: ' + error);
+				console.log('get captions stream error: ' + error);
 				res.status(503).send('Error: ' + error);
 				return;
 			}
 			if(captionStreams.length == 0){
-				console.log('error in caption stream');
+				console.log('error in caption stream (zero length result)');
 				res.status(503).send('Error: ' + 'could not get all caption streams');
 				return;
 			}
 			
 			let updatedCaptionTracks = [] as PlayerCaptionsTracklist["caption_tracks"];
 			try {
-				updatedCaptionTracks = await patchCaptions(captionTracks, captionStreams, captionsDir, fullUrl, v_id, undefined, true);
+				updatedCaptionTracks = await patchCaptions(captionTracks, captionStreams, captionsDir, fullUrlForClient, v_id, undefined, true);
 				
 			} catch {
-				console.log('error in updating caption tracks');
+				console.log('error in updating caption tracks (patching)');
 				res.status(503).send('Error: ' + 'error in patching caption files and updating caption tracks');
 				return;
 			}
 			// if this fails, the captions will not be updated
 			if(updatedCaptionTracks.length != captionTracks.length){
-				console.log('error in updating caption tracks');
+				console.log('error in updating caption tracks (updated NE length)');
 				res.status(503).send('Error: ' + 'error in patching caption tracks, not all successfully patched');
 				return;
 			}
@@ -1242,95 +1484,126 @@ async function callRejectAfter(call: Promise<unknown>, timeMs: number) {
 		])
 }
 
+let poToken: string | undefined;
 async function connectInnertube() {
-	let innertube = await Innertube.create({ retrieve_player: false });
+    // Create a barebones Innertube instance to get visitor data
+    let innertube = await Innertube.create({ retrieve_player: false });
+    const requestKey = 'O43z0dpjhgX20SCx4KAo';
+    const visitorData = innertube.session.context.client.visitorData;
 
-	const requestKey = 'O43z0dpjhgX20SCx4KAo';
-	const visitorData = innertube.session.context.client.visitorData;
+    if (!visitorData) {
+        throw new Error('Could not get visitor data');
+    }
 
 	const [JSDOM, BG] = await Promise.all([loadJSDOM(), loadBG()]);
-	let dom: any;
-	let poToken: string | undefined;
 
-	if (!JSDOM || !BG) {
-		console.log("Continuing without Botguard bypass, videos may fail to load after ~30s")
-	} else if (JSDOM) {
-		console.log("BGUtils detected. Attempting Botguard bypass...")
-		dom = new JSDOM();
-		Object.assign(globalThis, {
-			window: dom.window,
-			document: dom.window.document
-		});
-		const bgConfig = {
-			// @ts-expect-error
-			fetch: (url, options) => fetch(url, options),
-			globalObj: globalThis,
-			identifier: visitorData,
-			requestKey,
-		};
+    // Set up JSDOM environment
+    const dom = new JSDOM!();
+    Object.assign(globalThis, {
+        window: dom.window,
+        document: dom.window.document
+    });
 
-		try {
-			// @ts-ignore
-			const challenge = await BG.Challenge.create(bgConfig);
+    // Configure BG settings
+    const bgConfig: BgConfig = {
+		// @ts-ignore
+        fetch: (input: string | URL | globalThis.Request, init?: RequestInit) => fetch(input, init),
+        globalObj: globalThis,
+        identifier: visitorData,
+        requestKey
+    };
 
-			if (!challenge)
-				throw new Error('Could not get challenge');
+    let integrityTokenData: string | undefined;
 
-			if (challenge.script) {
-				// @ts-ignore
-				const script = challenge.script.find((sc) => sc !== null);
-				if (script)
-					new Function(script)();
-			} else {
-				console.warn('Unable to load Botguard.');
-			}
+    try {
+		if(!JSDOM || !BG){ throw new Error('Could not load JSDOM or BG'); }
 
-			poToken = await BG.PoToken.generate({
-				program: challenge.challenge,
-				globalName: challenge.globalName,
-				// @ts-ignore
-				bgConfig
-			});
+        console.log("BGUtils detected. Attempting to pass Botguard...");
 
-			// @ts-ignore
-			const placeholderPoToken = BG.PoToken.generatePlaceholder(visitorData);
+        // Create BG challenge
+        const bgChallenge = await BG.Challenge.create(bgConfig);
+        if (!bgChallenge) {
+            throw new Error('Could not get challenge');
+        }
 
-			console.log("Session Info:", {
-				visitorData,
-				placeholderPoToken,
-				poToken,
-			})
+        // Execute interpreter script
+        const interpreterJavascript = bgChallenge.interpreterJavascript.privateDoNotAccessOrElseSafeScriptWrappedValue;
+        if (interpreterJavascript) {
+            new Function(interpreterJavascript)();
+        } else {
+            throw new Error('Could not load VM');
+        }
 
-			console.log('\n');
+        // Generate PoToken
+        const poTokenResult = await BG.PoToken.generate({
+            program: bgChallenge.program,
+            globalName: bgChallenge.globalName,
+            bgConfig
+        });
 
-			console.log("Botguard bypass successful!")
-		} catch (error) {
-			console.log("Error in Botguard bypass: " + error);
-		}
-	}
+        poToken = poTokenResult.poToken;
+        // integrityTokenData = poTokenResult.integrityTokenData;
 
-	return Innertube.create({
-		po_token: poToken,
-		visitor_data: visitorData,
-		// fetch: fetchFn,
-		cache: new UniversalCache(true, cacheDir),
-		generate_session_locally: true,
-	})
+        // Generate placeholder PoToken
+        const placeholderPoToken = BG.PoToken.generatePlaceholder(visitorData);
+
+        // Log session info
+        console.info('Session Info:', {
+            visitorData,
+            placeholderPoToken,
+            poToken,
+            integrityTokenData
+        });
+        console.log('\n');
+        console.log("Botguard bypass successful!");
+
+    } catch (error) {
+        console.error("Error in Botguard bypass:", error);
+        if (!useBotGuardBypass) {
+            console.log("Continuing without Botguard bypass, videos may fail to load after ~30s");
+        } else {
+            throw error;
+        }
+    }
+
+    // Create a new Innertube instance with the obtained tokens
+    return Innertube.create({
+        po_token: poToken,
+        visitor_data: visitorData,
+		client_type: ClientType.MWEB,
+		player_id: "0004de42",
+        cache: new UniversalCache(true, cacheDir),
+        generate_session_locally: true,
+		// lang: "JP"
+		// location: "JP"
+    });
 }
 
 function startServer() {
 	app.listen(port, async () => {
-		console.log(`Server started at http://${fullUrl}`);
+		console.log(`Server started at http://${fullUrl}, client need to see: ${fullUrlForClient}`);
 		try {
 			throw new Utils.InnertubeError('This is thrown to get the version of youtubei.js');
 		} catch (error) {
 			if (error instanceof Utils.InnertubeError) {
 				yti_version = error.version;
 			}
-		}	
+		}
+		console.log(`Using youtubei.js version ${yti_version}`);
 
 		if (!existsSync(cacheDir)) {
 			mkdirSync(cacheDir);
+		} else {
+			// clear cacheDir if it exists and data is older than 30 minutes
+			const files = readdirSync(cacheDir);
+			for (const file of files) {
+				const filePath = path.join(cacheDir, file);
+				const stats = statSync(filePath);
+				if (Date.now() - stats.mtimeMs > 30 * 60 * 1000) {
+					unlinkSync(filePath);
+					console.log(`Deleted ${filePath} [OLD CACHE DATA]`);
+				}
+			}
 		}
 
 		async function createInnertubeWithRetry(retryCount: number): Promise<Innertube> {
@@ -1347,30 +1620,35 @@ function startServer() {
 			}
 		}
 
-		setTimeout(async () => {
-			console.log("Attempting to create Innertube instance...");
-			try {
-				const itube = await createInnertubeWithRetry(3);
-				setYoutube(itube);
-				setOnline(true);
-				console.log("Innertube instance created successfully.");
-			} catch (error) {
-				setOnline(false);
-				console.log("Innertube could not be fetched. Running in offline (archive only) mode...");
-			}
-		});
+		if(!useOnline){
+			console.log("Running in offline (archive only) mode...");
+		} else {
+			setTimeout(async () => {
+				console.log("Attempting to create Innertube instance...");
+				try {
+					const itube = await createInnertubeWithRetry(3)
+					setYoutube(itube);
+					setOnline(true);
+					console.log("Innertube instance created successfully.");
+				} catch (error) {
+					setOnline(false);
+					console.log("Innertube could not be fetched. Running in offline (archive only) mode...");
+				}
+			});
+		}
+		
 
 		// TODO support symlink
 		if (!existsSync(archiveDir)) {
 			mkdirSync(archiveDir);
 			console.log("created a new archive")
 		} else {
+			const curDir = process.cwd();
+			console.log(`loading existing archive using path: ${path.join(curDir, archiveDir)}`);
 			loadJsonFilesIntoArchive(archiveDir, archive);
 			console.log("loaded archive: " + Object.keys(archive).length + " videos")
 		}
-		const curDir = process.cwd();
-		console.log(`Video archive loaded using path: ${path.join(curDir, archiveDir)}`)
-
+		console.log(`Video archive loaded.`)
 		console.log("Ready to accept requests.")
 	});
 }

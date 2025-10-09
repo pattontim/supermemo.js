@@ -6,15 +6,20 @@ server/yt_old.htm
 server/*
 dist/main*.js*
 dist/reactPlayer*.js*
+ytjs/dist/archive
 dist/archive
 dist/elements
 */scripts/reactPlayer*.js*
 dist/*.bundle.js
 dist/*.bundle.js.map
 dist/*.bundle.js.LICENSE.txt
+ytjs/dist/server-config.js
+ytjs/dist/src/**
+ytjs/dist/ytjs/**
 
 #### !MANUAL EDITS HERE
-
+temp
+research
 
 #### NODE GIT IGNORE
 

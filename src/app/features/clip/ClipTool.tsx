@@ -7,9 +7,11 @@ interface ClipToolProps<T> {
     info: ArchiveInfo | undefined
     handleCopyVideoDetails: () => void;
     setResolution: (resolution: string) => void;
+    start: string | null 
+    stop: string | null
 }
 
-export default function ClipTool<T extends unknown>({ v_id, info, handleCopyVideoDetails, setResolution }: ClipToolProps<T>) {
+export default function ClipTool<T extends unknown>({ v_id, info, handleCopyVideoDetails, setResolution, start, stop }: ClipToolProps<T>) {
     const [isActive, setIsActive] = useState(true);
 
     function handleClick() {
@@ -109,20 +111,26 @@ export default function ClipTool<T extends unknown>({ v_id, info, handleCopyVide
     };
 
     const handleTranslateCaptionBtnClick = (linesContext = 0) => {
-        const activeCueText = getActiveCueText(linesContext);
-        if(!activeCueText) {
-            return;
-        }
+      const activeCueText = getActiveCueText(linesContext);
+      if (!activeCueText) {
+        return;
+      }
 
-        // https://translate.google.com/?sl=ja&tl=en&text={}&op=translate
-        const encoded = encodeURIComponent(activeCueText);
-        const url = `microsoft-edge:https://translate.google.com/?sl=auto&tl=auto&text=${encoded}&op=translate`;
-        // open in new window, IE11
-        window.open(url, '_blank');
-    }
+      // Encode the text for URL
+      const encodedText = encodeURIComponent(activeCueText);
+
+      // TODO: use prefs  
+      const sourceLang = "ja"; // Replace with dynamic source language detection if needed
+      const targetLang = "en-gb"; // Replace with desired target language
+      const deeplUrl = `microsoft-edge:https://www.deepl.com/translator#${sourceLang}/${targetLang}/${encodedText}`;
+
+      // Open in new window
+      window.open(deeplUrl, "_blank");
+    };
 
     const handleOpenSummarizer = () => {
-        window.open(`microsoft-edge:https://www.summarize.tech/https://www.youtube.com/watch?v=${v_id}`);
+        const youtubeUrl = encodeURIComponent(`https://www.youtube.com/watch?v=${v_id}`);
+        window.open(`microsoft-edge:https://kagi.com/summarizer/index.html?target_language=&summary=takeaway&url=${youtubeUrl}`);
     }
 
     const handleOpenMagnifier = () => {
@@ -133,6 +141,10 @@ export default function ClipTool<T extends unknown>({ v_id, info, handleCopyVide
         var xhr = new XMLHttpRequest();
         xhr.open('GET', url, true);
         xhr.send();
+    }
+
+    const handleOpenYT = () => {
+        window.open(`microsoft-edge:https://www.youtube.com/watch?v=${v_id}&t=${start}`);
     }
 
     return (
@@ -160,6 +172,7 @@ export default function ClipTool<T extends unknown>({ v_id, info, handleCopyVide
                                         <button onClick={() => setResolution("480")} title="set 480p resolution">480p</button>
                                         <button onClick={() => setResolution("720")} title="set 720p resolution">720p</button>
                                         <button onClick={() => setResolution("1080")} title="set 1080p resolution">1080p</button>
+                                        <button type="button" id="ytBtn" onClick={handleOpenYT} title="Open in youtube">🌎 YT</button>
                                     </>
                                 }
                                 |

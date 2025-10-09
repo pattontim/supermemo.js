@@ -14,6 +14,7 @@ import { convertHHMMSS2Seconds, convertSeconds2HHMMSS, constrainToRange, formatT
 import Archive from '../../features/archive/Archive';
 import { useLocalStorage } from '../../utils/storage';
 import ClipTool from '../../features/clip/ClipTool';
+import { ytjsHost } from '../../utils/client';
 
 function App() {
   const queryParameters = new URLSearchParams(window.location.search)
@@ -34,7 +35,7 @@ function App() {
   // const [url, setUrl] = useState("https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps_640x360_800k.mpd");
   // const [url, setUrl] = useState("http://youtube.com/watch?v=" + queryParameters.get('videoid')) 
   const [url, setUrl] = useState("");
-  const [subtitleUrl, setSubtitleUrl] = useState("http://localhost:3000/captions/" + queryParameters.get('videoid'));
+  const [subtitleUrl, setSubtitleUrl] = useState("http://" + ytjsHost + "/captions/" + queryParameters.get('videoid'));
   
   const [pip, setPip] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -57,6 +58,8 @@ function App() {
   }, [start, stop, duration]);
   const [prefLangCode, setPrefLangCode] = useLocalStorage('prefLangCode', '');
   const [prefLangLabel, setPrefLangLabel] = useLocalStorage('prefLangLabel', '');
+  
+  const [isMouseOverPlayer, setIsMouseOverPlayer] = useState(false);
 
   const ref = useRef<ReactPlayer>(null)
 
@@ -72,7 +75,7 @@ function App() {
     // setUrl("http://localhost:3000/mpd/" + queryParameters.get('videoid') + ".mpd?target=IE#t=" + convertHHMMSS2Seconds(start) + "," + convertHHMMSS2Seconds(stop));
 
     // TODO
-    const url = new URL("http://localhost:3000/streamUrl/" + queryParameters.get('videoid'));
+    const url = new URL("http://" + ytjsHost + "/streamUrl/" + queryParameters.get('videoid'));
     const startSec = convertHHMMSS2Seconds(start);
     const stopSec = convertHHMMSS2Seconds(stop);
     url.searchParams.append('startSec', startSec.toString());
@@ -96,7 +99,16 @@ function App() {
 
   const handlePlay = () => {
     console.log('onPlay')
-    setPlaying(true)
+    // Only allow playing if mouse is over player
+    if (isMouseOverPlayer) {
+      if(isShortClip){
+        setPlaying(true)
+      }
+    } else {
+      if(isShortClip){
+        setPlaying(false)
+      }
+    }
   }
 
   const handlePause = () => {
@@ -294,6 +306,7 @@ function App() {
     seekVideo(start);
     setPlaying(true);
     console.log('player ready');
+    customDebugger();    
   }
 
   function handlePlayerStart() {
@@ -385,7 +398,7 @@ function App() {
 
   function fetchArchiveInfo(v_id: string) {
     const archiveReq = new XMLHttpRequest();
-    archiveReq.open('GET', "http://localhost:3000/archiveInfo/" + v_id);
+    archiveReq.open('GET', "http://" + ytjsHost + "/archiveInfo/" + v_id);
     archiveReq.responseType = 'json';
     archiveReq.onload = function () {
       if (archiveReq.status !== 200) {
@@ -481,6 +494,39 @@ Description:\n${archiveInfo.description}
       </div>
     }
     { url != "" && 
+      <div 
+        tabIndex={0} 
+        onMouseEnter={() => {
+          setIsMouseOverPlayer(true);
+          if(isShortClip){
+            setPlaying(true);
+          }
+        }}
+        onMouseLeave={() => {
+          setIsMouseOverPlayer(false);
+          if(isShortClip){
+            setPlaying(false);
+          }
+        }}
+        onKeyDown={(e) => {
+        if (e.key === 'right' || e.key === 'ArrowRight') {
+          seekVideo(formatTime(played + 1, duration));
+        } else if (e.key === 'left' || e.key === 'ArrowLeft') {
+          seekVideo(formatTime(played - 1, duration));
+        } else if (e.key === ' ') {
+          e.preventDefault();
+          e.stopPropagation();
+          setPlaying(!playing);
+        } else if (e.key === '>') {
+          // seek forward one frame assuming 30fps
+          ref?.current?.seekTo(played + (1 / 30), 'seconds');
+        } else if (e.key === '<') {
+          // seek backward one frame assuming 30fps
+          ref?.current?.seekTo(played - (1 / 30), 'seconds');
+        }
+        e.preventDefault();
+        e.stopPropagation();
+      }} >
       <ReactPlayer 
               ref={ref}
               className='react-player'
@@ -517,6 +563,7 @@ Description:\n${archiveInfo.description}
               onProgress={handleProgress}
               onDuration={handleDuration}
             />
+      </div>
       }
       <ClipExtractor 
       resume={resume} 

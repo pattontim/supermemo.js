@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ArchiveInfo } from '../../../../ytjs/src/utils/archive';
+import { ytjsHost } from '../../utils/client';
 
 interface ArchiveProps<T> {
     // TODO
@@ -37,7 +38,7 @@ export default function Archive<T extends unknown> ({ v_id, info, setInfo: setAr
 
         // TODO plug in to request
         const archiveReq = new XMLHttpRequest();
-        archiveReq.open('GET', "http://localhost:3000/archive/" + archiveId + "?quality=" + (quality ?? "best"));
+        archiveReq.open('GET', "http://" + ytjsHost + "/archive/" + archiveId + "?quality=" + (quality ?? "best"));
         archiveReq.responseType = 'json';
         archiveReq.onload = function () {
             if (archiveReq.status !== 200) {

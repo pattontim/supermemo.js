@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import Transcript from './Transcript' 
 import { CaptionTrack } from './../../utils/types';
+import { ytjsHost, defaultYtjsHost } from '../../utils/client';
 
 interface CaptionPlayerProps<T> {
     url: string;
@@ -15,13 +16,20 @@ export default function CaptionsTracks<T extends unknown>({
     // ReactPlayer does not support nested elements AND
     // tracks can't be set dynamically in config
     useEffect(() => {
-        for (let i = 0; i < tracks.length; i++) {
+        const tracksCopy = JSON.parse(JSON.stringify(tracks)) as CaptionTrack[];
+
+        for (let i = 0; i < tracksCopy.length; i++) {
             const trackElement = document.createElement('track');
 
-            trackElement.src = tracks[i].base_url;
+            // do the replacement here to avoid archiving different hosts
+            // const replaceRegex = /^(?:([a-zA-Z0-9-]+\.)*[a-zA-Z0-9-]+\.[a-zA-Z]{2,})|(?:\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/g;
+            // const rawReplace = "localhost:3000";
+            const rawReplace = defaultYtjsHost;
+            trackElement.src = tracksCopy[i].base_url.replace(rawReplace, ytjsHost);
+            console.log("Adding track element: " + trackElement.src);
             trackElement.kind = 'captions';
-            trackElement.label = tracks[i].name.text ?? '';
-            trackElement.srclang = tracks[i].language_code;
+            trackElement.label = tracksCopy[i].name.text ?? '';
+            trackElement.srclang = tracksCopy[i].language_code;
             trackElement.onload = () => {
                 console.log("track loaded (handler), setting active track, trackElement = " + trackElement);
                 setTimeout(() => {
@@ -48,8 +56,8 @@ export default function CaptionsTracks<T extends unknown>({
             // Clean up the dynamically added tracks when the component is unmounted
             // TODO state update cascade?
             const videoElement = document.getElementsByTagName('video')[0];
-            tracks?.forEach((_, index) => {
-                const trackElement = videoElement.querySelector(`[src="${tracks[index].base_url}"]`);
+            tracksCopy?.forEach((_, index) => {
+                const trackElement = videoElement.querySelector(`[src="${tracksCopy[index].base_url}"]`);
                 if (trackElement) {
                     document.getElementsByTagName('video')[0].removeChild(trackElement);
                 }
