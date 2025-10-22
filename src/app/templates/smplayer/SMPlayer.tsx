@@ -56,8 +56,6 @@ function App() {
     const clipDur = stop ? convertHHMMSS2Seconds(stop) - convertHHMMSS2Seconds(start): null;
     return clipDur && (clipDur < 15) && (duration - convertHHMMSS2Seconds(stop) > 1) ? true : false;
   }, [start, stop, duration]);
-  const [prefLangCode, setPrefLangCode] = useLocalStorage('prefLangCode', '');
-  const [prefLangLabel, setPrefLangLabel] = useLocalStorage('prefLangLabel', '');
   
   const [isMouseOverPlayer, setIsMouseOverPlayer] = useState(false);
 
@@ -287,16 +285,6 @@ function App() {
 
     const videoElement = document.getElementsByTagName('video')[0];
     if(videoElement) {
-      setTimeout(() => {
-      // console.log('trying to get text tracks', JSON.stringify(videoElement.textTracks), "prefLangCode", prefLangCode);
-      // const matchingTextTrack = Object.values(videoElement.textTracks).find((track: TextTrack) => track.language === prefLangCode);
-      console.log('trying to get text tracks', JSON.stringify(videoElement.textTracks), "prefLangLabel", prefLangLabel);
-      const matchingTextTrack = Object.values(videoElement.textTracks).find((track: TextTrack) => track.label === prefLangLabel);
-      if(matchingTextTrack) {
-        console.log('matchingTextTrack', matchingTextTrack);
-        matchingTextTrack.mode = "showing";
-      }
-      }, 2000);
 
       videoElement.addEventListener('volumechange', volume => {
         setVolume(videoElement.volume);
