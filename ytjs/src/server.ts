@@ -18,8 +18,26 @@ import { ElementInfo } from './utils/element';
 import { commandExists, getCommandOutput } from './utils/lib';
 import util from 'util';
 import { BgConfig } from 'bgutils-js';
-import Innertube, { ClientType, UniversalCache } from 'youtubei.js';
+import Innertube, { ClientType, Platform, UniversalCache } from 'youtubei.js';
 import { Utils } from 'youtubei.js';
+import { InnerTubeClient } from 'youtubei.js/dist/src/types';
+import { Types } from 'youtubei.js/web';
+
+// Set up Platform shim for deciphering streaming URLs
+Platform.shim.eval = async (data: Types.BuildScriptResult, env: Record<string, Types.VMPrimative>) => {
+  const properties = [];
+
+  if (env.n) {
+    properties.push(`n: exportedVars.nFunction("${env.n}")`);
+  }
+
+  if (env.sig) {
+    properties.push(`sig: exportedVars.sigFunction("${env.sig}")`);
+  }
+
+  const code = `${data.output}\nreturn { ${properties.join(', ')} }`;
+  return new Function(code)();
+};
 
 // @ts-ignore
 type JSDOMType = typeof import('jsdom')['JSDOM'];
@@ -49,6 +67,8 @@ let archive = {} as Archive;
 let cache = {} as Cache;
 let archiveContainer = 'mp4';
 let onlineTimeoutMs = 10000;
+let clientName: InnerTubeClient = "IOS";
+let clientTypeName: ClientType = ClientType.IOS;
 
 // const outputDir = 'output_test';
 // // Ensure output directory exists
@@ -793,7 +813,7 @@ app.get('/v1fix/', async (req, res) => {
 
 		let videoInfo: VideoInfo
 		try {
-			videoInfo = await getYouTube()!.getInfo(v_id, { client: "MWEB" });
+			videoInfo = await getYouTube()!.getInfo(v_id, { client: clientName });
 		} catch (error) {
 			console.log('skipping, ' + v_id + ' due to getVideoInfo error.');
 			await new Promise(r => setTimeout(r, 21000));
@@ -868,7 +888,7 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 
 	let videoInfo: VideoInfo;
 	try {
-		videoInfo = await getYouTube()!.getBasicInfo(v_id, { client: "MWEB" });
+		videoInfo = await getYouTube()!.getBasicInfo(v_id, { client: clientName });
 	} catch (error) {
 		console.log('error: ' + error);
 		console.log('failed to get basic info');
@@ -1047,7 +1067,7 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 			// 	console.log('failed to cache video info');
 			// }
 			try {
-				const videoInfoFull = await getYouTube()!.getBasicInfo(v_id, { client: "MWEB" });
+				const videoInfoFull = await getYouTube()!.getBasicInfo(v_id, { client: clientName });
 				console.log("got captions")
 				videoInfoFull.captions = videoInfo.captions;
 
@@ -1123,7 +1143,7 @@ app.get('/youtubeformats/:v_id', async (req, res) => {
 	let videoInfoFull: VideoInfo;
 	try {
 		// FIXME: do not load info multiple times
-		videoInfoFull = await getYouTube()!.getInfo(v_id, { client: "MWEB" });
+		videoInfoFull = await getYouTube()!.getInfo(v_id, { client: clientName });
 	} catch (error) {
 		console.log('error: ' + error);
 		res.status(503).send('Error: ' + error);
@@ -1326,7 +1346,7 @@ app.get('/archive/:v_id', async (req, res) => {
 		await new Promise(resolve => setTimeout(resolve, 5000));
 
 		try {
-			videoInfoFull = await getYouTube()!.getBasicInfo(v_id, { client: "MWEB" });
+			videoInfoFull = await getYouTube()!.getBasicInfo(v_id, { client: clientName });
 		} catch (error) {
 			console.log('error getting vid info before download: ' + error);
 			res.status(503).send('Error: ' + error);
@@ -1570,8 +1590,8 @@ async function connectInnertube() {
     return Innertube.create({
         po_token: poToken,
         visitor_data: visitorData,
-		client_type: ClientType.MWEB,
-		player_id: "0004de42",
+		client_type: clientTypeName,
+		// player_id: "0004de42",
         cache: new UniversalCache(true, cacheDir),
         generate_session_locally: true,
 		// lang: "JP"
