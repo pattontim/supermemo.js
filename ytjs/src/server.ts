@@ -53,6 +53,7 @@ import { setupBotGuardGlobals } from "./utils/poToken";
 import { JSDOM } from "jsdom";
 import { getLocalVideoInfo } from "./utils/localvideo";
 import { cacheDir } from "./utils/constants";
+import { createCanvas, loadImage } from "@napi-rs/canvas";
 
 // Set up Platform shim for deciphering streaming URLs
 Platform.shim.eval = async (
