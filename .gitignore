@@ -20,6 +20,7 @@ ytjs/dist/ytjs/**
 #### !MANUAL EDITS HERE
 temp
 research
+ytjs/src/context.txt
 
 #### NODE GIT IGNORE
 
