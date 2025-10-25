@@ -52,6 +52,7 @@ export async function createInnertube({
 	let cache;
 	if (withPlayer) {
 		if (process.env.IS_ELECTRON) {
+            // TODO implement our PlayerCache.
 			//   cache = new PlayerCache()
 			cache = new UniversalCache(true, cacheDir);
 		} else {
