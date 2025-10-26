@@ -35,6 +35,7 @@ function App() {
   // const [url, setUrl] = useState("https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps_640x360_800k.mpd");
   // const [url, setUrl] = useState("http://youtube.com/watch?v=" + queryParameters.get('videoid')) 
   const [url, setUrl] = useState("");
+  const [isMpdLoaded, setIsMpdLoaded] = useState(false);
   const [subtitleUrl, setSubtitleUrl] = useState("http://" + ytjsHost + "/captions/" + queryParameters.get('videoid'));
   
   const [pip, setPip] = useState(false);
@@ -70,9 +71,6 @@ function App() {
   // }, []);
 
   useEffect(() => {
-    // setUrl("http://localhost:3000/mpd/" + queryParameters.get('videoid') + ".mpd?target=IE#t=" + convertHHMMSS2Seconds(start) + "," + convertHHMMSS2Seconds(stop));
-
-    // TODO
     const url = new URL("http://" + ytjsHost + "/streamUrl/" + queryParameters.get('videoid'));
     const startSec = convertHHMMSS2Seconds(start);
     const stopSec = convertHHMMSS2Seconds(stop);
@@ -88,11 +86,37 @@ function App() {
         console.log('Error: ' + req.status);
         return;
       }
-      console.log(req.response);
-      setUrl(req.response);
-    }
-    req.send();  
+      const streamUrl = req.response as string;
+      console.log('Stream URL:', streamUrl);
 
+      // If it's an MPD file, fetch and wait for it to load completely
+      if (streamUrl.toLowerCase().indexOf('.mpd') > -1) {
+        const dummyUrl = new URL("http://" + ytjsHost + "/dummy-manifest.mpd");
+        setUrl(dummyUrl.href);
+        setIsMpdLoaded(true);
+
+        const mpdReq = new XMLHttpRequest();
+        mpdReq.open('GET', streamUrl, true);
+        mpdReq.onload = function() {
+          if (mpdReq.status !== 200) {
+            console.error('MPD fetch failed');
+            return;
+          }
+          // Only set the URL after MPD is fully loaded
+          setUrl(streamUrl);
+          setIsMpdLoaded(true);
+        };
+        mpdReq.onerror = function() {
+          console.error('Error loading MPD');
+        };
+        mpdReq.send();
+      } else {
+        // For non-MPD streams, set URL directly
+        setUrl(streamUrl);
+        setIsMpdLoaded(true);
+      }
+    }
+    req.send();
   }, []);
 
   const handlePlay = () => {
@@ -481,7 +505,7 @@ Description:\n${archiveInfo.description}
         </div>
       </div>
     }
-    { url != "" && 
+    { url != "" && isMpdLoaded && 
       <div 
         tabIndex={0} 
         onMouseEnter={() => {
@@ -515,6 +539,9 @@ Description:\n${archiveInfo.description}
         e.preventDefault();
         e.stopPropagation();
       }} >
+      <div>
+        { (() => { console.log( "----- element re-rendered"); return null; })() }
+        </div>
       <ReactPlayer 
               ref={ref}
               className='react-player'
@@ -525,6 +552,23 @@ Description:\n${archiveInfo.description}
                       crossOrigin: "true",
                       autoPlay: false,
                       poster: "/iv/images/sm.gif",
+                      streaming: {
+                        manifestRequestTimeout: 20000,
+                        abandonLoadTimeout: 20000,
+                        timeoutIntervals: {
+                          MPD: 20000,
+                          XHRMPDTimeout: 20000,
+                        }
+                      }
+                    },
+                    // @ts-expect-error test
+                    streaming: {
+                        manifestRequestTimeout: 20000,
+                        abandonLoadTimeout: 20000,
+                        timeoutIntervals: {
+                          MPD: 20000,
+                          XHRMPDTimeout: 20000,
+                        }
                     }
                   }
               }}
@@ -550,7 +594,8 @@ Description:\n${archiveInfo.description}
               onError={e => console.log('onError', e)}
               onProgress={handleProgress}
               onDuration={handleDuration}
-            />
+            >
+            </ReactPlayer>
       </div>
       }
       <ClipExtractor 

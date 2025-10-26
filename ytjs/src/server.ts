@@ -394,6 +394,41 @@ app.use(async (req, res, next) => {
 	next(); // Call next() to pass control to the next middleware
 });
 
+// Define endpoints to monitor
+const monitoredEndpoints = ['/mpd/', 
+	// '/archive/', '/captions/', '/formats/', '/youtubeformats/'
+];
+
+// Detailed request logging middleware
+app.use((req, res, next) => {
+	// Check if the request URL starts with any monitored endpoint
+	const shouldLog = monitoredEndpoints.some(endpoint => req.url.startsWith(endpoint));
+	
+	if (!shouldLog) {
+		return next();
+	}
+
+	const logData = {
+		timestamp: new Date().toISOString(),
+		method: req.method,
+		url: req.url,
+		protocol: req.protocol,
+		ip: req.ip,
+		userAgent: req.headers['user-agent'],
+		referer: req.headers.referer || 'none', 
+		host: req.headers.host,
+		accept: req.headers.accept,
+		acceptLanguage: req.headers['accept-language'],
+		acceptEncoding: req.headers['accept-encoding'],
+		connection: req.headers.connection,
+		cookies: req.headers.cookie,
+		xForwardedFor: req.headers['x-forwarded-for'],
+	};
+
+	console.log('Request Details:', JSON.stringify(logData, null, 2));
+	next();
+});
+
 // @ts-ignore
 app.use(longRunningRequestMiddleware(5000));
 
@@ -408,6 +443,35 @@ app.get("/mpd/invalidate/:v_id", async (req, res) => {
 	console.log("invalidating mpd cache for " + v_id);
 	cache[v_id].mpd_manifest = "";
 	res.send("OK");
+});
+
+app.get('/dummy-manifest.mpd', (req, res) => {
+  res.type('application/dash+xml');
+  res.send(`<?xml version="1.0" encoding="UTF-8"?>
+<MPD
+  xmlns="urn:mpeg:dash:schema:mpd:2011"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="urn:mpeg:dash:schema:mpd:2011 DASH-MPD.xsd"
+  mediaPresentationDuration="PT0H0M30.0S"
+  minBufferTime="PT1.5S"
+  profiles="urn:mpeg:dash:profile:isoff-on-demand:2011"
+  type="static">
+
+  <Period id="1" start="PT0S">
+    <AdaptationSet id="1" contentType="video" mimeType="video/mp4" segmentAlignment="true">
+      <Representation id="1" bandwidth="1000000" width="640" height="360" frameRate="30">
+        <BaseURL>dummy-segment-</BaseURL>
+        <SegmentTemplate timescale="1000" media="$Number$.m4s" initialization="$Number$-init.m4s" startNumber="1"/>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet id="2" contentType="audio" mimeType="audio/mp4" segmentAlignment="true">
+      <Representation id="2" bandwidth="128000" audioSamplingRate="44100">
+        <BaseURL>dummy-audio-</BaseURL>
+        <SegmentTemplate timescale="1000" media="$Number$.m4s" initialization="$Number$-init.m4s" startNumber="1"/>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>`);
 });
 
 app.get("/templateUrl/:id", async (req, res) => {
@@ -1161,6 +1225,35 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 		// 	// }
 		// 	// manifest = await videoInfo.toDash(manifestOptions);
 		// }
+
+		try {
+			for (const caption of videoInfo?.captions?.caption_tracks ?? []) {
+				const captionUrl = new URL(caption.base_url, "https://www.youtube.com");
+				caption.base_url = `http://${fullUrlForClient}/fixvtt/${captionUrl}`;
+			}
+			// TypeError possible
+		} catch (error) {
+			console.log("failed to get captions");
+			if (error instanceof TypeError) {
+				console.log("TypeError, very likely captions disabled.");
+			} else {
+				console.log("error: " + error);
+			}
+		}
+
+		if (!cache[v_id]) {
+			try {
+				videoInfo.captions = videoInfo.captions;
+				cache[v_id] = latestCacheConstructor(videoInfo, manifest, target, yti_version);
+				console.log("constructor ran");
+				// TODO update to use video_sets instead of file_formats
+				cache[v_id].file_formats = await getSupportedFormats(videoInfo);
+			} catch (error) {
+				console.log('Error: ' + error);
+				console.log('failed to cache full video info');
+			}
+		}
+
 		res.send(manifest);
 	} catch (error) {
 		console.log("error: " + error);
@@ -1179,20 +1272,6 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 		return;
 	}
 
-	try {
-		for (const caption of videoInfo?.captions?.caption_tracks ?? []) {
-			const captionUrl = new URL(caption.base_url, "https://www.youtube.com");
-			caption.base_url = `http://${fullUrlForClient}/fixvtt/${captionUrl}`;
-		}
-		// TypeError possible
-	} catch (error) {
-		console.log("failed to get captions");
-		if (error instanceof TypeError) {
-			console.log("TypeError, very likely captions disabled.");
-		} else {
-			console.log("error: " + error);
-		}
-	}
 	// // wait 2000ms before caching the full video info
 	// if (!cache[v_id]) {
 	// 	new Promise(r => setTimeout(r, 2000)).then(async () => {
