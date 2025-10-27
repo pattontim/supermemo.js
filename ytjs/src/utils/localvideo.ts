@@ -8,7 +8,7 @@
  * This code is licensed under the parent. You can obtain a copy of the license here:
  * https://github.com/FreeTubeApp/FreeTube#license
  */
-import Innertube, { Player, UniversalCache } from "youtubei.js";
+import Innertube, { ClientType, Player, UniversalCache } from "youtubei.js";
 import { Response } from "node-fetch";
 import { generateContentBoundPoToken } from "./poToken";
 import { cacheDir } from "./constants";
@@ -87,31 +87,31 @@ export async function createInnertube({
 
 					const json = JSON.parse(responseText);
 
-					if (Array.isArray(json.adSlots)) {
-						let waitSeconds = 0;
+					// if (Array.isArray(json.adSlots)) {
+					// 	let waitSeconds = 0;
 
-						for (const adSlot of json.adSlots) {
-							if (adSlot.adSlotRenderer?.adSlotMetadata?.triggerEvent ===
-								"SLOT_TRIGGER_EVENT_BEFORE_CONTENT") {
-								const playerVars = adSlot.adSlotRenderer.fulfillmentContent?.fulfilledLayout
-									?.playerBytesAdLayoutRenderer?.renderingContent
-									?.instreamVideoAdRenderer?.playerVars;
+					// 	for (const adSlot of json.adSlots) {
+					// 		if (adSlot.adSlotRenderer?.adSlotMetadata?.triggerEvent ===
+					// 			"SLOT_TRIGGER_EVENT_BEFORE_CONTENT") {
+					// 			const playerVars = adSlot.adSlotRenderer.fulfillmentContent?.fulfilledLayout
+					// 				?.playerBytesAdLayoutRenderer?.renderingContent
+					// 				?.instreamVideoAdRenderer?.playerVars;
 
-								if (playerVars) {
-									const match = playerVars.match(/length_seconds=([\d.]+)/);
+					// 			if (playerVars) {
+					// 				const match = playerVars.match(/length_seconds=([\d.]+)/);
 
-									if (match) {
-										waitSeconds += parseFloat(match[1]);
-									}
-								}
-							}
-						}
+					// 				if (match) {
+					// 					waitSeconds += parseFloat(match[1]);
+					// 				}
+					// 			}
+					// 		}
+					// 	}
 
-						if (waitSeconds > 0) {
-							await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000)
-							);
-						}
-					}
+					// 	if (waitSeconds > 0) {
+					// 		await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000)
+					// 		);
+					// 	}
+					// }
 
 					// Need to return a new response object, as you can only read the response body once.
 					return new Response(responseText, {
@@ -129,20 +129,24 @@ export async function createInnertube({
 	});
 }
 export async function getLocalVideoInfo(id: string) {
+	console.time("createInnertube withPlayer = true locally = false")
 	const webInnertube = await createInnertube({
 		withPlayer: true,
 		generateSessionLocally: false,
 	});
+	console.timeEnd("createInnertube withPlayer = true locally = false")
 
 	// based on the videoId
 	let contentPoToken: string;
 
 	//   if (process.env.IS_ELECTRON) {
 	try {
+		console.time("content bound poToken")
 		contentPoToken = await generateContentBoundPoToken(
 			id,
 			webInnertube.session.context
 		);
+		console.timeEnd("content bound poToken")
 		console.log("PoToken is valid ", contentPoToken != undefined);
 
 		webInnertube.session!.player!.po_token = contentPoToken;
@@ -153,7 +157,9 @@ export async function getLocalVideoInfo(id: string) {
 	//   }
 	let clientName = webInnertube.session.context.client.clientName;
 
+	console.time("webInnertube.getInfo")
 	const info = await webInnertube.getInfo(id, { po_token: contentPoToken! });
+	console.timeEnd("webInnertube.getInfo")
 	console.log("Got info for video ", id);
 
 	// #region temporary workaround for SABR-only responses
@@ -170,10 +176,12 @@ export async function getLocalVideoInfo(id: string) {
 			originalAudioTrackFormat.language;
 	}
 
+	console.time("webInnertube.getBasicInfo")
 	const mwebInfo = await webInnertube.getBasicInfo(id, {
 		client: "MWEB",
 		po_token: contentPoToken!,
 	});
+	console.timeEnd("webInnertube.getBasicInfo")
 	console.log("Got MWEB info for video ", id);
 
 	if (mwebInfo.playability_status!.status === "OK" && mwebInfo.streaming_data) {
@@ -185,7 +193,10 @@ export async function getLocalVideoInfo(id: string) {
 
 	// #endregion temporary workaround for SABR-only responses
 	let hasTrailer = info.has_trailer;
+
+	console.time("info.getTrailerInfo")
 	let trailerIsAgeRestricted = info.getTrailerInfo() === null;
+	console.timeEnd("info.getTrailerInfo")
 
 	if (((info.playability_status!.status === "UNPLAYABLE" ||
 		info.playability_status!.status === "LOGIN_REQUIRED") &&
@@ -193,7 +204,7 @@ export async function getLocalVideoInfo(id: string) {
 		(hasTrailer && trailerIsAgeRestricted)) {
 		console.log("Bypassing age restriction for video ", id);
 		const webEmbeddedInnertube = await createInnertube({
-			// @ts-expect-error weird
+			// @ts-expect-error w
 			clientType: ClientType.WEB_EMBEDDED,
 		});
 		webEmbeddedInnertube.session.context.client.visitorData =
@@ -207,10 +218,13 @@ export async function getLocalVideoInfo(id: string) {
 		// getBasicInfo needs the signature timestamp (sts) from inside the player
 		webEmbeddedInnertube.session.player = webInnertube.session.player;
 
+		// console.time("webEmbeddedInnertube.getBasicInfo")
 		const bypassedInfo = await webEmbeddedInnertube.getBasicInfo(videoId, {
 			client: "WEB_EMBEDDED",
 			po_token: contentPoToken!,
 		});
+		// console.timeEnd("webEmbeddedInnertube.getBasicInfo")
+
 
 		if (bypassedInfo.playability_status!.status === "OK" &&
 			bypassedInfo.streaming_data) {
@@ -252,18 +266,22 @@ export async function getLocalVideoInfo(id: string) {
 
 	if (info.streaming_data) {
 		console.log("streaming data found, deciphering urls for video");
+		console.time("decipherFormats")
 		await decipherFormats(
 			info.streaming_data.formats as FormatWithURL[],
 			webInnertube.session.player
 		);
+		console.timeEnd("decipherFormats")
 
 		const firstFormat = info.streaming_data.adaptive_formats[0];
 
 		if (firstFormat.url || firstFormat.signature_cipher || firstFormat.cipher) {
+			console.time("decipherFormats adaptive_formats")
 			await decipherFormats(
 				info.streaming_data.adaptive_formats as FormatWithURL[],
 				webInnertube.session.player
 			);
+			console.timeEnd("decipherFormats adaptive_formats")
 		}
 
 		if (info.streaming_data.dash_manifest_url) {

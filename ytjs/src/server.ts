@@ -1068,7 +1068,9 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 	let videoInfo: VideoInfo;
 	try {
 		// videoInfo = await getYouTube()!.getBasicInfo(v_id, { client: clientName });
+		console.time("Total getLocalVideoInfo time");
 		videoInfo = await getLocalVideoInfo(v_id);
+		console.timeEnd("Total getLocalVideoInfo time");
 	} catch (error) {
 		console.log("error: " + error);
 		console.log("failed to get basic info");
@@ -1166,8 +1168,13 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 				},
 			};
 
+			console.time("toDash");
 			manifest = await videoInfo.toDash(manifestOptions);
+			console.timeEnd("toDash");
+
+			console.time("filterAudioAdaptationSets");
 			manifest = filterAudioAdaptationSets(manifest);
+			console.timeEnd("filterAudioAdaptationSets");
 		} else {
 			const manifestOptions = {
 				url_transformer: (url: URL) =>
