@@ -32,6 +32,16 @@ export async function getCommandOutput(command: string, skipExistCheck: boolean 
     });
   });
 }
+
+export function deepCopy<T>(obj: T): T {
+  const objStr = JSON.stringify(obj);
+
+  if (objStr === undefined || objStr === null) {
+    return obj;
+  }
+
+  return JSON.parse(objStr);
+}
 	// function getYtdlpVersion(){
 	// 	return new Promise((resolve, reject) => {
 	// 		return commandExists('yt-dlp').then((exists) => {

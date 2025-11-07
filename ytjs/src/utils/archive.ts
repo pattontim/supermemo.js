@@ -1,6 +1,7 @@
 import { Format } from 'youtubei.js/dist/src/parser/misc';
 import { PlayerCaptionsTracklist } from 'youtubei.js/dist/src/parser/nodes';
 import { VideoInfo } from 'youtubei.js/dist/src/parser/youtube';
+import { deepCopy } from './lib';
 
 export class ArchiveInfoV1 {
   version: number;
@@ -39,15 +40,15 @@ export class ArchiveInfoV1 {
   // //     },
   constructor(videoInfo: VideoInfo, yti_version: string) {
     this.version = 1;
-    this.captions = videoInfo?.captions;
-    this.game_info = videoInfo?.game_info;
-    this.title = videoInfo?.primary_info?.title.text || videoInfo.basic_info?.title || ""
-    this.published = videoInfo?.primary_info?.published.text || ""
-    this.relative_date = videoInfo?.primary_info?.relative_date.text || ""
-    this.author_name = videoInfo?.secondary_info?.owner?.author.name || videoInfo.basic_info?.channel?.name || ""
-    this.author_channel_id = videoInfo?.secondary_info?.owner?.author.id || videoInfo.basic_info?.channel?.id || ""
-    this.author_channel_url = videoInfo?.secondary_info?.owner?.author.url || videoInfo.basic_info?.channel?.url || ""
-    this.description = videoInfo?.secondary_info?.description.text || videoInfo.basic_info?.short_description || ""
+    this.captions = deepCopy(videoInfo?.captions);
+    this.game_info = deepCopy(videoInfo?.game_info);
+    this.title = deepCopy(videoInfo?.primary_info?.title.text || videoInfo.basic_info?.title || "")
+    this.published = deepCopy(videoInfo?.primary_info?.published.text || "")
+    this.relative_date = deepCopy(videoInfo?.primary_info?.relative_date.text || "")
+    this.author_name = deepCopy(videoInfo?.secondary_info?.owner?.author.name || videoInfo.basic_info?.channel?.name || "")
+    this.author_channel_id = deepCopy(videoInfo?.secondary_info?.owner?.author.id || videoInfo.basic_info?.channel?.id || "")
+    this.author_channel_url = deepCopy(videoInfo?.secondary_info?.owner?.author.url || videoInfo.basic_info?.channel?.url || "")
+    this.description = deepCopy(videoInfo?.secondary_info?.description.text || videoInfo.basic_info?.short_description || "")
     this.archived_on = new Date().toISOString();
     this.file_formats = {};
     this.yti_version = yti_version;
@@ -81,6 +82,16 @@ export class CacheInfoV2 extends CacheInfoV1 {
   }
 }
 
+export class CacheInfoV3 extends CacheInfoV2 {
+  version: number;
+  ytiVidInfo: VideoInfo;
+  constructor(videoInfo: VideoInfo, mpd_manifest: string, browser_target: string, yti_version: string) {
+    super(videoInfo, mpd_manifest, browser_target, yti_version);
+    this.version = 3;
+    this.ytiVidInfo = videoInfo;
+  }
+}
+
 export class ArchiveInfoV2 extends ArchiveInfoV1 {
   version: number;
   constructor(videoInfo: VideoInfo, yti_version: string) {
@@ -93,7 +104,7 @@ export class ArchiveInfoV2 extends ArchiveInfoV1 {
 export type ArchiveInfo = ArchiveInfoV1 | ArchiveInfoV2
 export type CacheInfo = CacheInfoV1 | CacheInfoV2 // versioning isnt really needed but for uniformity
 export type ArchiveInfoLatest = ArchiveInfoV2
-export type CacheInfoLatest = CacheInfoV2
+export type CacheInfoLatest = CacheInfoV3
 
 export interface Archive {
   [key: string]: ArchiveInfo;
@@ -161,5 +172,5 @@ export function latestArchiveConstructor(
 }
 
 export function latestCacheConstructor(videoInfo: VideoInfo, mpd_manifest: string, browser_target: string, yti_version: string): CacheInfoLatest {
-  return new CacheInfoV2(videoInfo, mpd_manifest, browser_target, yti_version);
+  return new CacheInfoV3(videoInfo, mpd_manifest, browser_target, yti_version);
 }

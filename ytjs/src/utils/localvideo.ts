@@ -314,6 +314,9 @@ export async function getLocalVideoInfo(id: string) {
 			// placing them in the top right corner
 			url.searchParams.delete("xosf");
 
+			// ytjs only supports vtt
+			url.searchParams.set("fmt", "vtt");
+
 			captionTrack.base_url = url.toString();
 		}
 	}

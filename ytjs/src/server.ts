@@ -18,6 +18,8 @@ import { spawn } from "child_process";
 import path from "path";
 // import fetch, { Response } from 'node-fetch';
 import { Response } from "node-fetch";
+import { Readable } from "stream";
+import { ReadableStream as WebReadableStream } from "stream/web";
 import dotenv from "dotenv";
 import { Response as EResponse } from "express";
 
@@ -29,6 +31,7 @@ import {
 	ArchiveInfoV2,
 	Cache,
 	CacheInfoLatest,
+	CacheInfoV3,
 	latestArchiveConstructor,
 	latestCacheConstructor,
 	newArchiveFromJSON,
@@ -53,7 +56,6 @@ import { setupBotGuardGlobals } from "./utils/poToken";
 import { JSDOM } from "jsdom";
 import { getLocalVideoInfo } from "./utils/localvideo";
 import { cacheDir } from "./utils/constants";
-import { createCanvas, loadImage } from "@napi-rs/canvas";
 
 // Set up Platform shim for deciphering streaming URLs
 Platform.shim.eval = async (
@@ -118,6 +120,8 @@ const formatMap = {
 	Firefox: ["avc1.4d401f", "opus"],
 	Edge: ["avc1.4d401f", "mp4a.40.2"],
 };
+
+const captionsCodeWhitelist = [	"en", "fr", "ja" ];
 
 const formatsToUse = [
 	// 599 m4a audio only | mp4a.40.5 22050Hz ultralow, m4a_dash
@@ -348,6 +352,10 @@ async function fetchTransformedVTT(url: URL) {
 			return null;
 		}
 
+		if(res.status < 200 || res.status > 299){
+			throw new Error("error fetching non 200 code")
+		}
+
 		const text = await res.text();
 		return transformWebVTT(text);
 	} catch (error: any) {
@@ -444,6 +452,17 @@ app.get("/mpd/invalidate/:v_id", async (req, res) => {
 	cache[v_id].mpd_manifest = "";
 	res.send("OK");
 });
+
+app.get("/dummy-vtt.vtt", async (req, res) => {
+  res.type('text/vtt');
+  res.send(`WEBVTT
+Kind: captions
+Language: en
+
+00:00:00.000 --> 00:00:04.974
+CAP_429.
+
+`)});
 
 app.get('/dummy-manifest.mpd', (req, res) => {
   res.type('application/dash+xml');
@@ -894,152 +913,155 @@ app.get("/cachei/", async (req, res) => {
 });
 
 app.get("/v1fix/", async (req, res) => {
-	const fixVerPairs = [
-		1,
-		2,
-		"archived captions saved the auto transcription\
-	 instead of manual subs. This will query every youtube video and dl the right\
-	versions. It will also rename all of the asr captions to a.[LANG] and manual\
-	to .[LANG]",
-		"This will query youtube for several tens or hundreds of videos in your collection, do you wish to continue? (y/n)",
-	];
+	return;
+	// const fixVerPairs = [
+	// 	1,
+	// 	2,
+	// 	"archived captions saved the auto transcription\
+	//  instead of manual subs. This will query every youtube video and dl the right\
+	// versions. It will also rename all of the asr captions to a.[LANG] and manual\
+	// to .[LANG]",
+	// 	"This will query youtube for several tens or hundreds of videos in your collection, do you wish to continue? (y/n)",
+	// ];
 
-	// 0. check the info.version is 1
-	// 1. find all the ASR pairs in archive, that is - if the same language code appears twice and one of them have "kind": "asr" set. Use
-	// 2. for each pair, call patchCaptions
-	// 3. update the info.json file and increment the version number to 2
-	for (const v_id of Object.keys(archive)) {
-		// for( const v_id of ["5y3sSEvT4cE"]) {
-		const info = archive[v_id];
+	// // 0. check the info.version is 1
+	// // 1. find all the ASR pairs in archive, that is - if the same language code appears twice and one of them have "kind": "asr" set. Use
+	// // 2. for each pair, call patchCaptions
+	// // 3. update the info.json file and increment the version number to 2
+	// for (const v_id of Object.keys(archive)) {
+	// 	// for( const v_id of ["5y3sSEvT4cE"]) {
+	// 	const info = archive[v_id];
 
-		if (info.version != 1) {
-			console.log("skipping, " + v_id + " due to version != 1.");
-			continue;
-		}
+	// 	if (info.version != 1) {
+	// 		console.log("skipping, " + v_id + " due to version != 1.");
+	// 		continue;
+	// 	}
 
-		if (!info?.captions) {
-			console.log("skipping, " + v_id + " due to no captions.");
-			continue;
-		}
+	// 	if (!info?.captions) {
+	// 		console.log("skipping, " + v_id + " due to no captions.");
+	// 		continue;
+	// 	}
 
-		// const langCodes = info.captions.translation_languages?.map(lang => lang.language_code);
-		const captionTracks = info.captions.caption_tracks;
-		const archiveEntryDir = path.join(archiveDir, v_id);
-		const captionsDir = path.join(archiveEntryDir, "captions");
-		const infoPath = path.join(archiveEntryDir, "info.json");
+	// 	// const langCodes = info.captions.translation_languages?.map(lang => lang.language_code);
+	// 	const captionTracks = info.captions.caption_tracks;
+	// 	const archiveEntryDir = path.join(archiveDir, v_id);
+	// 	const captionsDir = path.join(archiveEntryDir, "captions");
+	// 	const infoPath = path.join(archiveEntryDir, "info.json");
 
-		// if(!langCodes || !captionTracks) {
-		// 	return res.status(400).send("No translation languages found in archive for " + v_id);
-		// }
-		if (!captionTracks) {
-			console.log("skipping, " + v_id + " due to no caption tracks.");
-			continue;
-		}
+	// 	// if(!langCodes || !captionTracks) {
+	// 	// 	return res.status(400).send("No translation languages found in archive for " + v_id);
+	// 	// }
+	// 	if (!captionTracks) {
+	// 		console.log("skipping, " + v_id + " due to no caption tracks.");
+	// 		continue;
+	// 	}
 
-		// const asrManualPair = langCodes.find(code => captionTracks.find
-		const asrPair = captionTracks.filter(
-			(track) =>
-				captionTracks.filter((t) => t.language_code == track.language_code)
-					.length > 1 &&
-				captionTracks.find(
-					(t) => t.language_code == track.language_code && t.kind == "asr"
-				) != null
-		);
+	// 	// const asrManualPair = langCodes.find(code => captionTracks.find
+	// 	const asrPair = captionTracks.filter(
+	// 		(track) =>
+	// 			captionTracks.filter((t) => t.language_code == track.language_code)
+	// 				.length > 1 &&
+	// 			captionTracks.find(
+	// 				(t) => t.language_code == track.language_code && t.kind == "asr"
+	// 			) != null
+	// 	);
 
-		if (asrPair.length == 0) {
-			const asrOnlyCap = captionTracks.find((track) => track.kind == "asr");
-			if (asrOnlyCap) {
-				const indexedStreams = new Array(captionTracks.length).fill(
-					null
-				) as (NodeJS.ReadableStream | null)[];
-				const asrStream = createReadStream(
-					path.join(captionsDir, asrOnlyCap.language_code + ".vtt")
-				);
-				indexedStreams[captionTracks.indexOf(asrOnlyCap)] = asrStream;
-				console.log("updating captions for " + v_id + " with single ASR");
-				const patched = await patchCaptions(
-					captionTracks,
-					indexedStreams,
-					captionsDir,
-					fullUrlForClient,
-					v_id,
-					infoPath,
-					true
-				);
-				if (patched.length == 1) {
-					// remove old (bad) ASR caption
-					const oldCapPath = path.join(
-						captionsDir,
-						asrOnlyCap.language_code + ".vtt"
-					);
-					if (existsSync(oldCapPath)) {
-						unlinkSync(oldCapPath);
-					}
-				}
-			} else {
-				console.log(
-					"skipping, " + v_id + " due to no ASR pair and no single ASR"
-				);
-			}
-			continue;
-		}
+	// 	if (asrPair.length == 0) {
+	// 		const asrOnlyCap = captionTracks.find((track) => track.kind == "asr");
+	// 		if (asrOnlyCap) {
+	// 			const indexedStreams = new Array(captionTracks.length).fill(
+	// 				null
+	// 			) as (NodeJS.ReadableStream | null)[];
+	// 			const asrStream = createReadStream(
+	// 				path.join(captionsDir, asrOnlyCap.language_code + ".vtt")
+	// 			);
+	// 			indexedStreams[captionTracks.indexOf(asrOnlyCap)] = asrStream;
+	// 			console.log("updating captions for " + v_id + " with single ASR");
+	// 			const patched = await patchCaptions(
+	// 				captionTracks,
+	// 				// @ts-expect-error ldl
+	// 				indexedStreams,
+	// 				captionsDir,
+	// 				fullUrlForClient,
+	//				fullUrl,
+	// 				v_id,
+	// 				infoPath,
+	// 				true
+	// 			);
+	// 			if (patched.length == 1) {
+	// 				// remove old (bad) ASR caption
+	// 				const oldCapPath = path.join(
+	// 					captionsDir,
+	// 					asrOnlyCap.language_code + ".vtt"
+	// 				);
+	// 				if (existsSync(oldCapPath)) {
+	// 					unlinkSync(oldCapPath);
+	// 				}
+	// 			}
+	// 		} else {
+	// 			console.log(
+	// 				"skipping, " + v_id + " due to no ASR pair and no single ASR"
+	// 			);
+	// 		}
+	// 		continue;
+	// 	}
 
-		if (asrPair.length != 2) {
-			console.log("skipping, " + v_id + " due to non-2len-ASR pair.");
-			continue;
-		}
+	// 	if (asrPair.length != 2) {
+	// 		console.log("skipping, " + v_id + " due to non-2len-ASR pair.");
+	// 		continue;
+	// 	}
 
-		let videoInfo: VideoInfo;
-		try {
-			videoInfo = await getYouTube()!.getInfo(v_id, { client: clientName });
-		} catch (error) {
-			console.log("skipping, " + v_id + " due to getVideoInfo error.");
-			await new Promise((r) => setTimeout(r, 21000));
-			continue;
-		}
+	// 	let videoInfo: VideoInfo;
+	// 	try {
+	// 		videoInfo = await getYouTube()!.getInfo(v_id, { client: clientName });
+	// 	} catch (error) {
+	// 		console.log("skipping, " + v_id + " due to getVideoInfo error.");
+	// 		await new Promise((r) => setTimeout(r, 21000));
+	// 		continue;
+	// 	}
 
-		const newCaptionTracks = videoInfo.captions?.caption_tracks;
-		const newCaptionStreams = await getCaptionStreams(newCaptionTracks);
+	// 	const newCaptionTracks = videoInfo.captions?.caption_tracks;
+	// 	const newCaptionStreams = await getCaptionStreams(newCaptionTracks);
 
-		if (newCaptionStreams.length == 0) {
-			console.log("skipping, " + v_id + " due to no new caption streams.");
-			continue;
-		}
+	// 	if (newCaptionStreams.length == 0) {
+	// 		console.log("skipping, " + v_id + " due to no new caption streams.");
+	// 		continue;
+	// 	}
 
-		console.log("updating complete captions for " + v_id);
-		const updatedCaptionTracks = await patchCaptions(
-			newCaptionTracks,
-			newCaptionStreams,
-			captionsDir,
-			fullUrlForClient,
-			v_id,
-			infoPath,
-			true
-		);
+	// 	console.log("updating complete captions for " + v_id);
+	// 	const updatedCaptionTracks = await patchCaptions(
+	// 		newCaptionTracks,
+	// 		newCaptionStreams,
+	// 		captionsDir,
+	// 		fullUrlForClient,
+	// 		v_id,
+	// 		infoPath,
+	// 		true
+	// 	);
 
-		// if (updatedCaptionTracks.length == newCaptionStreams.length) {
-		// 	console.log("successfully updated captions for " + v_id);
-		// }
+	// 	// if (updatedCaptionTracks.length == newCaptionStreams.length) {
+	// 	// 	console.log("successfully updated captions for " + v_id);
+	// 	// }
 
-		await new Promise((r) => setTimeout(r, 15000));
-	}
+	// 	await new Promise((r) => setTimeout(r, 15000));
+	// }
 
-	// update all the info.json files to be version 2
-	for (const v_id of Object.keys(archive)) {
-		const archiveEntryDir = path.join(archiveDir, v_id);
-		const infoPath = path.join(archiveEntryDir, "info.json");
-		const info = newArchiveFromJSON(
-			readFileSync(infoPath, "utf-8")
-		) as ArchiveInfoV1;
+	// // update all the info.json files to be version 2
+	// for (const v_id of Object.keys(archive)) {
+	// 	const archiveEntryDir = path.join(archiveDir, v_id);
+	// 	const infoPath = path.join(archiveEntryDir, "info.json");
+	// 	const info = newArchiveFromJSON(
+	// 		readFileSync(infoPath, "utf-8")
+	// 	) as ArchiveInfoV1;
 
-		if (info.version == 1) {
-			info.version = 2;
-			writeFileSync(infoPath, JSON.stringify(info, null, 2));
-		}
-	}
+	// 	if (info.version == 1) {
+	// 		info.version = 2;
+	// 		writeFileSync(infoPath, JSON.stringify(info, null, 2));
+	// 	}
+	// }
 
-	console.log("done updating archive to version 2");
-	res.send("done");
+	// console.log("done updating archive to version 2");
+	// res.send("done");
 });
 
 app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
@@ -1338,7 +1360,9 @@ app.get(/^\/fixvtt\/(.*\..*$)/, async (req, res) => {
 	console.log("fixvtt request for " + url.href);
 	try {
 		const vtt = await fetchTransformedVTT(url);
-		if (vtt == null) {
+		if (vtt == null || vtt == "" || vtt.indexOf("protect our users") != -1 
+		|| vtt.indexOf("We're sorry...") != -1 || vtt.indexOf("sending automated queries") != -1 
+		|| vtt.indexOf("can't process your") != -1) {
 			res
 				.status(503)
 				.send("Error: the VTT could not be found on the service by URL.");
@@ -1349,6 +1373,7 @@ app.get(/^\/fixvtt\/(.*\..*$)/, async (req, res) => {
 	} catch (error) {
 		console.log("error: " + error);
 		res.status(503).send("Error: " + error);
+		return
 	}
 });
 
@@ -1446,34 +1471,26 @@ function formatCaptionFileName(captionTrack: CaptionTrack) {
  */
 async function getCaptionStreams(
 	captionTracks: PlayerCaptionsTracklist["caption_tracks"]
-) {
-	const captionStreams = [] as Response["body"][];
+): Promise<WebReadableStream<Uint8Array>[]> {
+	const captionStreams: WebReadableStream<Uint8Array>[] = [];
 	for (const captionTrack of captionTracks ?? []) {
 		// URL request
 		const captionUrl = new URL(
 			captionTrack.base_url,
-			"https://www.youtube.com"
 		);
-		// const captionUrl = new URL(captionTrack.base_url, "http://" + fullUrl + "/proxy/https://www.youtube.com");
-		captionUrl.searchParams.set("fmt", "vtt");
-		captionUrl.searchParams.set(
-			"c",
-			youtube?.session.context.client.clientName!
-		);
-		captionUrl.searchParams.set(
-			"cver",
-			youtube?.session.context.client.clientVersion!
-		);
-		captionUrl.searchParams.set("potc", "1");
-		// captionUrl.searchParams.set("pot", poToken!);
-
-		captionUrl.searchParams.delete("xosf");
+		console.log("fetching caption url: " + captionUrl.href);
 		let captionResp = await fetchWait(captionUrl, true, 500, 50);
 		if (captionResp.status != 200) {
-			return [];
+			console.warn("failed to fetch caption url: " + captionUrl.href + " status: " + captionResp.status);
+			continue;
 		}
+		console.log("fetch successful for caption url");
 		let captionBody = captionResp.body;
-		// @ts-expect-error pf
+		if (!captionBody) {
+			console.warn("caption body null for caption url: " + captionUrl.href);
+			continue;
+		}
+		// @ts-expect-error node express types
 		captionStreams.push(captionBody);
 	}
 	return captionStreams;
@@ -1492,9 +1509,10 @@ async function getCaptionStreams(
  */
 async function patchCaptions(
 	captionTracks: PlayerCaptionsTracklist["caption_tracks"],
-	captionStreams: (Response["body"] | null)[],
+	captionStreams: (WebReadableStream<Uint8Array> | null)[],
 	captionsDir: string,
-	fullUrl: string,
+	clientUrl: string,
+	serverUrl: string,
 	v_id: string,
 	infoJsonPath: string | undefined,
 	renameExisting: boolean
@@ -1531,21 +1549,22 @@ async function patchCaptions(
 			}
 
 			const captionFile = createWriteStream(captionFilePath);
+			const nodeStream = Readable.fromWeb(captionStream);
 
 			await new Promise<void>((resolve, reject) => {
-				captionStream.pipe(captionFile);
-				captionStream.on("end", () => {
+				nodeStream.pipe(captionFile);
+				nodeStream.on("end", () => {
 					resolve();
 				});
-				captionStream.on("error", (error) => {
-					reject(error);
+				nodeStream.on("error", (err: Error) => {
+					reject(err);
 				});
 			});
 
 			captionFile.close();
 
-			const preFix = "http://" + fullUrl + "/fixvtt/";
-			const fsUrl = `http://${fullUrl}/archive/${v_id}/captions/${captionFileName}`;
+			const preFix = "http://" + clientUrl + "/fixvtt/";
+			const fsUrl = `http://${serverUrl}/archive/${v_id}/captions/${captionFileName}`;
 			captionTrack.base_url = preFix + fsUrl;
 			updatedCaptionTracks.push(captionTrack);
 		}
@@ -1607,19 +1626,7 @@ app.get("/archive/:v_id", async (req, res) => {
 		// vid_formats.sort((a, b) => Number.parseInt(a.itag.split('.')[0]) - b.itag.split('.')[0]);
 		res.status(200).send(vid_formats[0]);
 	} else {
-		let videoInfoFull: VideoInfo;
-
-		await new Promise((resolve) => setTimeout(resolve, 5000));
-
-		try {
-			videoInfoFull = await getYouTube()!.getBasicInfo(v_id, {
-				client: clientName,
-			});
-		} catch (error) {
-			console.log("error getting vid info before download: " + error);
-			res.status(503).send("Error: " + error);
-			return;
-		}
+		const videoInfoFull = ((await getCacheWait(v_id)) as CacheInfoV3)?.ytiVidInfo;
 		const best_format = {
 			type: req.query.type ? req.query.type : "video+audio", // audio, video or video+audio
 			quality: req.query.quality ? req.query.quality : "best", // best, bestefficiency, 144p, 240p, 480p, 720p and so on.
@@ -1628,13 +1635,11 @@ app.get("/archive/:v_id", async (req, res) => {
 		// const best_format = { type: "video+audio", itag: 18 } as FormatOptions;
 
 		// wait 5000 ms
-		await new Promise((resolve) => setTimeout(resolve, 5000));
 
 		console.log("choosing format: " + JSON.stringify(best_format));
 		// assume chooseFormat is used internally deterministically
 		let format = await videoInfoFull.chooseFormat(best_format);
 
-		await new Promise((resolve) => setTimeout(resolve, 5000));
 
 		if (!(format.has_video && format.has_audio)) {
 			console.log(
@@ -1701,7 +1706,12 @@ app.get("/archive/:v_id", async (req, res) => {
 		}
 		newInfo.file_formats = fileFormats;
 
+		await new Promise((resolve) => setTimeout(resolve, 5000));
+		
+		// TODO: warn client on failure
+		let captionsFailed = false;
 		if (newInfo.captions) {
+
 			const captionsDir = path.join(archiveEntryDir, "captions");
 			if (!existsSync(captionsDir)) {
 				try {
@@ -1714,17 +1724,20 @@ app.get("/archive/:v_id", async (req, res) => {
 			}
 
 			// fetch via base_url
-			let captionTracks = [] as PlayerCaptionsTracklist["caption_tracks"];
-			try {
-				captionTracks = newInfo.captions?.caption_tracks ?? [];
-			} catch (error) {
-				console.log("caption tracks access error: " + error);
-				res.status(503).send("Error: " + error);
-				return;
-			}
-			console.log("caption tracks: " + JSON.stringify(captionTracks));
+			let captionTracks: PlayerCaptionsTracklist["caption_tracks"] = [];
+			captionTracks = newInfo.captions?.caption_tracks;
+			captionTracks = captionTracks?.filter(ct => captionsCodeWhitelist.indexOf(ct.language_code) != -1);		
+			newInfo.captions.caption_tracks = captionTracks;
 
-			let captionStreams = [] as Response["body"][];
+			for (const ct of captionTracks || []) {
+				for (let i = 0; i < 5; i++) {
+					ct.base_url = ct.base_url.replace(fullUrlForClient, defaultLocalUrl);
+				}
+			}
+			
+			console.log("whitelisted caption tracks: " + JSON.stringify(captionTracks));
+
+			let captionStreams = [] as WebReadableStream<Uint8Array>[];
 			try {
 				captionStreams = await getCaptionStreams(captionTracks);
 			} catch (error) {
@@ -1734,42 +1747,53 @@ app.get("/archive/:v_id", async (req, res) => {
 			}
 			if (captionStreams.length == 0) {
 				console.log("error in caption stream (zero length result)");
-				res.status(503).send("Error: " + "could not get all caption streams");
-				return;
-			}
-
-			let updatedCaptionTracks =
-				[] as PlayerCaptionsTracklist["caption_tracks"];
-			try {
-				updatedCaptionTracks = await patchCaptions(
-					captionTracks,
-					captionStreams,
-					captionsDir,
-					fullUrlForClient,
-					v_id,
-					undefined,
-					true
-				);
-			} catch {
-				console.log("error in updating caption tracks (patching)");
-				res
-					.status(503)
-					.send(
-						"Error: " +
-							"error in patching caption files and updating caption tracks"
+				// res.status(503).send("Error: " + "could not get all caption streams");
+				// return;
+				captionsFailed = true;
+				newInfo.captions.caption_tracks = newInfo.captions.caption_tracks?.map(ct => {
+					const preFix = "http://" + fullUrlForClient + "/fixvtt/";
+					const fsUrl = `http://${fullUrl}/dummy-vtt.vtt`;
+					ct.base_url = preFix + fsUrl;
+					return ct;
+				});
+			} else {
+				let updatedCaptionTracks =
+					[] as PlayerCaptionsTracklist["caption_tracks"];
+				try {
+					updatedCaptionTracks = await patchCaptions(
+						captionTracks,
+						captionStreams,
+						captionsDir,
+						fullUrlForClient,
+						fullUrl,
+						v_id,
+						undefined,
+						true
 					);
-				return;
-			}
-			// if this fails, the captions will not be updated
-			if (updatedCaptionTracks.length != captionTracks.length) {
-				console.log("error in updating caption tracks (updated NE length)");
-				res
-					.status(503)
-					.send(
-						"Error: " +
-							"error in patching caption tracks, not all successfully patched"
-					);
-				return;
+					for(let i = 0; i < updatedCaptionTracks.length; i++) {
+						newInfo.captions.caption_tracks![i] = updatedCaptionTracks[i];
+					}
+				} catch(e) {
+					console.log("error in updating caption tracks (patching):" + e);
+					res
+						.status(503)
+						.send(
+							"Error: " +
+								"error in patching caption files and updating caption tracks"
+						);
+					return;
+				}
+				// if this fails, the captions will not be updated
+				if (updatedCaptionTracks.length != (captionTracks ?? []).length) {
+					console.log("error in updating caption tracks (updated NE length)");
+					res
+						.status(503)
+						.send(
+							"Error: " +
+								"error in patching caption tracks, not all successfully patched"
+						);
+					return;
+				}
 			}
 		}
 
@@ -1784,7 +1808,7 @@ app.get("/archive/:v_id", async (req, res) => {
 			return;
 		}
 		archive[v_id] = newInfo;
-		console.log("video archived");
+		console.log("video archived", "captionsFailed", captionsFailed);
 		res.status(200).send("OK");
 	}
 });
