@@ -101,11 +101,6 @@ let onlineTimeoutMs = 10000;
 let clientName: InnerTubeClient = "MWEB";
 let clientTypeName: ClientType = ClientType.MWEB;
 
-// const outputDir = 'output_test';
-// // Ensure output directory exists
-// if (!existsSync(outputDir)) {
-//   mkdirSync(outputDir);
-// }
 
 const proxy = corsAnywhere.createServer({
 	originWhitelist: [], // Allow all origins
@@ -155,36 +150,9 @@ declare global {
 
 globalThis.youtube = undefined;
 globalThis.online = false;
-// globalThis.JSDOM = null;
-// globalThis.BG = null;
 globalThis.ffmpeg_version = undefined;
 globalThis.yt_dlp_version = undefined;
 
-// async function loadJSDOM(): Promise<JSDOMType | null> {
-// 	if (globalThis.JSDOM) {
-// 		return globalThis.JSDOM;
-// 	} else {
-// 		try {
-// 			const jsdom = await import('jsdom');
-// 			globalThis.JSDOM = jsdom.JSDOM;
-// 			return jsdom.JSDOM;
-// 		} catch (error) {
-// 			console.warn('JSDOM could not be loaded');
-// 			return null;
-// 		}
-// 	}
-// }
-
-// async function loadBG(): Promise<BGType | null> {
-//   try {
-// 	// @ts-ignore
-// 	const bg = await import('bgutils-js');
-// 	return bg.BG;
-//   } catch (error) {
-// 	console.warn('BotGuard utils could not be loaded:');
-// 	return null;
-//   }
-// }
 
 function setYoutube(itube: Innertube) {
 	globalThis.youtube = itube;
@@ -1204,63 +1172,12 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 			};
 			manifest = await videoInfo.toDash(manifestOptions);
 		}
-		// 		if (target == "IE") {
-
-		// 	console.log("playable: " + JSON.stringify(videoInfo.playability_status))
-		// 	console.log("vid data: " + JSON.stringify(videoInfo.basic_info))
-
-		// 	const manifestOptions = {
-		// 	url_transformer: (url: URL) => new URL(`http://${fullUrl}/proxy/${url}`),
-		// 	format_filter: (format: Format) => {
-		// 			const isAudioOnly = format.has_audio && !format.has_video;
-		// 			console.log("format: " + format.itag + " audio: " + format.has_audio + " video: " + format.has_video
-		// 			+ " mime: " + format.mime_type, " isAudioOnly: " + isAudioOnly + " lang: " + format.language);
-
-		// 			return !formatsToUse.find(fmt => format.mime_type.includes(fmt))
-		// 		}
-		// 	}
-
-		// 	manifest = await videoInfo.toDash(manifestOptions);
-		// 	manifest = filterAudioAdaptationSets(manifest);
-		// } else {
-		// 	const manifestOptions = {
-		// 	url_transformer: (url: URL) => new URL(`http://${fullUrl}/proxy/${url}`),
-		// 	}
-		// 	manifest = await videoInfo.toDash(manifestOptions);
-		// }
-		// if (target == "IE") {
-
-		// 	console.log("playable: " + JSON.stringify(videoInfo.playability_status))
-		// 	console.log("vid data: " + JSON.stringify(videoInfo.basic_info))
-
-		// 	manifest = await videoInfo.toDash(
-		// 		(url: URL) => new URL(`http://${fullUrl}/proxy/${url}`),
-		// 		(format: Format) => {
-		// 			const isAudioOnly = format.has_audio && !format.has_video;
-		// 			console.log("format: " + format.itag + " audio: " + format.has_audio + " video: " + format.has_video
-		// 			+ " mime: " + format.mime_type, " isAudioOnly: " + isAudioOnly + " lang: " + format.language);
-
-		// 			return !formatsToUse.find(fmt => format.mime_type.includes(fmt))
-		// 		}
-
-		// 	);
-		// 	manifest = filterAudioAdaptationSets(manifest);
-		// } else {
-		// 	manifest = await videoInfo.toDash(
-		// 	(url: URL) => new URL(`http://${fullUrl}/proxy/${url}`));
-
-		// 	// const manifestOptions = {
-		// 	// url_transformer: (url: URL) => new URL(`http://${fullUrl}/proxy/${url}`),
-		// 	// }
-		// 	// manifest = await videoInfo.toDash(manifestOptions);
-		// }
 
 		try {
 			for (const caption of videoInfo?.captions?.caption_tracks ?? []) {
 				const captionUrl = new URL(caption.base_url, "https://www.youtube.com");
 				caption.base_url = `http://${fullUrlForClient}/fixvtt/${captionUrl}`;
 			}
-			// TypeError possible
 		} catch (error) {
 			console.log("failed to get captions");
 			if (error instanceof TypeError) {
@@ -1301,37 +1218,6 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
 		return;
 	}
 
-	// // wait 2000ms before caching the full video info
-	// if (!cache[v_id]) {
-	// 	new Promise(r => setTimeout(r, 2000)).then(async () => {
-	// 		// try {
-	// 		// 	cache[v_id] = latestCacheConstructor(videoInfo, manifest, target, yti_version);
-	// 		// 	// videoInfo.captions = videoInfo.captions;
-	// 		// 	cache[v_id].file_formats = await getSupportedFormats(videoInfo);
-	// 		// 	console.log("caching video info: " + JSON.stringify(cache[v_id]));
-	// 		// } catch (error) {
-	// 		// 	console.log('Error: ' + error);
-	// 		// 	console.log('failed to cache video info');
-	// 		// }
-	// 		try {
-	// 			const videoInfoFull = await getYouTube()!.getBasicInfo(v_id, { client: clientName });
-	// 			console.log("got captions")
-	// 			videoInfoFull.captions = videoInfo.captions;
-
-	// 			// const mockVideoInfo: VideoInfo = {
-	// 			// 	...videoInfoFull,
-	// 			// }
-
-	// 			cache[v_id] = latestCacheConstructor(videoInfoFull, manifest, target, yti_version);
-	// 			console.log("constructor ran");
-	// 			// TODO update to use video_sets instead of file_formats
-	// 			cache[v_id].file_formats = await getSupportedFormats(videoInfoFull);
-	// 		} catch (error) {
-	// 			console.log('Error: ' + error);
-	// 			console.log('failed to cache full video info');
-	// 		}
-	// 	})
-	// }
 });
 
 app.get("/captions/:v_id", async (req, res) => {
@@ -1827,22 +1713,12 @@ async function callRejectAfter(call: Promise<unknown>, timeMs: number) {
 
 let poToken: string | undefined;
 async function connectInnertube(videoId?: string) {
-	// const JSDOM = await loadJSDOM();
-
-	// const dom = new JSDOM!();
-	// Object.assign(globalThis, {
-	// 	window: dom.window,
-	// 	document: dom.window.document,
-	// 	canvas: dom.window.HTMLCanvasElement,
-	// });
 	setupBotGuardGlobals();
 
 	if (!videoId) {
 		return await Innertube.create({
 			retrieve_player: false,
 			client_type: clientTypeName,
-			// cache: new UniversalCache(true, cacheDir),
-			// generate_session_locally: true,
 		});
 	}
 }
