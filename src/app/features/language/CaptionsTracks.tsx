@@ -32,6 +32,9 @@ export default function CaptionsTracks<T extends unknown>({
       return;
     }
 
+    // Ensure video element has proper CORS settings
+    videoElement.crossOrigin = "anonymous";
+
     // Function to handle track changes and set the preferred language
     const handleTracksChange = () => {
       console.log("Handling tracks change, looking for preferred language:", prefLangLabel);
@@ -52,18 +55,58 @@ export default function CaptionsTracks<T extends unknown>({
     // Create and add track elements
     for (let i = 0; i < tracksCopy.length; i++) {
       const trackElement = document.createElement("track");
-      const rawReplace = defaultYtjsHost;
-      trackElement.src = tracksCopy[i].base_url.replace(rawReplace, ytjsHost);
-      console.log("Adding track element: " + trackElement.src);
+      
+      // Parse and reconstruct the URL
+      const originalUrl = tracksCopy[i].base_url;
+      let transformedUrl = originalUrl;
+      
+      try {
+        // Handle cases where the URL might already contain fixvtt
+        const urlParts = originalUrl.split('/fixvtt/');
+        const basePath = urlParts[urlParts.length - 1];
+        
+        // Ensure the ytjsHost and defaultYtjsHost have proper protocols
+        const normalizedYtjsHost = ytjsHost.startsWith('http') ? ytjsHost : `http://${ytjsHost}`;
+        const normalizedDefaultYtjsHost = defaultYtjsHost.startsWith('http') ? defaultYtjsHost : `http://${defaultYtjsHost}`;
+        
+        // Check if it's a full URL or just a path
+        if (basePath.startsWith('http')) {
+          // It's already in the format we want, just ensure correct hosts
+          transformedUrl = `${normalizedYtjsHost}/fixvtt/${basePath}`;
+        } else {
+          // It's a direct path, construct the full URL
+          transformedUrl = `${normalizedYtjsHost}/fixvtt/${normalizedDefaultYtjsHost}/${basePath}`;
+        }
+        
+        console.log('Track URL created:', transformedUrl);
+      } catch (error) {
+        console.error('Error transforming URL:', originalUrl, error);
+        transformedUrl = originalUrl; // Fallback to original if parsing fails
+      }
+      
+      trackElement.src = transformedUrl;
+      console.log("Adding track element with transformed URL:", trackElement.src);
       trackElement.kind = "captions";
       trackElement.label = tracksCopy[i].name.text ?? "";
       trackElement.srclang = tracksCopy[i].language_code;
       
-      // Set up onload handler for each track
+      // Set up event handlers for the track element
       trackElement.onload = () => {
-        console.log("Track loaded:", trackElement.label);
+        console.log("Track loaded successfully:", trackElement.label);
         handleTracksChange();
       };
+
+      trackElement.onerror = (e) => {
+        console.error("Track failed to load:", trackElement.label, e);
+      };
+      
+      // Log track details before appending
+      console.log("Adding track:", {
+        src: trackElement.src,
+        label: trackElement.label,
+        kind: trackElement.kind,
+        srclang: trackElement.srclang
+      });
 
       videoElement.appendChild(trackElement);
     }

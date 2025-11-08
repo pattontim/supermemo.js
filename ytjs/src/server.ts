@@ -55,7 +55,7 @@ import { Types } from "youtubei.js/web";
 import { setupBotGuardGlobals } from "./utils/poToken";
 import { JSDOM } from "jsdom";
 import { getLocalVideoInfo } from "./utils/localvideo";
-import { cacheDir } from "./utils/constants";
+import { cacheDir, YT_VTT_MAX_TIMESTAMP } from "./utils/constants";
 
 // Set up Platform shim for deciphering streaming URLs
 Platform.shim.eval = async (
@@ -421,13 +421,14 @@ app.get("/mpd/invalidate/:v_id", async (req, res) => {
 	res.send("OK");
 });
 
-app.get("/dummy-vtt.vtt", async (req, res) => {
-  res.type('text/vtt');
+app.get('/dummy-vtt.vtt', (req, res) => {
+  const lang = req.query.lang || 'en';
+  res.type('text/vtt; charset=utf-8');
   res.send(`WEBVTT
 Kind: captions
-Language: en
+Language: ${lang}
 
-00:00:00.000 --> 00:00:04.974
+00:00:00.000 --> ${YT_VTT_MAX_TIMESTAMP}
 CAP_429.
 
 `)});
@@ -1242,6 +1243,10 @@ app.get("/captions/:v_id", async (req, res) => {
 });
 
 app.get(/^\/fixvtt\/(.*\..*$)/, async (req, res) => {
+	// console.log("req.headers: " + JSON.stringify(req.headers));
+	// console.log("req.baseUrl: " + req.baseUrl);
+	// console.log("req: " + JSON.stringify(req.body));
+	// console.log("fixvtt called with " + req.url);
 	const url = new URL(req.url.replace("/fixvtt/", ""));
 	console.log("fixvtt request for " + url.href);
 	try {
@@ -1449,7 +1454,7 @@ async function patchCaptions(
 
 			captionFile.close();
 
-			const preFix = "http://" + clientUrl + "/fixvtt/";
+			const preFix = "http://" + serverUrl + "/fixvtt/";
 			const fsUrl = `http://${serverUrl}/archive/${v_id}/captions/${captionFileName}`;
 			captionTrack.base_url = preFix + fsUrl;
 			updatedCaptionTracks.push(captionTrack);
@@ -1637,7 +1642,7 @@ app.get("/archive/:v_id", async (req, res) => {
 				// return;
 				captionsFailed = true;
 				newInfo.captions.caption_tracks = newInfo.captions.caption_tracks?.map(ct => {
-					const preFix = "http://" + fullUrlForClient + "/fixvtt/";
+					const preFix = "http://" + fullUrl + "/fixvtt/";
 					const fsUrl = `http://${fullUrl}/dummy-vtt.vtt`;
 					ct.base_url = preFix + fsUrl;
 					return ct;
