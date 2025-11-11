@@ -111,6 +111,7 @@ function App() {
         };
         mpdReq.send();
       } else {
+        console.log("non MPD stream found")
         // For non-MPD streams, set URL directly
         setUrl(streamUrl);
         setIsMpdLoaded(true);

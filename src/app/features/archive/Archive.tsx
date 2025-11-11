@@ -38,7 +38,14 @@ export default function Archive<T extends unknown> ({ v_id, info, setInfo: setAr
 
         // TODO plug in to request
         const archiveReq = new XMLHttpRequest();
-        archiveReq.open('GET', "http://" + ytjsHost + "/archive/" + archiveId + "?quality=" + (quality ?? "best"));
+
+        
+        const archiveUrl = new URL("http://" + ytjsHost + "/archive/" + archiveId);
+        archiveUrl.searchParams.append("quality", quality ?? "best");
+        archiveUrl.searchParams.append("video", "true");
+        archiveUrl.searchParams.append("captions", "true");
+        archiveReq.open('GET', archiveUrl.toString());
+        // archiveReq.open('GET', "http://" + ytjsHost + "/archive/" + archiveId + "?quality=" + (quality ?? "best"));
         archiveReq.responseType = 'json';
         archiveReq.onload = function () {
             if (archiveReq.status !== 200) {

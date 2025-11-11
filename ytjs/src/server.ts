@@ -720,37 +720,56 @@ app.get("/vidtest/:videoId.mp4", (req, res) => {
 	});
 });
 
-// TODO quality selection
 app.get("/streamUrl/:v_id", async (req, res) => {
-	const v_id = req.params.v_id;
-	const start = req.query.startSec;
-	const stop = req.query.stopSec;
-	const target = req.query.target;
-	if (!start || !stop || !target) {
-		res.status(400).send("Missing start, stop, or target");
-		return;
-	}
+  const v_id = req.params.v_id;
+  console.log(`[1/8] Request received for v_id: ${v_id}`);
 
-	const archiveFormats = archive[v_id]?.file_formats;
-	if (archiveFormats) {
-		// const bestFormat = Array.from(Object.values(archive[v_id].file_formats)).sort((a, b) => b.bitrate - a.bitrate)[0];
-		const bestKey = Object.keys(archive[v_id].file_formats).sort(
-			(a, b) => archiveFormats[a].bitrate - archiveFormats[b].bitrate
-		)[0];
-		const bestFormat = archiveFormats[bestKey];
+  const start = req.query.startSec;
+  const stop = req.query.stopSec;
+  const target = req.query.target;
+  console.log(`[2/8] Query params - start: ${start}, stop: ${stop}, target: ${target}`);
 
-		if (bestFormat) {
-			const url = new URL(
-				`http://${fullUrlForClient}/archive/${v_id}/${bestKey}`
-			);
-			res.send(url.href);
-			return;
-		}
-	} else {
-		const url = new URL(`http://${fullUrlForClient}/mpd/${v_id}.mpd`);
-		url.searchParams.set("target", target as string);
-		res.send(url.href + "#" + start + "," + stop);
-	}
+  if (!start || !stop || !target) {
+    console.log(`[3/8] Missing required parameters`);
+    return res.status(400).send("Missing start, stop, or target");
+  }
+
+  console.log(`[4/8] Checking archive for v_id: ${v_id}`);
+  const archiveFormats = archive[v_id]?.file_formats;
+  console.log(`[5/8] Archive formats found: ${!!archiveFormats}`);
+  console.log(`[5/8] Archive entry: ${JSON.stringify(archive[v_id])}`);
+  console.log(`[5/8] Full URL client: ${fullUrlForClient}`);
+
+  if (archiveFormats) {
+    console.log(`[6/8] Sorting formats by bitrate...`);
+    try {
+      const bestKey = Object.keys(archive[v_id].file_formats).sort(
+        (a, b) => archiveFormats[a].bitrate - archiveFormats[b].bitrate
+      )[0];
+      console.log(`[6/8] Best format key: ${bestKey}`);
+
+      const bestFormat = archiveFormats[bestKey];
+      if (bestFormat) {
+        console.log(`[7/8] Creating URL for best format`);
+        const url = new URL(`http://${fullUrlForClient}/archive/${v_id}/${bestKey}`);
+        console.log(`[8/8] Sending response: ${url.href}`);
+        return res.send(url.href);
+      } else {
+		console.log(`[7/8] Best format not found in archive formats`);
+		return res.status(500).send("Best format not found");
+	  }
+    } catch (err) {
+      console.error(`[ERROR] Failed to sort formats:`, err);
+	  return res.status(500).send("Internal Server Error");
+    }
+  } else {
+    console.log(`[7/8] No archive formats, falling back to MPD`);
+    const url = new URL(`http://${fullUrlForClient}/mpd/${v_id}.mpd`);
+    url.searchParams.set("target", target as string);
+    const responseUrl = url.href + "#" + start + "," + stop;
+    console.log(`[8/8] Sending MPD response: ${responseUrl}`);
+    return res.send(responseUrl);
+  }
 });
 
 /** SImply waits for archiveInfo to be loaded, expecting another process to cache it
@@ -1347,6 +1366,143 @@ app.get("/youtubeformats/:v_id", async (req, res) => {
 	return res.json({ avFormats, aFormats, vFormats, streamingData });
 });
 
+app.get("/archivecaptions/:v_id", async (req, res) => {
+	const v_id = req.params.v_id;
+
+	// TODO: patching existing
+	const write: boolean = false;
+	const overwrite: boolean = false;
+
+	let videoInfoFull = ((await getCacheWait(v_id)) as CacheInfoV3 | undefined)?.ytiVidInfo;
+
+	if(!videoInfoFull){
+		videoInfoFull = await getLocalVideoInfo(v_id)
+	}
+
+	if(write){
+		const archiveEntryDir = path.join(archiveDir, v_id);
+		if (!existsSync(archiveEntryDir)) {
+			try {
+				mkdirSync(archiveEntryDir);
+			} catch (error) {
+				console.log("archive dir write error: " + error);
+				res.status(507).send("Error: " + error);
+				return;
+			}
+		}
+	}
+
+	let newInfo: ArchiveInfoLatest;
+	try {
+		newInfo = latestArchiveConstructor(videoInfoFull, yti_version);
+	} catch (error) {
+		console.log("archive constr error: " + error);
+		res.status(503).send("Error: " + error);
+		return;
+	}
+
+	await new Promise((resolve) => setTimeout(resolve, 4000));
+	
+	// TODO: warn client on failure
+	let captionsFailed = false;
+	if (!newInfo.captions) {
+		return;
+	}
+
+	const archiveEntryDir = path.join(archiveDir, v_id);
+	const captionsDir = path.join(archiveEntryDir, "captions");
+	const captionsExist = existsSync(captionsDir);
+	if(write){
+		if (!captionsExist) {
+			try {
+				mkdirSync(captionsDir);
+			} catch (error) {
+				console.log("mkdir error: " + error);
+				res.status(507).send("Error: " + error);
+				return;
+			}
+		} 
+	}
+
+	// fetch via base_url
+	let captionTracks: PlayerCaptionsTracklist["caption_tracks"] = [];
+	captionTracks = newInfo.captions?.caption_tracks;
+	captionTracks = captionTracks?.filter(ct => captionsCodeWhitelist.indexOf(ct.language_code) != -1);		
+	newInfo.captions.caption_tracks = captionTracks;
+
+	for (const ct of captionTracks || []) {
+		for (let i = 0; i < 5; i++) {
+			ct.base_url = ct.base_url.replace(fullUrlForClient, defaultLocalUrl);
+		}
+	}
+	
+	console.log("whitelisted caption tracks: " + JSON.stringify(captionTracks));
+
+	let captionStreams = [] as WebReadableStream<Uint8Array>[];
+	let updatedCaptionTracks =
+		[] as PlayerCaptionsTracklist["caption_tracks"];
+	try {
+		captionStreams = await getCaptionStreams(captionTracks);
+	} catch (error) {
+		console.log("get captions stream error: " + error);
+		res.status(503).send("Error: " + error);
+		return;
+	}
+	if (captionStreams.length == 0) {
+		console.log("error in caption stream (zero length result)");
+		// res.status(503).send("Error: " + "could not get all caption streams");
+		// return;
+		captionsFailed = true;
+		newInfo.captions.caption_tracks = newInfo.captions.caption_tracks?.map(ct => {
+			const preFix = "http://" + fullUrl + "/fixvtt/";
+			const fsUrl = `http://${fullUrl}/dummy-vtt.vtt`;
+			ct.base_url = preFix + fsUrl;
+			return ct;
+		});
+	} else {
+		try {
+			updatedCaptionTracks = await patchCaptions(
+				captionTracks,
+				captionStreams,
+				captionsDir,
+				fullUrlForClient,
+				fullUrl,
+				v_id,
+				undefined,
+				true
+			);
+			for(let i = 0; i < updatedCaptionTracks.length; i++) {
+				newInfo.captions.caption_tracks![i] = updatedCaptionTracks[i];
+			}
+		} catch(e) {
+			console.log("error in updating caption tracks (patching):" + e);
+			res
+				.status(503)
+				.send(
+					"Error: " +
+						"error in patching caption files and updating caption tracks"
+				);
+		}
+	}
+
+	if(write){
+		try {
+			writeFileSync(
+				path.join(archiveEntryDir, "info.json"),
+				JSON.stringify(newInfo, null, 2)
+			);
+			console.log("captions archived", "captionsFailed", captionsFailed);
+			res.status(200).send("OK");
+		} catch (error) {
+			console.log("error: " + error);
+			res.status(507).send("Error: " + error);
+			return;
+		}
+	}
+	res.json(updatedCaptionTracks ?? newInfo.captions);
+	return;
+});
+
 function formatCaptionFileName(captionTrack: CaptionTrack) {
 	let capFilename = captionTrack.vss_id + ".vtt";
 	if (capFilename.startsWith(".")) {
@@ -1370,7 +1526,9 @@ async function getCaptionStreams(
 			captionTrack.base_url,
 		);
 		console.log("fetching caption url: " + captionUrl.href);
+		console.time("fetch caption time");
 		let captionResp = await fetchWait(captionUrl, true, 500, 50);
+		console.timeEnd("fetch caption time");
 		if (captionResp.status != 200) {
 			console.warn("failed to fetch caption url: " + captionUrl.href + " status: " + captionResp.status);
 			continue;
@@ -1434,7 +1592,7 @@ async function patchCaptions(
 				// TODO don't hardcode the version number
 				const newCaptionFilePath = path.join(
 					captionFileDir,
-					`${captionFileBase}_v1${path.extname(captionFilePath)}`
+					`${captionFileBase}_v2${path.extname(captionFilePath)}`
 				);
 				renameSync(captionFilePath, newCaptionFilePath);
 			}
@@ -1504,154 +1662,186 @@ async function patchCaptions(
 
 app.get("/archive/:v_id", async (req, res) => {
 	const v_id = req.params.v_id;
-	console.log("archive request for " + v_id);
+	const shouldArchiveVideo = req.query.video === 'true';
+	const shouldArchiveCaptions = req.query.captions === 'true';
+	const shouldOverwrite = req.query.overwrite === 'true';
+	const shouldArchive = shouldArchiveVideo ||  shouldArchiveCaptions;
+	
+	console.log(`archive request for ${v_id} (video: ${shouldArchiveVideo}, captions: ${shouldArchiveCaptions}, overwrite: ${shouldOverwrite})`);
 
-	if (archive[v_id]?.file_formats) {
+	// Return existing format if just querying and video exists
+	if (shouldArchive === false && archive[v_id]?.file_formats) {
 		const vid_files = Object.keys(archive[v_id].file_formats);
-		const vid_formats = vid_files.map((file) => {
-			return {
-				itag: file,
-				url: `http://${fullUrlForClient}/archive/${v_id}/${file}`,
-			};
-		});
-		// vid_formats.sort((a, b) => Number.parseInt(a.itag.split('.')[0]) - b.itag.split('.')[0]);
+		const vid_formats = vid_files.map((file) => ({
+			itag: file,
+			url: `http://${fullUrlForClient}/archive/${v_id}/${file}`,
+		}));
 		res.status(200).send(vid_formats[0]);
-	} else {
-		const videoInfoFull = ((await getCacheWait(v_id)) as CacheInfoV3)?.ytiVidInfo;
-		const best_format = {
-			type: req.query.type ? req.query.type : "video+audio", // audio, video or video+audio
-			quality: req.query.quality ? req.query.quality : "best", // best, bestefficiency, 144p, 240p, 480p, 720p and so on.
-			format: req.query.format ? req.query.format : "mp4", // media container format
-		} as FormatOptions;
-		// const best_format = { type: "video+audio", itag: 18 } as FormatOptions;
+		return;
+	}
 
-		// wait 5000 ms
-
-		console.log("choosing format: " + JSON.stringify(best_format));
-		// assume chooseFormat is used internally deterministically
-		let format = await videoInfoFull.chooseFormat(best_format);
+	if(!shouldArchive){
+		console.log("nothing to archive, exiting");
+		res.status(400).send("Nothing to archive, specify video=true or captions=true");
+		return;
+	}
 
 
-		if (!(format.has_video && format.has_audio)) {
-			console.log(
-				"Error: format does not have video and audio, up/downgrading to best quality"
-			);
-			const best_format = {
-				type: "video+audio", // audio, video or video+audio
-				quality: "best", // best, bestefficiency, 144p, 240p, 480p, 720p and so on.
-				format: "mp4", // media container format
-			} as FormatOptions;
-			format = await videoInfoFull.chooseFormat(best_format);
-		}
+	let videoInfoFull = ((await getCacheWait(v_id)) as CacheInfoV3 | undefined)?.ytiVidInfo;
+	if (!videoInfoFull) {
+		videoInfoFull = await getLocalVideoInfo(v_id);
+	}
 
-		const fileNameItag = format.itag + "." + archiveContainer; // for now
-		let stream;
+	let newInfo: ArchiveInfoLatest;
+	try {
+		newInfo = latestArchiveConstructor(videoInfoFull, yti_version);
+	} catch (error) {
+		console.log("archive constructor error: " + error);
+		res.status(503).send("Error: " + error);
+		return;
+	}
+
+	const archiveEntryDir = path.join(archiveDir, v_id);
+	if (!existsSync(archiveEntryDir)) {
 		try {
-			console.log(
-				"downloading video, format " + format.quality_label + " " + format.itag
-			);
-			stream = await videoInfoFull.download(best_format);
+			mkdirSync(archiveEntryDir);
 		} catch (error) {
-			console.log("error during video download: ");
-			console.log(util.inspect(error, { depth: null, colors: true }));
-			// throw error;
-			// console.log('error: ' + error);
-			// res.status(503).send('Error: ' + error);
+			console.log("archive dir creation error: " + error);
+			res.status(507).send("Error: " + error);
 			return;
 		}
-		const fileFormats: { [key: string]: Format } = {};
-		fileFormats[format.itag + "." + archiveContainer] = format;
+	}
 
-		const archiveEntryDir = path.join(archiveDir, v_id);
-		if (!existsSync(archiveEntryDir)) {
-			try {
-				mkdirSync(archiveEntryDir);
-			} catch (error) {
-				console.log("archive dir write error: " + error);
-				res.status(507).send("Error: " + error);
-				return;
-			}
+	// Backup existing info.json if it exists
+	const infoPath = path.join(archiveEntryDir, "info.json");
+	let existingInfo: ArchiveInfo | undefined;
+	if (existsSync(infoPath)) {
+		if(!shouldOverwrite){
+			console.log("archive info exists and overwrite not set, exiting");
+			res.status(400).send("Archive info exists, skipping as overwrite not set");
+			return;
 		}
 
+		existingInfo = newArchiveFromJSON(readFileSync(infoPath, "utf-8"));
+
+		if(!existingInfo){
+			console.log("existing archive info invalid, skipping backup and exiting");
+			existingInfo = undefined;
+			res.status(503).send("Error: existing archive info invalid or nonexistent");
+			return;
+		} else {
+			console.log("existing archive info found, backing up");
+		}
+
+		// Merge existing info to preserve non-updated parts
+		if (!shouldArchiveVideo && existingInfo.file_formats) {
+			newInfo.file_formats = existingInfo.file_formats;
+		}
+		if (!shouldArchiveCaptions && existingInfo.captions) {
+			newInfo.captions = existingInfo.captions;
+		}
+	
+		// Create backup
+		const infoFileDir = path.dirname(infoPath);
+		const infoFileBase = path.basename(infoPath, path.extname(infoPath));
+		let i = 0;
+		let backupPath;
+		do {
+			backupPath = path.join(
+				infoFileDir,
+				`${infoFileBase}_old${i}${path.extname(infoPath)}`
+			);
+			i++;
+		} while (existsSync(backupPath));
+		renameSync(infoPath, backupPath);
+	}
+
+	// Handle video archiving
+	if (shouldArchiveVideo) {
+		const best_format = {
+			type: req.query.type ? req.query.type : "video+audio",
+			quality: req.query.quality ? req.query.quality : "best",
+			format: req.query.format ? req.query.format : "mp4",
+		} as FormatOptions;
+
+		console.log("choosing format: " + JSON.stringify(best_format));
+		let format = await videoInfoFull.chooseFormat(best_format);
+
+		if (!(format.has_video && format.has_audio)) {
+			console.log("Format missing video/audio, upgrading to best quality");
+			format = await videoInfoFull.chooseFormat({
+				type: "video+audio",
+				quality: "best",
+				format: "mp4",
+			} as FormatOptions);
+		}
+
+		const fileNameItag = format.itag + "." + archiveContainer;
+		let stream;
 		try {
+			console.log(`downloading video format ${format.quality_label} ${format.itag}`);
+			stream = await videoInfoFull.download(best_format);
+			
 			const file = createWriteStream(path.join(archiveEntryDir, fileNameItag));
 			for await (const chunk of Utils.streamToIterable(stream)) {
 				file.write(chunk);
 			}
 			file.close();
+			
+			const fileFormats: { [key: string]: Format } = {};
+			fileFormats[format.itag + "." + archiveContainer] = format;
+			newInfo.file_formats = fileFormats;
 		} catch (error) {
-			console.log("file write stream error: " + error);
-			res.status(507).send("Error: " + error);
+			console.log("error during video download: " + error);
+			res.status(503).send("Error: Video download failed");
 			return;
 		} finally {
-			stream.cancel();
+			if (stream) stream.cancel();
 		}
+	}
 
-		let newInfo: ArchiveInfoLatest;
-		try {
-			newInfo = latestArchiveConstructor(videoInfoFull, yti_version);
-		} catch (error) {
-			console.log("archive constr error: " + error);
-			res.status(503).send("Error: " + error);
-			return;
-		}
-		newInfo.file_formats = fileFormats;
-
-		await new Promise((resolve) => setTimeout(resolve, 5000));
-		
-		// TODO: warn client on failure
-		let captionsFailed = false;
-		if (newInfo.captions) {
-
-			const captionsDir = path.join(archiveEntryDir, "captions");
-			if (!existsSync(captionsDir)) {
-				try {
-					mkdirSync(captionsDir);
-				} catch (error) {
-					console.log("mkdir error: " + error);
-					res.status(507).send("Error: " + error);
-					return;
-				}
+	// Handle captions archiving
+	let captionsFailed = false;
+	if (shouldArchiveCaptions && newInfo.captions) {
+		const captionsDir = path.join(archiveEntryDir, "captions");
+		if (!existsSync(captionsDir)) {
+			try {
+				mkdirSync(captionsDir);
+			} catch (error) {
+				console.log("captions dir creation error: " + error);
+				res.status(507).send("Error: " + error);
+				return;
 			}
+		}
 
-			// fetch via base_url
-			let captionTracks: PlayerCaptionsTracklist["caption_tracks"] = [];
-			captionTracks = newInfo.captions?.caption_tracks;
-			captionTracks = captionTracks?.filter(ct => captionsCodeWhitelist.indexOf(ct.language_code) != -1);		
-			newInfo.captions.caption_tracks = captionTracks;
+		// Filter and prepare caption tracks
+		let captionTracks = newInfo.captions.caption_tracks?.filter(
+			ct => captionsCodeWhitelist.indexOf(ct.language_code) != -1
+		);
+		newInfo.captions.caption_tracks = captionTracks;
 
-			for (const ct of captionTracks || []) {
+		if (captionTracks?.length) {
+			for (const ct of captionTracks) {
 				for (let i = 0; i < 5; i++) {
 					ct.base_url = ct.base_url.replace(fullUrlForClient, defaultLocalUrl);
 				}
 			}
-			
+
 			console.log("whitelisted caption tracks: " + JSON.stringify(captionTracks));
 
 			let captionStreams = [] as WebReadableStream<Uint8Array>[];
 			try {
 				captionStreams = await getCaptionStreams(captionTracks);
-			} catch (error) {
-				console.log("get captions stream error: " + error);
-				res.status(503).send("Error: " + error);
-				return;
-			}
-			if (captionStreams.length == 0) {
-				console.log("error in caption stream (zero length result)");
-				// res.status(503).send("Error: " + "could not get all caption streams");
-				// return;
-				captionsFailed = true;
-				newInfo.captions.caption_tracks = newInfo.captions.caption_tracks?.map(ct => {
-					const preFix = "http://" + fullUrl + "/fixvtt/";
-					const fsUrl = `http://${fullUrl}/dummy-vtt.vtt`;
-					ct.base_url = preFix + fsUrl;
-					return ct;
-				});
-			} else {
-				let updatedCaptionTracks =
-					[] as PlayerCaptionsTracklist["caption_tracks"];
-				try {
-					updatedCaptionTracks = await patchCaptions(
+				
+				if (captionStreams.length === 0) {
+					console.log("error: empty caption streams");
+					captionsFailed = true;
+					newInfo.captions.caption_tracks = newInfo.captions.caption_tracks?.map(ct => ({
+						...ct,
+						base_url: "http://" + fullUrl + "/fixvtt/" + `http://${fullUrl}/dummy-vtt.vtt`
+					}));
+				} else {
+					const updatedCaptionTracks = await patchCaptions(
 						captionTracks,
 						captionStreams,
 						captionsDir,
@@ -1659,48 +1849,32 @@ app.get("/archive/:v_id", async (req, res) => {
 						fullUrl,
 						v_id,
 						undefined,
-						true
+						shouldOverwrite
 					);
-					for(let i = 0; i < updatedCaptionTracks.length; i++) {
-						newInfo.captions.caption_tracks![i] = updatedCaptionTracks[i];
+					
+					if (updatedCaptionTracks.length > 0) {
+						for (let i = 0; i < updatedCaptionTracks.length; i++) {
+							newInfo.captions.caption_tracks![i] = updatedCaptionTracks[i];
+						}
 					}
-				} catch(e) {
-					console.log("error in updating caption tracks (patching):" + e);
-					res
-						.status(503)
-						.send(
-							"Error: " +
-								"error in patching caption files and updating caption tracks"
-						);
-					return;
 				}
-				// if this fails, the captions will not be updated
-				if (updatedCaptionTracks.length != (captionTracks ?? []).length) {
-					console.log("error in updating caption tracks (updated NE length)");
-					res
-						.status(503)
-						.send(
-							"Error: " +
-								"error in patching caption tracks, not all successfully patched"
-						);
-					return;
-				}
+			} catch (error) {
+				console.log("caption processing error: " + error);
+				res.status(503).send("Error: Caption processing failed");
+				return;
 			}
 		}
+	}
 
-		try {
-			writeFileSync(
-				path.join(archiveEntryDir, "info.json"),
-				JSON.stringify(newInfo, null, 2)
-			);
-		} catch (error) {
-			console.log("error: " + error);
-			res.status(507).send("Error: " + error);
-			return;
-		}
+	try {
+		writeFileSync(infoPath, JSON.stringify(newInfo, null, 2));
 		archive[v_id] = newInfo;
-		console.log("video archived", "captionsFailed", captionsFailed);
+		console.log(`archiving completed - video: ${shouldArchiveVideo}, captions: ${shouldArchiveCaptions}, captionsFailed: ${captionsFailed}`);
 		res.status(200).send("OK");
+	} catch (error) {
+		console.log("error writing info.json: " + error);
+		res.status(507).send("Error: Failed to write info.json");
+		return;
 	}
 });
 
