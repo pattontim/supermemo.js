@@ -30,7 +30,7 @@ export default function Archive<T extends unknown> ({ v_id, info, setInfo: setAr
        setIsActive(!isActive)
     }
 
-    function handleArchiveBtnClick(quality?: string) {
+    function handleArchiveBtnClick(quality?: string, overwrite: boolean = false, captions: boolean = true, video: boolean = true) {
         if(!isValidSMId(archiveId)) {
             alert("Invalid YouTube Video ID: " + archiveId);
             return;
@@ -41,9 +41,10 @@ export default function Archive<T extends unknown> ({ v_id, info, setInfo: setAr
 
         
         const archiveUrl = new URL("http://" + ytjsHost + "/archive/" + archiveId);
-        archiveUrl.searchParams.append("quality", quality ?? "best");
-        archiveUrl.searchParams.append("video", "true");
-        archiveUrl.searchParams.append("captions", "true");
+        video && archiveUrl.searchParams.append("quality", quality ?? "best");
+        archiveUrl.searchParams.append("video", `${video}`);
+        archiveUrl.searchParams.append("captions", `${captions}`);
+        overwrite && archiveUrl.searchParams.append("overwrite", "true");
         archiveReq.open('GET', archiveUrl.toString());
         // archiveReq.open('GET', "http://" + ytjsHost + "/archive/" + archiveId + "?quality=" + (quality ?? "best"));
         archiveReq.responseType = 'json';
@@ -83,6 +84,12 @@ export default function Archive<T extends unknown> ({ v_id, info, setInfo: setAr
                                     {Object.keys(info?.archived_on ?? []).length !== 0 ?
                                         <div style={{ backgroundColor: 'green', color: 'black', padding: '10px', borderRadius: '5px', boxShadow: '0 0 10px rgba(0, 0, 0, 0.3)' }}>
                                             <span style={{ textShadow: '0 0 5px white' }}>Yes [{getQualityLabel(info)}] [{new Date(info?.archived_on ?? "").toLocaleDateString()}]</span>
+                                            <button
+                                                    onClick={() => { handleArchiveBtnClick(undefined, true, true, false) }}
+                                                    style={{ backgroundColor: 'green', color: 'black', marginRight: '10px', paddingLeft: '5px' }}
+                                                >
+                                                    Re-archive Captions
+                                                </button>
                                         </div>
                                         :
                                         <div style={{ backgroundColor: 'red', color: 'white', fontWeight: 'bold', padding: '10px', borderRadius: '5px', boxShadow: '0 0 10px rgba(0, 0, 0, 0.3)' }}>
