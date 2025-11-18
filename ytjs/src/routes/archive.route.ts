@@ -3,14 +3,16 @@ import path from "path";
 import { Readable } from "stream";
 import { ReadableStream as WebReadableStream } from "stream/web";
 import { PlayerCaptionsTracklist } from "youtubei.js/dist/src/parser/nodes";
-import { app, archive, archiveContainer, archiveDir, defaultLocalUrl, fetchWait, fullUrl, fullUrlForClient, getCacheWait, yti_version } from "../server";
+import { archive, archiveContainer, archiveDir, defaultLocalUrl, fetchWait, fullUrl, fullUrlForClient, getCacheWait, yti_version } from "../server";
 import { ArchiveInfo, ArchiveInfoLatest, CacheInfoV3, latestArchiveConstructor, newArchiveFromJSON } from "../utils/archive";
 import { CaptionTrack } from "../../../src/app/utils/types";
 import { Format } from "youtubei.js/dist/src/parser/misc";
 import { FormatOptions } from "youtubei.js/dist/src/types";
 import { getLocalVideoInfo } from "../utils/localvideo";
-import { Utils } from "youtubei.js/dist/src/utils";
+import { Utils } from "youtubei.js";
+import { Router } from "express";
 
+const router = Router();
 
 /**
  * Patch fs archive captions with the correct URL and save to disk. Updates both the captionTracks base url and rets updated.
@@ -168,7 +170,8 @@ export function formatCaptionFileName(captionTrack: CaptionTrack) {
 	return capFilename;
 }
 export const captionsCodeWhitelist = ["en", "fr", "ja"];
-app.get("/archive/:v_id", async (req, res) => {
+
+router.get("/archive/:v_id", async (req, res) => {
 	const v_id = req.params.v_id;
 	const shouldArchiveVideo = req.query.video === 'true';
 	const shouldArchiveCaptions = req.query.captions === 'true';
@@ -385,4 +388,6 @@ app.get("/archive/:v_id", async (req, res) => {
 		return;
 	}
 });
+
+export default router;
 

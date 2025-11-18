@@ -2,9 +2,12 @@ import { existsSync, readFileSync } from "fs";
 import path from "path";
 import { app, fullUrlForClient } from "../server";
 import { ElementInfo } from "../utils/element";
+import { Router } from "express";
 
+const router = Router();
+export let elementsDir = "./dist/elements";
 
-app.get("/templateUrl/:id", async (req, res) => {
+router.get("/templateUrl/:id", async (req, res) => {
 	const id = req.params.id;
 	if (id.length == 11) {
 		console.log("11 len ID detected, returning the player");
@@ -26,5 +29,6 @@ app.get("/templateUrl/:id", async (req, res) => {
 	// open at templates/id.html and ret the template
 	// const template = JSON.parse(readFileSync(path.join(archiveDir, 'templates', info.templateId + '.json'), 'utf-8'));
 	res.send(`http://${fullUrlForClient}/templates/${info.templateId}.html`);
-});export let elementsDir = "./dist/elements";
+});
 
+export default router;

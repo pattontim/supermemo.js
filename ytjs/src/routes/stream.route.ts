@@ -6,6 +6,9 @@ import { getLocalVideoInfo } from "../utils/localvideo";
 import { Format } from "youtubei.js/dist/src/parser/misc";
 import { FormatOptions } from "youtubei.js/dist/src/types";
 import { latestCacheConstructor } from "../utils/archive";
+import { Router } from "express";
+
+const router = Router();
 
 const formatsToUse = [
     // 599 m4a audio only | mp4a.40.5 22050Hz ultralow, m4a_dash
@@ -79,7 +82,7 @@ async function getSupportedFormats(videoInfoFull: VideoInfo) {
 	return fileFormats;
 }
 
-app.get('/dummy-vtt.vtt', (req, res) => {
+router.get('/dummy-vtt.vtt', (req, res) => {
 	const lang = req.query.lang || 'en';
 	res.type('text/vtt; charset=utf-8');
 	res.send(`WEBVTT
@@ -92,7 +95,7 @@ CAP_429.
 `);
 });
 
-app.get('/dummy-manifest.mpd', (req, res) => {
+router.get('/dummy-manifest.mpd', (req, res) => {
 	res.type('application/dash+xml');
 	res.send(`<?xml version="1.0" encoding="UTF-8"?>
 <MPD
@@ -121,7 +124,7 @@ app.get('/dummy-manifest.mpd', (req, res) => {
 </MPD>`);
 });
 
-app.get(/^\/fixvtt\/(.*\..*$)/, async (req, res) => {
+router.get(/^\/fixvtt\/(.*\..*$)/, async (req, res) => {
 	// console.log("req.headers: " + JSON.stringify(req.headers));
 	// console.log("req.baseUrl: " + req.baseUrl);
 	// console.log("req: " + JSON.stringify(req.body));
@@ -147,7 +150,7 @@ app.get(/^\/fixvtt\/(.*\..*$)/, async (req, res) => {
 	}
 });
 
-app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
+router.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
     const v_id = req.params[0];
     const target = req.query.target as string;
     console.log("mpd request for " + v_id);
@@ -334,7 +337,7 @@ app.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
     }
 
 });
-app.get("/streamUrl/:v_id", async (req, res) => {
+router.get("/streamUrl/:v_id", async (req, res) => {
 	const v_id = req.params.v_id;
 	console.log(`[1/8] Request received for v_id: ${v_id}`);
 
@@ -386,3 +389,4 @@ app.get("/streamUrl/:v_id", async (req, res) => {
 	}
 });
 
+export default router;

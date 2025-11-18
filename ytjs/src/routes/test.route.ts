@@ -5,6 +5,9 @@ import { Format } from "youtubei.js/dist/src/parser/misc";
 import { FormatOptions } from "youtubei.js/dist/src/types";
 import { VideoInfo } from "youtubei.js/dist/src/parser/youtube";
 import { PlayerCaptionsTracklist } from "youtubei.js/dist/src/parser/nodes";
+import { Router } from "express";
+
+const router = Router();
 
 export async function getSupportedFormats2(
     videoInfoFull: VideoInfo,
@@ -48,7 +51,7 @@ export async function getSupportedFormats2(
     return { avFormats, aFormats, vFormats };
 }
 
-app.get("/status/", async (req, res) => {
+router.get("/status/", async (req, res) => {
 	if (globalThis.ffmpeg_version === undefined ||
 		globalThis.yt_dlp_version === undefined) {
 		const [ffmpeg_version, yt_dlp_version] = await Promise.all([
@@ -64,7 +67,9 @@ app.get("/status/", async (req, res) => {
 		ffmpeg_version,
 		yt_dlp_version,
 	});
-});app.get("/ffmpeg/:id", async (req, res) => {
+});
+
+router.get("/ffmpeg/:id", async (req, res) => {
 	const id = req.params.id;
 
 	// Set headers for HLS streaming
@@ -149,7 +154,8 @@ app.get("/status/", async (req, res) => {
 		res.send("ffmpeg does not exist");
 	}
 });
-app.get("/vidtest/:videoId.mp4", (req, res) => {
+
+router.get("/vidtest/:videoId.mp4", (req, res) => {
 	const videoId = req.params.videoId;
 	const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
 
@@ -275,16 +281,18 @@ app.get("/vidtest/:videoId.mp4", (req, res) => {
 		}
 	});
 });
-app.get("/mpd/invalidate/:v_id", async (req, res) => {
+
+router.get("/mpd/invalidate/:v_id", async (req, res) => {
 	const v_id = req.params.v_id;
 	console.log("invalidating mpd cache for " + v_id);
 	cache[v_id].mpd_manifest = "";
 	res.send("OK");
 });
+
 /** SImply waits for archiveInfo to be loaded, expecting another process to cache it
  * eg, the initial request to /mpd
  */
-app.get("/archiveInfo/:v_id", async (req, res) => {
+router.get("/archiveInfo/:v_id", async (req, res) => {
 	const v_id = req.params.v_id;
 	const archiveInfo = await getCacheWait(v_id);
 	if (archiveInfo) {
@@ -293,13 +301,16 @@ app.get("/archiveInfo/:v_id", async (req, res) => {
 		res.status(404).send({});
 	}
 });
-app.get("/archivei/", async (req, res) => {
+
+router.get("/archivei/", async (req, res) => {
 	res.send(archive);
 });
-app.get("/cachei/", async (req, res) => {
+
+router.get("/cachei/", async (req, res) => {
 	res.send(cache);
 });
-app.get("/v1fix/", async (req, res) => {
+
+router.get("/v1fix/", async (req, res) => {
 	return;
 	// const fixVerPairs = [
 	// 	1,
@@ -433,7 +444,8 @@ app.get("/v1fix/", async (req, res) => {
 	// console.log("done updating archive to version 2");
 	// res.send("done");
 });
-app.get("/captions/:v_id", async (req, res) => {
+
+router.get("/captions/:v_id", async (req, res) => {
 	const v_id = req.params.v_id;
 	let captionTracks: PlayerCaptionsTracklist | undefined = JSON.parse(
 		JSON.stringify((await getCacheWait(v_id))?.captions)
@@ -453,7 +465,8 @@ app.get("/captions/:v_id", async (req, res) => {
 	}
 	res.json({});
 });
-app.get("/formats/:v_id", async (req, res) => {
+
+router.get("/formats/:v_id", async (req, res) => {
 	const v_id = req.params.v_id;
 	const formats = (await getCacheWait(v_id))?.file_formats;
 	if (formats) {
@@ -462,7 +475,8 @@ app.get("/formats/:v_id", async (req, res) => {
 		res.json({});
 	}
 });
-app.get("/youtubeformats/:v_id", async (req, res) => {
+
+router.get("/youtubeformats/:v_id", async (req, res) => {
 	const v_id = req.params.v_id;
 
 	// call chooseFormat with a try for all possible permutations on // audio, video or video+audio, quality: 'best',
@@ -522,3 +536,4 @@ app.get("/youtubeformats/:v_id", async (req, res) => {
 	return res.json({ avFormats, aFormats, vFormats, streamingData });
 });
 
+export default router;

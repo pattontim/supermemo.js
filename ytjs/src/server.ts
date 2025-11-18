@@ -40,6 +40,12 @@ import { Types } from "youtubei.js/web";
 import { setupBotGuardGlobals } from "./utils/poToken";
 import { cacheDir } from "./utils/constants";
 
+import archiveRoutes  from "./routes/archive.route";
+import rpcRoutes from "./routes/rpc.route";
+import streamRoutes from "./routes/stream.route";
+import templateRoutes from "./routes/template.route";
+import testRoutes from "./routes/test.route";
+
 // Set up Platform shim for deciphering streaming URLs
 Platform.shim.eval = async (
 	data: Types.BuildScriptResult,
@@ -352,6 +358,12 @@ app.use((req, res, next) => {
 
 // @ts-ignore
 app.use(longRunningRequestMiddleware(5000));
+
+app.use(archiveRoutes);
+app.use(rpcRoutes);
+app.use(streamRoutes);
+app.use(templateRoutes);
+app.use(testRoutes);
 
 async function callRejectAfter(call: Promise<unknown>, timeMs: number) {
 	return Promise.race([
