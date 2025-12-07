@@ -15,6 +15,8 @@ import { Session } from "youtubei.js";
 import { JSDOM } from "jsdom";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 
+import { Response } from "node-fetch";
+
 // Patch globals before any BotGuard operations
 export async function setupBotGuardGlobals() {
 	const dom = new JSDOM("<!DOCTYPE html><html><body></body></html>", {
@@ -24,11 +26,32 @@ export async function setupBotGuardGlobals() {
 		includeNodeLocations: true,
 		storageQuota: 10000000,
 		userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+		// Electron equivalent: contextIsolation: true + sandbox: true
 	});
+
+	// Add Content-Security-Policy equivalent for context isolation (after DOM is ready)
+	const cspMeta = dom.window.document.createElement('meta');
+	cspMeta.httpEquiv = 'Content-Security-Policy';
+	cspMeta.content = "default-src 'self' https://www.youtube.com; connect-src 'self' https: wss:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.youtube.com; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; font-src 'self' data: https:;";
+	if (dom.window.document.head) {
+		dom.window.document.head.appendChild(cspMeta);
+	}
+
+	// Add CORS headers simulation for onHeadersReceived equivalent
+	const corsHeaders = dom.window.document.createElement('meta');
+	corsHeaders.name = 'cors-headers';
+	corsHeaders.content = JSON.stringify({
+		'Access-Control-Allow-Origin': '*',
+		'Access-Control-Allow-Methods': 'GET, HEAD, POST, PUT, DELETE, CONNECT, OPTIONS, TRACE, PATCH'
+	});
+	if (dom.window.document.head) {
+		dom.window.document.head.appendChild(corsHeaders);
+	}
 
 	Object.assign(globalThis, {
 		window: dom.window,
 		document: dom.window.document,
+		// Electron equivalent: contextIsolation: true (isolated context)
 		// navigator: {
 		// 	userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 		// 		,
@@ -59,9 +82,17 @@ export async function setupBotGuardGlobals() {
 			colorDepth: 24,
 			pixelDepth: 24,
 		},
+		// Electron equivalent: backgroundThrottling: false + v8CacheOptions: 'none'
 		performance: {
 			now: () => Date.now(),
 			timeOrigin: Date.now(),
+			mark: (name: string) => {},
+			measure: (name: string, startMark?: string, endMark?: string) => {},
+			clearMarks: (name?: string) => {},
+			clearMeasures: (name?: string) => {},
+			getEntriesByType: (type: string) => [],
+			getEntriesByName: (name: string) => [],
+			getEntries: () => [],
 		},
 		// crypto: {
 		// 	// @ts-expect-error lol
@@ -82,11 +113,26 @@ export async function setupBotGuardGlobals() {
 	Object.assign(globalThis.HTMLCanvasElement.prototype, canvasProto);
 	Object.assign(globalThis.OffscreenCanvas.prototype, canvasProto);
 
+	// Electron equivalent: disableBlinkFeatures + v8CacheOptions: 'none'
 	globalThis.WebAssembly = WebAssembly;
 	globalThis.TextEncoder = TextEncoder;
 	globalThis.TextDecoder = TextDecoder;
 	globalThis.atob = (str) => Buffer.from(str, "base64").toString("binary");
 	globalThis.btoa = (str) => Buffer.from(str, "binary").toString("base64");
+
+	// Electron equivalent: onBeforeRequest blocking cspReport and ping types
+	const originalFetch = globalThis.fetch;
+	globalThis.fetch = async function(input: any, init?: any) {
+		// Block CSP report requests (type: cspReport)
+		if (typeof input === 'string' && input.includes('__csp')) {
+			throw new Error('CSP report blocked');
+		}
+		// Block ping requests
+		if (init?.method === 'GET' && init?.mode === 'no-cors' && init?.keepalive === true) {
+			throw new Error('Ping request blocked');
+		}
+		return originalFetch(input, init);
+	} as any;
 
 	globalThis.HTMLElement = dom.window.HTMLElement;
 	globalThis.HTMLBodyElement = dom.window.HTMLBodyElement;
@@ -147,7 +193,8 @@ export async function generateContentBoundPoToken(
   );
 
   if (!challengeResponse.ok) {
-    throw new Error(`Request failed with status ${challengeResponse.status}`);
+    // throw new Error(`Request failed with status ${challengeResponse.status}`);
+	throw new Error(`Request to ${challengeResponse.url} failed with status ${challengeResponse.status}\n${await challengeResponse.text()}`)
   }
 
   const challengeData = await challengeResponse.json();

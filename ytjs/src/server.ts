@@ -45,6 +45,7 @@ import rpcRoutes from "./routes/rpc.route";
 import streamRoutes from "./routes/stream.route";
 import templateRoutes from "./routes/template.route";
 import testRoutes from "./routes/test.route";
+import { FFmpegService } from "./services/ffmpeg.service";
 
 // Set up Platform shim for deciphering streaming URLs
 Platform.shim.eval = async (
@@ -403,6 +404,21 @@ function startServer() {
 			}
 		}
 		console.log(`Using youtubei.js version ${yti_version}`);
+
+		// Check for FFmpeg availability
+		try {
+			const ffmpegVersion = await FFmpegService.getVersion();
+			if (ffmpegVersion) {
+				globalThis.ffmpeg_version = ffmpegVersion;
+				console.log(`Using FFmpeg version ${ffmpegVersion}`);
+			} else {
+				console.warn("FFmpeg not found on system - MPD fallback downloads will not be available");
+				globalThis.ffmpeg_version = null;
+			}
+		} catch (error) {
+			console.warn(`Error checking FFmpeg version: ${error}`);
+			globalThis.ffmpeg_version = null;
+		}
 
 		if (!existsSync(cacheDir)) {
 			mkdirSync(cacheDir);

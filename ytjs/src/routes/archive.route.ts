@@ -11,6 +11,9 @@ import { FormatOptions } from "youtubei.js/dist/src/types";
 import { getLocalVideoInfo } from "../utils/localvideo";
 import { Utils } from "youtubei.js";
 import { Router } from "express";
+import { Response } from "node-fetch";
+import { FFmpegService } from "../services/ffmpeg.service";
+import { deepCopy } from "../utils/lib";
 
 const router = Router();
 
@@ -161,6 +164,90 @@ export async function getCaptionStreams(
 	}
 	return captionStreams;
 }
+
+// FIXME: the impl is not broken but it won't work w/ YT since proxying data is not possible 
+/**
+ * Download video using MPD fallback method
+ * Retrieves the DASH manifest from cache and uses FFmpeg to convert it to MP4
+ * @param v_id - Video ID
+ * @param archiveEntryDir - Directory to save the video
+ * @param quality - Preferred quality (best, 1080p, 720p, etc.)
+ * @returns Object with filename, format info, or null if failed
+ */
+async function downloadVideoViaMPDFallback(
+	v_id: string,
+	archiveEntryDir: string,
+	quality: string = "best"
+): Promise<{ filename: string; format: Format } | null> {
+	if (!globalThis.ffmpeg_version) {
+		console.warn("FFmpeg not available, cannot use MPD fallback");
+		return null;
+	}
+
+	console.log(`[MPD Fallback] Attempting to download video ${v_id} using FFmpeg`);
+
+	try {
+		// Get cache info which contains the MPD manifest
+		const cacheInfo = (await getCacheWait(v_id)) as CacheInfoV3 | undefined;
+		if (!cacheInfo || !cacheInfo.mpd_manifest) {
+			console.log("[MPD Fallback] No cached manifest found, attempting to generate one");
+			// If no cache, we need to fetch the manifest first
+			// This would require access to the video info and toDash() call
+			// For now, return null as this requires more context
+			return null;
+		}
+
+		console.log("[MPD Fallback] Found cached MPD manifest");
+
+		// Save the manifest temporarily
+		const tempManifestPath = path.join(archiveEntryDir, `manifest_temp_${Date.now()}.mpd`);
+		const patchedTempManifest = deepCopy(cacheInfo.mpd_manifest).replaceAll("http://10.0.2.2", "http://localhost")
+		writeFileSync(tempManifestPath, patchedTempManifest);
+
+		// Use FFmpeg to convert the manifest to MP4
+		const ffmpegService = new FFmpegService();
+		const outputFilename = `video_${v_id}_${quality}.${archiveContainer}`;
+		const outputPath = path.join(archiveEntryDir, outputFilename);
+
+		console.log(`[MPD Fallback] Converting manifest to MP4: ${outputFilename}`);
+		await ffmpegService.streamToFile(tempManifestPath, outputPath, {
+			quality,
+			format: archiveContainer,
+			includeAudio: true,
+			includeVideo: true,
+		});
+
+		// Clean up temp manifest
+		try {
+			if (existsSync(tempManifestPath)) {
+				const fs = require("fs");
+				fs.unlinkSync(tempManifestPath);
+			}
+		} catch (err) {
+			console.warn(`[MPD Fallback] Failed to clean up temp manifest: ${err}`);
+		}
+
+		console.log("[MPD Fallback] Video download completed successfully");
+
+		// Return format info
+		const format = {
+			itag: "ffmpeg-mpd-fallback",
+			mime_type: "video/mp4",
+			quality_label: quality,
+			has_video: true,
+			has_audio: true,
+		} as unknown as Format;
+
+		return {
+			filename: outputFilename,
+			format,
+		};
+	} catch (error) {
+		console.error(`[MPD Fallback] Error: ${error}`);
+		return null;
+	}
+}
+
 export function formatCaptionFileName(captionTrack: CaptionTrack) {
 	let capFilename = captionTrack.vss_id + ".vtt";
 	if (capFilename.startsWith(".")) {
@@ -177,6 +264,7 @@ router.get("/archive/:v_id", async (req, res) => {
 	const shouldArchiveCaptions = req.query.captions === 'true';
 	const shouldOverwrite = req.query.overwrite === 'true';
 	const shouldArchive = shouldArchiveVideo || shouldArchiveCaptions;
+	const shouldUseMPDFallback = req.query.mpd_fallback === 'true';
 
 	console.log(`archive request for ${v_id} (video: ${shouldArchiveVideo}, captions: ${shouldArchiveCaptions}, overwrite: ${shouldOverwrite})`);
 
@@ -269,45 +357,80 @@ router.get("/archive/:v_id", async (req, res) => {
 
 	// Handle video archiving
 	if (shouldArchiveVideo) {
-		const best_format = {
-			type: req.query.type ? req.query.type : "video+audio",
-			quality: req.query.quality ? req.query.quality : "best",
-			format: req.query.format ? req.query.format : "mp4",
-		} as FormatOptions;
+		const quality = (req.query.quality as string) || "best";
+		let videoDownloadSuccess = false;
 
-		console.log("choosing format: " + JSON.stringify(best_format));
-		let format = await videoInfoFull.chooseFormat(best_format);
+		if (!shouldUseMPDFallback) {
+			const best_format = {
+				type: req.query.type ? req.query.type : "video+audio",
+				quality: req.query.quality ? req.query.quality : "best",
+				format: req.query.format ? req.query.format : "mp4",
+			} as FormatOptions;
 
-		if (!(format.has_video && format.has_audio)) {
-			console.log("Format missing video/audio, upgrading to best quality");
-			format = await videoInfoFull.chooseFormat({
-				type: "video+audio",
-				quality: "best",
-				format: "mp4",
-			} as FormatOptions);
+			console.log("choosing format: " + JSON.stringify(best_format));
+			let format = await videoInfoFull.chooseFormat(best_format);
+
+			if (!(format.has_video && format.has_audio)) {
+				console.log("Format missing video/audio, upgrading to best quality");
+				format = await videoInfoFull.chooseFormat({
+					type: "video+audio",
+					quality: "best",
+					format: "mp4",
+				} as FormatOptions);
+			}
+
+			const fileNameItag = format.itag + "." + archiveContainer;
+			let stream;
+			try {
+				console.log(`downloading video format ${format.quality_label} ${format.itag}`);
+				stream = await videoInfoFull.download(best_format);
+
+				const file = createWriteStream(path.join(archiveEntryDir, fileNameItag));
+				for await (const chunk of Utils.streamToIterable(stream)) {
+					file.write(chunk);
+				}
+				file.close();
+
+				const fileFormats: { [key: string]: Format; } = {};
+				fileFormats[format.itag + "." + archiveContainer] = format;
+				newInfo.file_formats = fileFormats;
+				videoDownloadSuccess = true;
+			} catch (error) {
+				console.log("error during video download: " + error);
+				console.log("attempting MPD fallback download...");
+				
+				// Try MPD fallback if standard download fails
+				const fallbackResult = await downloadVideoViaMPDFallback(v_id, archiveEntryDir, quality);
+				if (fallbackResult) {
+					const fileFormats: { [key: string]: Format; } = {};
+					fileFormats[fallbackResult.filename] = fallbackResult.format;
+					newInfo.file_formats = fileFormats;
+					videoDownloadSuccess = true;
+				} else {
+					res.status(503).send("Error: Video download failed and MPD fallback unavailable");
+					return;
+				}
+			} finally {
+				if (stream) stream.cancel();
+			}
+		} else {
+			// Use MPD fallback explicitly
+			console.log("using mpd fallback for video download");
+			const fallbackResult = await downloadVideoViaMPDFallback(v_id, archiveEntryDir, quality);
+			if (fallbackResult) {
+				const fileFormats: { [key: string]: Format; } = {};
+				fileFormats[fallbackResult.filename] = fallbackResult.format;
+				newInfo.file_formats = fileFormats;
+				videoDownloadSuccess = true;
+			} else {
+				res.status(503).send("Error: MPD fallback download failed or FFmpeg not available");
+				return;
+			}
 		}
 
-		const fileNameItag = format.itag + "." + archiveContainer;
-		let stream;
-		try {
-			console.log(`downloading video format ${format.quality_label} ${format.itag}`);
-			stream = await videoInfoFull.download(best_format);
-
-			const file = createWriteStream(path.join(archiveEntryDir, fileNameItag));
-			for await (const chunk of Utils.streamToIterable(stream)) {
-				file.write(chunk);
-			}
-			file.close();
-
-			const fileFormats: { [key: string]: Format; } = {};
-			fileFormats[format.itag + "." + archiveContainer] = format;
-			newInfo.file_formats = fileFormats;
-		} catch (error) {
-			console.log("error during video download: " + error);
+		if (!videoDownloadSuccess) {
 			res.status(503).send("Error: Video download failed");
 			return;
-		} finally {
-			if (stream) stream.cancel();
 		}
 	}
 

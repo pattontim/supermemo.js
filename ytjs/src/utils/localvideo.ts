@@ -13,6 +13,8 @@ import { Response } from "node-fetch";
 import { generateContentBoundPoToken } from "./poToken";
 import { cacheDir } from "./constants";
 import { Format } from "youtubei.js/dist/src/parser/misc";
+import { defaultLocalUrl } from "../server";
+import { Utils } from "youtubei.js";
 
 export type FormatWithURL = Format & { freeTubeUrl: string; };
 
@@ -75,12 +77,13 @@ export async function createInnertube({
 		// use browser fetch
 		// @ts-expect-error lol
 		fetch: !withPlayer
-			? (input, init) => fetch(input as any, init as any)
+			? (input, init) => Utils.debugFetch(input as any, init as any)
 			: async (input: any, init: any) => {
-				if (input.url?.startsWith(
-					"https://www.youtube.com/youtubei/v1/player"
-				) &&
-					init?.headers?.get("X-Youtube-Client-Name") === "2") {
+				// limit to 55 char
+				console.log("Making request to", typeof input === 'string' ? input.slice(0, 100) : input.url);
+				if (input.url?.startsWith("https://www.youtube.com/youtubei/v1/player")
+					&& init?.headers?.get("X-Youtube-Client-Name") === "2"
+				) {
 					const response = await fetch(input, init);
 
 					const responseText = await response.text();
@@ -117,10 +120,18 @@ export async function createInnertube({
 					return new Response(responseText, {
 						status: response.status,
 						statusText: response.statusText,
-						// @ts-expect-error
+						// @ts-expect-error headers type
 						headers: response.headers,
 					});
-				}
+				// typeof input === 'string' ? input : input.url
+				} 
+				// else if(input.url?.startsWith("https://rr")){
+				// 	console.log("Bypassing rr request ", input.url)
+				// 	input.url = `http://${defaultLocalUrl}/proxy/${input.url}`
+				// } else if(typeof input === 'string' && input.startsWith("https://rr")){
+				// 	console.log("Bypassing rr request ", input)
+				// 	input = `http://${defaultLocalUrl}/proxy/${input}`
+				// }
 
 				return fetch(input, init);
 			},
@@ -185,6 +196,7 @@ export async function getLocalVideoInfo(id: string) {
 	console.log("Got MWEB info for video ", id);
 
 	if (mwebInfo.playability_status!.status === "OK" && mwebInfo.streaming_data) {
+		console.log("MWEB playability OK, using its streaming data for video ", id);
 		info.playability_status = mwebInfo.playability_status;
 		info.streaming_data = mwebInfo.streaming_data;
 
@@ -245,6 +257,7 @@ export async function getLocalVideoInfo(id: string) {
 	if ((info.playability_status!.status === "UNPLAYABLE" &&
 		(!hasTrailer || trailerIsAgeRestricted)) ||
 		info.playability_status!.status === "LOGIN_REQUIRED") {
+		console.log("Video is unplayable even after trying all restriction bypass, returning info as-is");
 		return info;
 	}
 
