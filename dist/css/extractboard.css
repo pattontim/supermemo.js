@@ -257,6 +257,12 @@ input {
   min-width: 250px;
 }
 
+.divider {
+  height: 1px;
+  width: 100%;
+  background-color: #000000;
+}
+
 /* COMPONENTS */
 .imgBtn {
   width: 20px;

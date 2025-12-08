@@ -301,6 +301,11 @@ function App() {
     }
   }
 
+  function handleOpenSettings() {
+    const settingsURL = new URL(document.location.href.replace("smplayer.html", "settings.html"));
+    window.location.href = settingsURL.toString();
+  }
+
   function handleToggleRepeat() {
     setRepeat(!repeat);
   }
@@ -499,10 +504,20 @@ Description:\n${archiveInfo.description}
   return (
     <div className="app">
 
+    {/* EXPERIMENT: this conclusively proved that iframes are ignored by supermemo's input parser
+    {
+      !document.location.href.includes("recursed") &&
+    <iframe src='http://10.0.2.2:3000/templates/smplayer.html?videoid=clobbered2s&resume=1:00&start=1:00&stop=1:31&ts=2025117153639465&recursed=1'>
+    </iframe>
+    } */}
+
     { archiveInfo &&
-      <div className="archive-info" style={isShortClip ? {backgroundColor: "yellowgreen"} : {}}>
+      <div className="archive-info col" style={isShortClip ? {backgroundColor: "yellowgreen"} : {}}>
+        <div className='row'>
+        <div onClick={() => handleOpenSettings()} style={{border: "1px solid black"}}>⚙</div>
         <div className="archive-info-title">
           {archiveInfo.title}
+        </div>
         </div>
       </div>
     }
