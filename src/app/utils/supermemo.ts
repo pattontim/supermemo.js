@@ -1,3 +1,25 @@
+export interface Option {
+  label: string;
+  value: string;
+}
+
+  // Encoding options to search params
+ export const encodeOptionsToSearchParam = (options: Option[]): string => {
+    return encodeURIComponent(JSON.stringify(options));
+  };
+
+  // Decoding options from search params
+ export const decodeOptionsFromSearchParam = (searchParam: string | null): Option[] => {
+    if (!searchParam) return [];
+    try {
+      const decoded = decodeURIComponent(searchParam);
+      return JSON.parse(decoded) as Option[];
+    } catch (e) {
+      console.error("Failed to decode options", e);
+      return [];
+    }
+  };
+
 function isValidInput(elem: HTMLElement | null): elem is HTMLInputElement {
     return elem != null && elem instanceof HTMLInputElement && elem.value != null;
 }

@@ -1,5 +1,5 @@
+import { decodeOptionsFromSearchParam } from "../../../app/utils/supermemo";
 import React from "react";
-import { useState } from "react";
 
 interface Option {
   label: string;
@@ -50,11 +50,11 @@ export default function HiddenExtractor<T extends unknown>({
     videoid: smjsID = getQueryParam('videoid')?.trim() ?? null,
     repeat = true,
     customPromptVisible = "0",
-    options = []
+    options = decodeOptionsFromSearchParam(getQueryParam("options"))
 }: ExtractorProps<T>) {
 
     return (
-        <div>
+        <div hidden>
             <div id="customPrompt" hidden>
                 <div className="hd">Save As</div>
                 <div className="bd">
@@ -66,13 +66,11 @@ export default function HiddenExtractor<T extends unknown>({
             </div>
             <input type="hidden" value={smjsID ?? ''} id="videoid" />
             <input type="hidden" value={boundaries} id="imposeboundries" />
-            <fieldset hidden>
+            <fieldset>
                     <input type="text" id="resumevideoat" value={firstVector ?? ''}/> 
                     <input type="text" id="startvideoat" value={secondVector ?? ''}/>
                     <input type="text" id="stopvideoat" value={thirdVector ?? ''}/>
                     <input type="checkbox" checked={repeat} id="repeat"/>
-                    <select id="extracts" multiple></select>   
-                    <input type="hidden" value={customPromptVisible} id="customPromptVisible" />   
                     <select id="extracts">
                             {options.map((option, index) => (
                                 <option value={option.value}>
@@ -80,6 +78,8 @@ export default function HiddenExtractor<T extends unknown>({
                                 </option>
                             ))}
                     </select>           
+                    <input type="hidden" value={customPromptVisible} id="customPromptVisible" />  
+                    <textarea id="log" style={{width: "100%"}} hidden></textarea>
             </fieldset>
         </div>
     )

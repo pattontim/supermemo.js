@@ -2,11 +2,7 @@ import React, { useRef } from "react";
 import { useState } from "react";
 import { convertHHMMSS2Seconds, convertHHMMSS2Vector3D, convertVector3D2HHMMSS, formatTime } from "../../utils/Duration";
 // import { PlayerProps } from "../../utils/types";
-
-interface Option {
-  label: string;
-  value: string;
-}
+import { Option } from "../../utils/supermemo";
 
 interface PlayerProps<T> {
     resume: string | null;
@@ -28,14 +24,15 @@ interface PlayerProps<T> {
     handleCopyVideoDetails: () => void;
     isShortClip: boolean;
     setHHMMSS: (type: string, hhmmss: string) => void;
+    options: Option[];
+    setOptions: (options: Option[]) => void;
 }
 
 export default function ClipExtractor<T extends unknown>({resume, start, stop, boundaries, videoid, played, duration, 
     setAt, setAtAbs, resetAt, goTo, offset, setPlaying, playing, repeat, handleToggleRepeat, 
-    handleCopyVideoDetails, isShortClip, setHHMMSS } : PlayerProps<T>)
+    handleCopyVideoDetails, isShortClip, setHHMMSS, options, setOptions } : PlayerProps<T>)
     {
     
-    const [options, setOptions] = useState<Option[]>([]);
     const [selectedOption, setSelectedOption] = React.useState<Option | null>(null);
     const extractNum = useRef(1);
 

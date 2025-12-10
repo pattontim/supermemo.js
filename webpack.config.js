@@ -16,7 +16,8 @@ module.exports = {
     // helloworld: './src/index.tsx',
     smplayer: './src/app/templates/smplayer/index.tsx',
     home: './src/app/templates/home/index.tsx',
-    settings: './src/app/templates/settings/index.tsx'
+    settings: './src/app/templates/settings/index.tsx',
+    hidden_settings: './src/app/templates/hidden_settings/index.tsx',
     // create: './src/app/templates/create/index.tsx',
   },
   output: {

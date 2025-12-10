@@ -15,6 +15,7 @@ import Archive from '../../features/archive/Archive';
 import { useLocalStorage } from '../../utils/storage';
 import ClipTool from '../../features/clip/ClipTool';
 import { ytjsHost } from '../../utils/client';
+import { decodeOptionsFromSearchParam, encodeOptionsToSearchParam, Option } from "../../utils/supermemo";
 
 function App() {
   const queryParameters = new URLSearchParams(window.location.search)
@@ -27,6 +28,7 @@ function App() {
   const [stop, setStop] = useState(queryParameters.get('stop'));
   // const [stopStyle, setStopStyle] = React.useState({ border: `2px solid ${borderCl}` });
   const [imposeBoundaries, setImposeBoundaries] = useState(1);
+  const [options, setOptions] = useState<Option[]>(decodeOptionsFromSearchParam(queryParameters.get("options")));
   const [videoid, setVideoid] = useState(queryParameters.get('videoid')?.trim() ?? null);
   const [repeat, setRepeat] = useState(true);
   const [numRepeats, setNumRepeats] = useState(0);
@@ -302,8 +304,21 @@ function App() {
   }
 
   function handleOpenSettings() {
-    const settingsURL = new URL(document.location.href.replace("smplayer.html", "settings.html"));
+    if(options.length > 5){
+      const choice = window.confirm(
+      `You have many extracts which may be lost if you open settings. ` +
+      `Proceed to open settings?`
+      );
+      if (!choice) return null;
+    }
+
+    const settingsURL = new URL(document.location.href.replace("smplayer.html", "hidden_settings.html"));
+    settingsURL.searchParams.set("options", encodeOptionsToSearchParam(options));
+    // queryParameters.set("options", encodeOptionsToSearchParam(options));
+    // window.location.search = settingsURL.search;
+    // window.history.pushState({}, '', window.location.href);
     window.location.href = settingsURL.toString();
+    // window.open(settingsURL.toString(), '_blank');
   }
 
   function handleToggleRepeat() {
@@ -634,6 +649,8 @@ Description:\n${archiveInfo.description}
       handleCopyVideoDetails={handleCopyVideoDetails}
       isShortClip={isShortClip}
       setHHMMSS={setHHMMSS}
+      options={options}
+      setOptions={setOptions}
       />
       {/* <ExtractBoard/> */}
       {/* <Counter /> */}
