@@ -12,7 +12,7 @@ import { ArchiveInfo } from '../../../../ytjs/src/utils/archive';
 
 import { convertHHMMSS2Seconds, convertSeconds2HHMMSS, constrainToRange, formatTime, convertHHMMSS2Vector3D } from '../../utils/Duration';
 import Archive from '../../features/archive/Archive';
-import { useLocalStorage } from '../../utils/storage';
+import { StorageKey, useLocalStorage } from '../../utils/storage';
 import ClipTool from '../../features/clip/ClipTool';
 import { ytjsHost } from '../../utils/client';
 import { decodeOptionsFromSearchParam, encodeOptionsToSearchParam, Option } from "../../utils/supermemo";
@@ -59,6 +59,9 @@ function App() {
     const clipDur = stop ? convertHHMMSS2Seconds(stop) - convertHHMMSS2Seconds(start): null;
     return clipDur && (clipDur < 15) && (duration - convertHHMMSS2Seconds(stop) > 1) ? true : false;
   }, [start, stop, duration]);
+  const [autoHover, setAutoHover] = useLocalStorage(StorageKey.AUTO_HOVER, true);
+  const [autoHoverLongClips, setAutoHoverLongClips] = useLocalStorage(StorageKey.AUTO_HOVER_LONG_CLIPS, false);
+  
   
   const [isMouseOverPlayer, setIsMouseOverPlayer] = useState(false);
 
@@ -540,15 +543,19 @@ Description:\n${archiveInfo.description}
       <div 
         tabIndex={0} 
         onMouseEnter={() => {
-          setIsMouseOverPlayer(true);
-          if(isShortClip){
-            setPlaying(true);
+          if(autoHover){
+            setIsMouseOverPlayer(true);
+            if(isShortClip || autoHoverLongClips){
+              setPlaying(true);
+            }
           }
         }}
         onMouseLeave={() => {
-          setIsMouseOverPlayer(false);
-          if(isShortClip){
-            setPlaying(false);
+          if(autoHover){
+            setIsMouseOverPlayer(false);
+            if(isShortClip || autoHoverLongClips){
+              setPlaying(false);
+            }
           }
         }}
         onKeyDown={(e) => {

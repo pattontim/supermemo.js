@@ -1,5 +1,13 @@
 import { useState, useEffect } from 'react';
 
+export enum StorageKey {
+  /** Autoplay on hover in/out of clips */
+  AUTO_HOVER = 'AUTO_HOVER',
+  /** Apply auto hover to long clips too */
+  AUTO_HOVER_LONG_CLIPS = 'AUTO_HOVER_LONG_CLIPS',
+
+}
+
 export function useLocalStorage<T>(key: string, initialValue: T, bufferTime: number = 1000) {
   const [value, setValue] = useState<T>(() => {
     try {
