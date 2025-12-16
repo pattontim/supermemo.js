@@ -97,7 +97,12 @@ body {
   /* -ms-overflow-style: none; */
   -ms-overflow-style: -ms-autohiding-scrollbar;
   overflow: auto;
+  overflow-x: hidden;
   /* background-color: rgb(20,30, 1); */
+  margin-top: 0px;
+  margin-bottom: 0px;
+  margin-left: 0px;
+  margin-right: 0px;
 }
 
 .track {
@@ -203,7 +208,12 @@ body {
 
 /* MAIN STRUCTURE */
 fieldset {
-  width: 800px;
+  width: 100%;
+  margin-right: 0px;
+  margin-left: 0px;
+  padding-left: 0px;
+  padding-right: 0px;
+  border-right: 0px;
 }
 
 .row {
@@ -305,7 +315,12 @@ input {
 .accordion {
   /* margin: 2rem auto; */
   border: 1px solid #000000;
+  border-right: 0px;
   max-width: 808px;
+}
+
+.accordion:last-child {
+  border-bottom: 0px;
 }
 
 .accordion-title {

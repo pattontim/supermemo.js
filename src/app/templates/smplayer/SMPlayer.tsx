@@ -15,20 +15,24 @@ import Archive from '../../features/archive/Archive';
 import { StorageKey, useLocalStorage } from '../../utils/storage';
 import ClipTool from '../../features/clip/ClipTool';
 import { ytjsHost } from '../../utils/client';
-import { decodeOptionsFromSearchParam, encodeOptionsToSearchParam, Option } from "../../utils/supermemo";
+import { decodeOptionsFromSearchParam, encodeOptionsToSearchParam, decodeSessionFromSearchParam, encodeSessionToSearchParam, Option, Session } from "../../utils/supermemo";
 
 function App() {
   const queryParameters = new URLSearchParams(window.location.search)
 
+  // Check for session data or fallback to individual params
+  const sessionParam = queryParameters.get('session');
+  const session = decodeSessionFromSearchParam(sessionParam);
+  
   // TODO component passed as prop?
-  const [resume, setResume] = useState(queryParameters.get('resume'));
+  const [resume, setResume] = useState(session?.resume ?? queryParameters.get('resume'));
   // const [resumeStyle, setResumeStyle] = React.useState({ border: `2px solid ${borderCl}` });
-  const [start, setStart] = useState(queryParameters.get('start'));
+  const [start, setStart] = useState(session?.start ?? queryParameters.get('start'));
   // const [startStyle, setStartStyle] = React.useState({ border: `2px solid ${borderCl}` });
-  const [stop, setStop] = useState(queryParameters.get('stop'));
+  const [stop, setStop] = useState(session?.stop ?? queryParameters.get('stop'));
   // const [stopStyle, setStopStyle] = React.useState({ border: `2px solid ${borderCl}` });
   const [imposeBoundaries, setImposeBoundaries] = useState(1);
-  const [options, setOptions] = useState<Option[]>(decodeOptionsFromSearchParam(queryParameters.get("options")));
+  const [options, setOptions] = useState<Option[]>(session?.options ?? decodeOptionsFromSearchParam(queryParameters.get("options")));
   const [videoid, setVideoid] = useState(queryParameters.get('videoid')?.trim() ?? null);
   const [repeat, setRepeat] = useState(true);
   const [numRepeats, setNumRepeats] = useState(0);
@@ -46,13 +50,14 @@ function App() {
   const [light, setLight] = useState(false);
   const [volume, setVolume] = useLocalStorage('vol-' + videoid, 0.8);
   const [muted, setMuted] = useState(false);
-  const [played, setPlayed] = useState(start ? convertHHMMSS2Seconds(start) : 0);
+  const [played, setPlayed] = useState(session?.played ?? (start ? convertHHMMSS2Seconds(start) : 0));
   const [loaded, setLoaded] = useState(0);
   const [duration, setDuration] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1.0);
   const [loop, setLoop] = useState(false);
   const [seeking, setSeeking] = useState(false);
   const [archiveInfo, setArchiveInfo] = useState<ArchiveInfo>();
+  const [sessionRestored, setSessionRestored] = useState(session !== null);
   const isShortClip = useMemo(() => {
     // console.log('isShortClip', stop, start, convertHHMMSS2Seconds(stop) - convertHHMMSS2Seconds(start));
     // console.log("duration", duration, convertHHMMSS2Seconds(stop), convertHHMMSS2Seconds(start));
@@ -315,8 +320,18 @@ function App() {
       if (!choice) return null;
     }
 
+    const updatedSession: Session = {
+      resume,
+      start,
+      stop,
+      played,
+      options
+    };
+
     const settingsURL = new URL(document.location.href.replace("smplayer.html", "hidden_settings.html"));
-    settingsURL.searchParams.set("options", encodeOptionsToSearchParam(options));
+
+    settingsURL.searchParams.set("session", encodeSessionToSearchParam(updatedSession));
+    // settingsURL.searchParams.set("options", encodeOptionsToSearchParam(options));
     // queryParameters.set("options", encodeOptionsToSearchParam(options));
     // window.location.search = settingsURL.search;
     // window.history.pushState({}, '', window.location.href);
@@ -343,6 +358,13 @@ function App() {
     setPlaying(true);
     console.log('player ready');
     customDebugger();    
+
+      // Restore player position from session when returning from settings
+    if (sessionRestored && session && ref.current) {
+      console.log('Restoring session - seeking to', session.played);
+      ref.current.seekTo(session.played);
+      setPlayed(session.played);
+    }
   }
 
   function handlePlayerStart() {
@@ -518,47 +540,39 @@ Description:\n${archiveInfo.description}
       player.setQualityFor('video', level);
     }
 
-    
-  return (
-    <div className="app">
+    function handleTitleClicked() {
+      if(!archiveInfo) return;
+    // const detailsToCopy = `Title: ${archiveInfo.title`;
 
-    {/* EXPERIMENT: this conclusively proved that iframes are ignored by supermemo's input parser
-    {
-      !document.location.href.includes("recursed") &&
-    <iframe src='http://10.0.2.2:3000/templates/smplayer.html?videoid=clobbered2s&resume=1:00&start=1:00&stop=1:31&ts=2025117153639465&recursed=1'>
-    </iframe>
-    } */}
+    const textarea = document.createElement('textarea');
+    textarea.value = archiveInfo.title;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
 
-    { archiveInfo &&
-      <div className="archive-info col" style={isShortClip ? {backgroundColor: "yellowgreen"} : {}}>
-        <div className='row'>
-        <div onClick={() => handleOpenSettings()} style={{border: "1px solid black"}}>⚙</div>
-        <div className="archive-info-title">
-          {archiveInfo.title}
-        </div>
-        </div>
-      </div>
+      alert('Title copied to clipboard!');
     }
-    { url != "" && isMpdLoaded && 
-      <div 
-        tabIndex={0} 
-        onMouseEnter={() => {
-          if(autoHover){
-            setIsMouseOverPlayer(true);
-            if(isShortClip || autoHoverLongClips){
-              setPlaying(true);
-            }
-          }
-        }}
-        onMouseLeave={() => {
-          if(autoHover){
-            setIsMouseOverPlayer(false);
-            if(isShortClip || autoHoverLongClips){
-              setPlaying(false);
-            }
-          }
-        }}
-        onKeyDown={(e) => {
+
+    function handleMouseEnter(){
+      if(autoHover){
+        setIsMouseOverPlayer(true);
+        if(isShortClip || autoHoverLongClips){
+          setPlaying(true);
+        }
+      }
+    }
+
+    function handleMouseLeave() {
+      if(autoHover){
+        setIsMouseOverPlayer(false);
+        if(isShortClip || autoHoverLongClips){
+          setPlaying(false);
+        }
+      }
+    }
+
+    function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
         if (e.key === 'right' || e.key === 'ArrowRight') {
           seekVideo(formatTime(played + 1, duration));
         } else if (e.key === 'left' || e.key === 'ArrowLeft') {
@@ -576,64 +590,101 @@ Description:\n${archiveInfo.description}
         }
         e.preventDefault();
         e.stopPropagation();
-      }} >
-      <div>
-        { (() => { console.log( "----- element re-rendered"); return null; })() }
+      }
+    
+  return (
+    <div className="app">
+
+    {/* EXPERIMENT: this conclusively proved that iframes are ignored by supermemo's input parser
+    {
+      !document.location.href.includes("recursed") &&
+    <iframe src='http://10.0.2.2:3000/templates/smplayer.html?videoid=clobbered2s&resume=1:00&start=1:00&stop=1:31&ts=2025117153639465&recursed=1'>
+    </iframe>
+    } */}
+
+    { archiveInfo ?
+      <div className="archive-info col" style={{
+        paddingLeft: "0px",
+        paddingBottom: "0px",
+        paddingTop: "0px",
+        ...(isShortClip && {backgroundColor: "yellowgreen"})
+      }}>
+        <div className='row' style={{ border: "1px solid black", borderBottom: "0px", borderRight: "0px", borderTop: "0px"} }>
+          <div onClick={() => handleOpenSettings()} style={{borderRight: "1px solid black"}}>⚙</div>
+          <div className="archive-info-title" title={archiveInfo.title} onClick={() => handleTitleClicked()}>
+            {archiveInfo.title.substring(0, 44) + (archiveInfo.title.length > 46 ? ".." : "")}
+          </div>
         </div>
-      <ReactPlayer 
-              ref={ref}
-              className='react-player'
-              config={{
-                  file: {
-                    dashVersion: '4.5.2', //last version supporting IE
-                    attributes: {
-                      crossOrigin: "true",
-                      autoPlay: false,
-                      poster: "/iv/images/sm.gif",
-                      streaming: {
-                        manifestRequestTimeout: 20000,
-                        abandonLoadTimeout: 20000,
-                        timeoutIntervals: {
-                          MPD: 20000,
-                          XHRMPDTimeout: 20000,
-                        }
-                      }
-                    },
-                    // @ts-expect-error test
-                    streaming: {
-                        manifestRequestTimeout: 20000,
-                        abandonLoadTimeout: 20000,
-                        timeoutIntervals: {
-                          MPD: 20000,
-                          XHRMPDTimeout: 20000,
-                        }
+      </div>
+      :
+      <div className='row' 
+      style={{height: '35px'}}
+      ><div className='col' style={{marginTop: '5px'}}>Loading metadata...</div></div>
+    }
+    { (url != "" && isMpdLoaded) ? 
+      <div tabIndex={0} onMouseEnter={() => handleMouseEnter()} onMouseLeave={() => handleMouseLeave()}
+        onKeyDown={(e) => handleKeyDown(e)}>
+        <div>
+          { (() => { console.log( "----- element re-rendered"); return null; })() }
+        </div>
+        <ReactPlayer 
+          ref={ref}
+          className='react-player'
+          config={{
+              file: {
+                dashVersion: '4.5.2', //last version supporting IE
+                attributes: {
+                  crossOrigin: "true",
+                  autoPlay: false,
+                  poster: "/iv/images/sm.gif",
+                  streaming: {
+                    manifestRequestTimeout: 20000,
+                    abandonLoadTimeout: 20000,
+                    timeoutIntervals: {
+                      MPD: 20000,
+                      XHRMPDTimeout: 20000,
                     }
                   }
-              }}
-              width='100%'
-              height='100%'
-              url={url}
-              pip={pip}
-              playing={playing}
-              controls={controls}
-              light={light}
-              loop={loop}
-              playbackRate={playbackRate}
-              volume={volume}
-              muted={muted}
-              onReady={handlePlayerReady}
-              onStart={handlePlayerStart}
-              onPlay={handlePlay}
-              onPause={handlePause}
-              onBuffer={() => console.log('onBuffer')}
-              onPlaybackRateChange={handleOnPlaybackRateChange}
-              onSeek={handleSeek}
-              onEnded={handleEnded}
-              onError={e => console.log('onError', e)}
-              onProgress={handleProgress}
-              onDuration={handleDuration}
-            >
-            </ReactPlayer>
+                },
+                // @ts-expect-error test
+                streaming: {
+                    manifestRequestTimeout: 20000,
+                    abandonLoadTimeout: 20000,
+                    timeoutIntervals: {
+                      MPD: 20000,
+                      XHRMPDTimeout: 20000,
+                    }
+                }
+              }
+          }}
+          width='100%'
+          minWidth={754}
+          // minHeight={424}
+          url={url}
+          pip={pip}
+          playing={playing}
+          controls={controls}
+          light={light}
+          loop={loop}
+          playbackRate={playbackRate}
+          volume={volume}
+          muted={muted}
+          onReady={handlePlayerReady}
+          onStart={handlePlayerStart}
+          onPlay={handlePlay}
+          onPause={handlePause}
+          onBuffer={() => console.log('onBuffer')}
+          onPlaybackRateChange={handleOnPlaybackRateChange}
+          onSeek={handleSeek}
+          onEnded={handleEnded}
+          onError={e => console.log('onError', e)}
+          onProgress={handleProgress}
+          onDuration={handleDuration}>
+        </ReactPlayer>
+      </div>
+      :
+      <div style={{width: '100%', minWidth: 754, minHeight: 424, display: 'flex', justifyContent: 'center', alignItems: 'center'}}>
+        <div>Loading stream...</div>
       </div>
       }
       <ClipExtractor 
