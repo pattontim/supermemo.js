@@ -46,6 +46,7 @@ import streamRoutes from "./routes/stream.route";
 import templateRoutes from "./routes/template.route";
 import testRoutes from "./routes/test.route";
 import { FFmpegService } from "./services/ffmpeg.service";
+import { YtdlpService } from "./services/ytdlp.service";
 
 // Set up Platform shim for deciphering streaming URLs
 Platform.shim.eval = async (
@@ -405,7 +406,6 @@ function startServer() {
 		}
 		console.log(`Using youtubei.js version ${yti_version}`);
 
-		// Check for FFmpeg availability
 		try {
 			const ffmpegVersion = await FFmpegService.getVersion();
 			if (ffmpegVersion) {
@@ -419,6 +419,21 @@ function startServer() {
 			console.warn(`Error checking FFmpeg version: ${error}`);
 			globalThis.ffmpeg_version = null;
 		}
+
+		try {
+			const ytdlpVersion = await YtdlpService.getVersion();
+			if (ytdlpVersion) {
+				globalThis.ffmpeg_version = ytdlpVersion;
+				console.log(`Using ytdlp version ${ytdlpVersion}`);
+			} else {
+				console.warn("Ytdlp not found on system - ytdlp fallback downloads will not be available");
+				globalThis.yt_dlp_version = null;
+			}
+		} catch (error) {
+			console.warn(`Error checking Ytdlp version: ${error}`);
+			globalThis.yt_dlp_version = null;
+		}
+
 
 		if (!existsSync(cacheDir)) {
 			mkdirSync(cacheDir);

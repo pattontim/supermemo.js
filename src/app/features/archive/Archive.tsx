@@ -89,7 +89,7 @@ export default function Archive<T extends unknown> ({ v_id, info, setInfo: setAr
                                                     style={{ backgroundColor: 'green', color: 'black', marginRight: '10px', paddingLeft: '5px' }}
                                                 >
                                                     Re-archive Captions
-                                                </button>
+                                            </button>
                                         </div>
                                         :
                                         <div style={{ backgroundColor: 'red', color: 'white', fontWeight: 'bold', padding: '10px', borderRadius: '5px', boxShadow: '0 0 10px rgba(0, 0, 0, 0.3)' }}>

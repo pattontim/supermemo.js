@@ -1,4 +1,4 @@
-import React, { useRef } from "react";
+import React, { useRef, useEffect } from "react";
 import { useState } from "react";
 import { convertHHMMSS2Seconds, convertHHMMSS2Vector3D, convertVector3D2HHMMSS, formatTime } from "../../utils/Duration";
 // import { PlayerProps } from "../../utils/types";
@@ -35,10 +35,26 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
     
     const [selectedOption, setSelectedOption] = React.useState<Option | null>(null);
     const extractNum = useRef(1);
+    const [isActive, setIsActive] = useState(!isShortClip);
+
+    // Update isActive when isShortClip changes
+    useEffect(() => {
+        if(isShortClip === true){
+            setIsActive(false);
+        }
+    }, [isShortClip]);
+
+        // Update isActive when isShortClip changes
+    useEffect(() => {
+        if(isShortClip){
+            setIsActive(false);
+        }
+    }, [playing]);
 
     // these props are emulated to match the original code behavior
     const [emulatedCustomPromptVisible, setEmulatedCustomPromptVisible] = useState("0");
     const [emulatedExtractName, setEmulatedExtractName] = useState("")
+    
 
     /* 
      * offset the resume vector for the clip extractor
@@ -165,8 +181,12 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
         resetAt('stop');
     }
 
+    function handleMouseEnter() {
+        if(!isActive) setIsActive(true);
+    }
+
     return (
-        <div>
+        <div style={{ opacity: isActive ? 1 : 0.5 }} onMouseEnter={() => handleMouseEnter()}>
             <div id="customPrompt" hidden>
                 <div className="hd">Save As</div>
                 <div className="bd">

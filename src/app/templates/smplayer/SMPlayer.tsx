@@ -96,7 +96,7 @@ function App() {
         console.log('Error: ' + req.status);
         return;
       }
-      const streamUrl = req.response as string;
+      const streamUrl = (req.response ?? req.responseURL) as string;
       console.log('Stream URL:', streamUrl);
 
       // If it's an MPD file, fetch and wait for it to load completely
@@ -312,13 +312,13 @@ function App() {
   }
 
   function handleOpenSettings() {
-    if(options.length > 5){
-      const choice = window.confirm(
-      `You have many extracts which may be lost if you open settings. ` +
-      `Proceed to open settings?`
-      );
-      if (!choice) return null;
-    }
+    // if(options.length > 5){
+    //   const choice = window.confirm(
+    //   `You have many extracts which may be lost if you open settings. ` +
+    //   `Proceed to open settings?`
+    //   );
+    //   if (!choice) return null;
+    // }
 
     const updatedSession: Session = {
       resume,
@@ -540,6 +540,30 @@ Description:\n${archiveInfo.description}
       player.setQualityFor('video', level);
     }
 
+    window.addEventListener('beforeunload', function(e) {
+      // Your custom logic here (e.g., send analytics, save state, etc.)
+      // e.returnValue = 'You have unsaved extracts?';
+      // return e.returnValue;
+
+      if(options.length > 5){
+        e.returnValue = `You have many extracts which may be lost if you navigate away. ` +
+        `Proceed to navigate?`;
+      }
+
+      const updatedSession: Session = {
+        resume,
+        start,
+        stop,
+        played,
+        options
+      };
+
+      const newParams = new URLSearchParams(window.location.search);
+      newParams.set("session", encodeSessionToSearchParam(updatedSession));
+      const newUrl = `${window.location.pathname}?${newParams.toString()}`;
+      window.history.replaceState(null, '', newUrl); // No reload
+    });
+
     function handleTitleClicked() {
       if(!archiveInfo) return;
     // const detailsToCopy = `Title: ${archiveInfo.title`;
@@ -633,6 +657,8 @@ Description:\n${archiveInfo.description}
           config={{
               file: {
                 dashVersion: '4.5.2', //last version supporting IE
+                // https://github.com/video-dev/hls.js/releases/tag/v1.2.0
+                hlsVersion: '1.2.0', //last version theoretically supporting IE11: https://github.com/video-dev/hls.js/pull/4802
                 attributes: {
                   crossOrigin: "true",
                   autoPlay: false,
