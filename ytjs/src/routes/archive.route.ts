@@ -1,4 +1,4 @@
-import { readFileSync, existsSync, renameSync, createWriteStream, writeFileSync, mkdirSync } from "fs";
+import { readFileSync, existsSync, renameSync, createWriteStream, writeFileSync, mkdirSync, unlinkSync } from "fs";
 import path from "path";
 import { Readable } from "stream";
 import { ReadableStream as WebReadableStream } from "stream/web";
@@ -12,8 +12,9 @@ import { getLocalVideoInfo } from "../utils/localvideo";
 import { Utils } from "youtubei.js";
 import { Router } from "express";
 import { Response } from "node-fetch";
-import { YtdlpService } from "../services/ytdlp.service";
+import { IE11_ITAG_PRESETS, IE11Quality, YtdlpService } from "../services/ytdlp.service";
 import { deepCopy } from "../utils/lib";
+import { FFmpegService } from "../services/ffmpeg.service";
 
 const router = Router();
 
@@ -274,7 +275,7 @@ router.get("/archive/:v_id", async (req, res) => {
 
 	// Handle video archiving
 	if (shouldArchiveVideo) {
-		const quality = (req.query.quality as string) || "720p";
+		const quality = (req.query.quality as IE11Quality) || "360p";
 		let videoDownloadSuccess = false;
 
 		try {
@@ -349,6 +350,80 @@ router.get("/archive/:v_id", async (req, res) => {
 					newInfo.file_formats = fileFormats;
 					videoDownloadSuccess = true;
 					console.log(`[Video] standard download completed successfully`);
+				} catch {
+					const fFmpegService = new FFmpegService();
+					console.log(`[Video] standard download failed, attempting ffmpeg fallback`);
+					const tempAudioPath = path.join(archiveEntryDir, `temp-audio-${Date.now()}.mp4`);
+					const tempVideoPath = path.join(archiveEntryDir, `temp-video-${Date.now()}.mp4`);
+					const outputPath = path.join(archiveEntryDir, fileNameItag);
+
+					// TODO: select based on browser
+					const preset = IE11_ITAG_PRESETS[quality as IE11Quality];
+					const audioStream = await videoInfoFull.download({
+						itag: preset.audio
+					});
+					const videoStream = await videoInfoFull.download({
+						itag: preset.video
+					});
+
+					// use promise.all to write chunks same time
+					await Promise.all([
+						(async () => {
+							const file = createWriteStream(tempAudioPath);
+							for await (const chunk of Utils.streamToIterable(audioStream)) {
+								file.write(chunk);
+							}
+							file.close();
+						})(),
+						(async () => {
+							const file = createWriteStream(tempVideoPath);
+							for await (const chunk of Utils.streamToIterable(videoStream)) {
+								file.write(chunk);
+							}
+							file.close();
+						})(),
+					]);
+
+					await fFmpegService.mergeAV(
+						tempAudioPath,
+						tempVideoPath,
+						outputPath
+					);
+
+					// Clean up temp files
+					try {
+						if (existsSync(tempAudioPath)) {
+							unlinkSync(tempAudioPath);
+						}
+						if (existsSync(tempVideoPath)) {
+							unlinkSync(tempVideoPath);
+						}
+					} catch (error) {
+						console.warn(`[FFmpeg] Temporary file cleanup error: ${error}`);
+					}
+
+					const combinedItag = preset.video + "+" + preset.audio;
+					const combinedItagFileName = combinedItag + "." + archiveContainer;
+
+					const fileFormats: { [key: string]: Format; } = {};
+					fileFormats[combinedItagFileName] = {
+						itag: combinedItag,
+						mime_type: "video/mp4",
+						quality_label: quality,
+						has_video: true,
+						has_audio: true,
+						last_modified: new Date(),
+						last_modified_ms: Date.now(),
+						bitrate: -1,
+						approx_duration_ms: -1, 
+						// videoInfoFull.basic_info.duration,
+						is_type_otf: -1,
+						has_text: false,
+						decipher: -1
+					} as unknown as Format;
+					newInfo.file_formats = fileFormats;
+					videoDownloadSuccess = true;
+					console.log(`[Video] ffmpeg fallback download completed successfully`);
 				} finally {
 					if (stream) stream.cancel();
 				}

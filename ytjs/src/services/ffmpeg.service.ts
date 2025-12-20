@@ -85,6 +85,56 @@ export class FFmpegService extends VideoDownloadService {
     };
   }
 
+  async mergeAV(inAudioPath: string,  inVideoPath: string, outPath: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const args = [
+        "-i",
+        inVideoPath,
+        "-i",
+        inAudioPath,
+        "-c",
+        "copy",
+        outPath,
+      ];
+
+      console.log(
+        `[FFmpeg] Merging audio and video to: ${path.basename(outPath)}`
+      );
+      console.log(`[FFmpeg] Command: ${this.ffmpegPath} ${args.join(" ")}`);
+
+      const ffmpeg = spawn(this.ffmpegPath, args);
+      let errorOutput = "";
+
+      ffmpeg.stderr.on("data", (data) => {
+        const message = data.toString();
+        errorOutput += message;
+        // Log progress information
+        if (message.includes("frame=")) {
+          console.log(`[FFmpeg] ${message.trim()}`);
+        }
+      });
+
+      ffmpeg.on("close", (code) => {
+        if (code === 0) {
+          console.log(`[FFmpeg] Merging completed successfully`);
+          resolve();
+        } else {
+          console.error(`[FFmpeg] Process exited with code ${code}`);
+          reject(
+            new Error(
+              `FFmpeg merging failed with exit code ${code}: ${errorOutput}`
+            )
+          );
+        }
+      });
+
+      ffmpeg.on("error", (err) => {
+        console.error(`[FFmpeg] Process error: ${err.message}`);
+        reject(err);
+      });
+    });
+  }
+
   /**
    * Stream DASH manifest directly to MP4 file using FFmpeg
    * Leverages FFmpeg's built-in HLS/DASH support for manifest processing
