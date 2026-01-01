@@ -5,6 +5,7 @@ export enum StorageKey {
   AUTO_HOVER = 'AUTO_HOVER',
   /** Apply auto hover to long clips too */
   AUTO_HOVER_LONG_CLIPS = 'AUTO_HOVER_LONG_CLIPS',
+  AUTO_HOVER_OUTSIDE_CLIP_BOUNDS = 'AUTO_HOVER_OUTSIDE_CLIP_BOUNDS',
 
 }
 

@@ -368,20 +368,46 @@ router.get("/archive/:v_id", async (req, res) => {
 
 					// use promise.all to write chunks same time
 					await Promise.all([
-						(async () => {
-							const file = createWriteStream(tempAudioPath);
-							for await (const chunk of Utils.streamToIterable(audioStream)) {
-								file.write(chunk);
+					new Promise<void>(async (resolve, reject) => {
+						try {
+						const file = createWriteStream(tempAudioPath);
+						file.on('error', reject);
+
+						for await (const chunk of Utils.streamToIterable(audioStream)) {
+							if (!file.write(chunk)) {
+								console.log("waiting for drain...");
+							await new Promise(res => file.once('drain', res));
 							}
-							file.close();
-						})(),
-						(async () => {
-							const file = createWriteStream(tempVideoPath);
-							for await (const chunk of Utils.streamToIterable(videoStream)) {
-								file.write(chunk);
+						}
+
+						file.end(() => {
+							file.removeAllListeners();
+							resolve();
+						});
+						} catch (err) {
+						reject(err);
+						}
+					}),
+
+					new Promise<void>(async (resolve, reject) => {
+						try {
+						const file = createWriteStream(tempVideoPath);
+						file.on('error', reject);
+
+						for await (const chunk of Utils.streamToIterable(videoStream)) {
+							if (!file.write(chunk)) {
+							await new Promise(res => file.once('drain', res));
 							}
-							file.close();
-						})(),
+						}
+
+						file.end(() => {
+							file.removeAllListeners();
+							resolve();
+						});
+						} catch (err) {
+						reject(err);
+						}
+					})
 					]);
 
 					await fFmpegService.mergeAV(
