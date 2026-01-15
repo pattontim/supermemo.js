@@ -7,6 +7,9 @@ export enum StorageKey {
   AUTO_HOVER_LONG_CLIPS = 'AUTO_HOVER_LONG_CLIPS',
   AUTO_HOVER_OUTSIDE_CLIP_BOUNDS = 'AUTO_HOVER_OUTSIDE_CLIP_BOUNDS',
 
+  /** Always autoplay shorts on start*/
+  AUTO_PLAY_SHORTS_ALWAYS = 'AUTO_PLAY_SHORTS_ALWAYS',
+
 }
 
 export function useLocalStorage<T>(key: string, initialValue: T, bufferTime: number = 1000) {

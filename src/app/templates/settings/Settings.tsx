@@ -3,6 +3,9 @@ import React, { useState } from "react";
 
 
 function App() {
+
+    const [autoplayShortsAlways, setAutoplayShortsAlways] = useLocalStorage(StorageKey.AUTO_PLAY_SHORTS_ALWAYS, false);
+
     // Short clips (< some threshold)
     const [playShortOnHover, setPlayShortOnHover] = useLocalStorage(StorageKey.AUTO_HOVER, true);
     const [pauseShortOnHover, setPauseShortOnHover] = useLocalStorage(StorageKey.AUTO_HOVER, false);
@@ -50,6 +53,16 @@ function App() {
                       onChange={(e) => setPauseShortOnHover(e.target.checked)}
                     />
                     Pause on hover away
+                  </label>
+                </div>
+                <div className="row">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={autoplayShortsAlways}
+                      onChange={(e) => setAutoplayShortsAlways(e.target.checked)}
+                    />
+                    Always autoplay shorts on start
                   </label>
                 </div>
               </div>
