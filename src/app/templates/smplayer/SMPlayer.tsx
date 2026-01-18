@@ -624,12 +624,13 @@ function App() {
   // ============================================================================
 
   /**
-   * Navigates to hidden settings page while preserving current session state.
+   * Navigates to hidden page while preserving current session state.
    * Encodes all current state (resume, start, stop, played, options) into URL params.
-   * When user returns from settings, this state is restored via session restoration logic.
+   * When user returns from hidden, this state is restored via session restoration logic.
+   * @param {string} url - The base URL of the hidden page
    * @returns {void}
    */
-  function handleOpenSettings() {
+  function handleOpenHidden(url: string) {
     const updatedSession: Session = {
       resume,
       start,
@@ -638,9 +639,9 @@ function App() {
       options
     };
 
-    const settingsURL = new URL(document.location.href.replace("smplayer.html", "hidden_settings.html"));
-    settingsURL.searchParams.set("session", encodeSessionToSearchParam(updatedSession));
-    window.location.href = settingsURL.toString();
+    const hiddenURL = new URL(document.location.href.replace("smplayer.html", url));
+    hiddenURL.searchParams.set("session", encodeSessionToSearchParam(updatedSession));
+    window.location.href = hiddenURL.toString();
   }
 
   /**
@@ -1102,7 +1103,8 @@ Description:\n${archiveInfo.description}
         ...(isShortClip && {backgroundColor: "yellowgreen"})
       }}>
         <div className='row' style={{ border: "1px solid black", borderBottom: "0px", borderRight: "0px", borderTop: "0px"} }>
-          <div onClick={() => handleOpenSettings()} style={{borderRight: "1px solid black"}}>⚙</div>
+          <div onClick={() => handleOpenHidden("hidden_settings.html")} style={{borderRight: "1px solid black"}}>⚙</div>
+          <div onClick={() => handleOpenHidden("hidden_archive.html")} style={{borderRight: "1px solid black"}}>🔍︎</div>
           <div className="archive-info-title" title={archiveInfo.title} onClick={() => handleTitleClicked()}>
             {archiveInfo.title.substring(0, 44) + (archiveInfo.title.length > 46 ? ".." : "")}
           </div>

@@ -18,6 +18,8 @@ module.exports = {
     home: './src/app/templates/home/index.tsx',
     settings: './src/app/templates/settings/index.tsx',
     hidden_settings: './src/app/templates/hidden_settings/index.tsx',
+    archive: './src/app/templates/archive/index.tsx',
+    hidden_archive: './src/app/templates/hidden_archive/index.tsx',
     // create: './src/app/templates/create/index.tsx',
   },
   output: {
