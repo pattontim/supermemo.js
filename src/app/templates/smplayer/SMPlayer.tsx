@@ -27,7 +27,6 @@ function App() {
   /**
    * Auto-hover playback flag - Controls auto-play on mouse hover.
    * When true, playback automatically starts when mouse enters the player.
-   * Persisted to localStorage with key StorageKey.AUTO_HOVER.
    * @type {boolean}
    */
   const [autoHover, setAutoHover] = useLocalStorage(StorageKey.AUTO_HOVER, true);
@@ -35,7 +34,6 @@ function App() {
   /**
    * Auto-hover for long clips flag - Extends auto-hover behavior to clips longer than 15 seconds.
    * When true, auto-play on hover applies to all clips. When false, only short clips auto-play on hover.
-   * Persisted to localStorage with key StorageKey.AUTO_HOVER_LONG_CLIPS.
    * @type {boolean}
    */
   const [autoHoverLongClips, setAutoHoverLongClips] = useLocalStorage(StorageKey.AUTO_HOVER_LONG_CLIPS, false);
@@ -43,10 +41,21 @@ function App() {
   /**
    * Auto-play shorts always flag - Forces short clip auto-play regardless of hover state.
    * When true, short clips play automatically without requiring mouse hover.
-   * Persisted to localStorage with key StorageKey.AUTO_PLAY_SHORTS_ALWAYS.
    * @type {boolean}
    */
   const [autoPlayShortsAlways, setAutoPlayShortsAlways] = useLocalStorage(StorageKey.AUTO_PLAY_SHORTS_ALWAYS, false);
+
+  /**
+   * Fake fullscreen on shorts load
+   * When true, enables pseudo-fullscreen mode automatically for short clips.
+   */
+  const [fakeFullscreenShorts, setFakeFullscreenShorts] = useLocalStorage(StorageKey.FAKE_FULLSCREEN_SHORTS, true);
+
+  /**
+   * Arrow Frame Mode - Enables frame-by-frame navigation using arrow keys.
+   * When true, left/right arrow keys seek backward/forward by one frame (1/30 second).
+   */
+  const [arrowFrameMode, setArrowFrameMode] = useLocalStorage(StorageKey.ARROW_FRAME_MODE, false);
   
   // ============================================================================
   // STATE: Clip Boundary Management (HH:MM:SS format)
@@ -286,6 +295,16 @@ function App() {
    */
   const [isMouseOverPlayer, setIsMouseOverPlayer] = useState(false);
 
+  /**
+   * Pseudo-fullscreen mode flag - Controls whether player takes up all available space.
+   * When true, hides archive-info, clip-extractor, and other components to maximize player size.
+   * Automatically enabled when: player is loaded AND clip is short AND loading from archive.
+   * Automatically disabled on double-click or when conditions no longer match.
+   * Unlike true fullscreen, this doesn't trigger browser APIs and plays well with player controls.
+   * @type {boolean}
+   */
+  const [pseudoFullscreen, setPseudoFullscreen] = useState(false);
+
   // ============================================================================
   // REFS: Player Instance References
   // ============================================================================
@@ -305,6 +324,22 @@ function App() {
   //   setStop(queryParameters.get('stop'));
   //   setVideoid(queryParameters.get('videoid'));
   // }, []);
+
+  // ============================================================================
+  // EFFECT: Auto-enable pseudo-fullscreen for short archive clips
+  // ============================================================================
+  useEffect(() => {
+    // Enable pseudo-fullscreen when:
+    // 1. Stream URL is loaded (url is not empty)
+    // 2. MPD is loaded
+    // 3. Clip is short
+    // 4. Archive info is available (indicates loading from archive)
+    if (url && isMpdLoaded && isShortClip && archiveInfo && fakeFullscreenShorts) {
+      setPseudoFullscreen(true);
+    } else {
+      setPseudoFullscreen(false);
+    }
+  }, [url, isMpdLoaded, isShortClip, archiveInfo]);
 
   useEffect(() => {
     const url = new URL("http://" + ytjsHost + "/streamUrl/" + queryParameters.get('videoid'));
@@ -1066,27 +1101,70 @@ Description:\n${archiveInfo.description}
    * @returns {void}
    */
   function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
-      if (e.key === 'right' || e.key === 'ArrowRight') {
-        seekVideo(formatTime(played + 1, duration));
-      } else if (e.key === 'left' || e.key === 'ArrowLeft') {
-        seekVideo(formatTime(played - 1, duration));
-      } else if (e.key === ' ') {
-        e.preventDefault();
-        e.stopPropagation();
-        setPlaying(!playing);
-      } else if (e.key === '>') {
-        // seek forward one frame assuming 30fps
+    // TODO: IDEA - flash a border on key down programtically to indicate input
+    // document.getElementsByTagName("body")[0]?.classList.add("key-pressed");
+    // setTimeout(() => {
+    //   document.getElementById("player-container")?.classList.remove("key-pressed");
+    // }, 100);
+    if (e.key === 'right' || e.key === 'ArrowRight') {
+      if(arrowFrameMode){
         ref?.current?.seekTo(played + (1 / 30), 'seconds');
-      } else if (e.key === '<') {
-        // seek backward one frame assuming 30fps
-        ref?.current?.seekTo(played - (1 / 30), 'seconds');
+      } else {
+        seekVideo(formatTime(played + 1, duration));
       }
+    } else if (e.key === 'left' || e.key === 'ArrowLeft') {
+      if(arrowFrameMode){
+        ref?.current?.seekTo(played - (1 / 30), 'seconds');
+      } else {
+        seekVideo(formatTime(played - 1, duration));
+      }
+    } else if (e.key === ' ' || e.key === 'Spacebar') {
+      // e.preventDefault();
+      // e.stopPropagation();
+      // setPlaying(!playing);
+      return;
+    } else if (e.key === '>') {
+      // seek forward one frame assuming 30fps
+      ref?.current?.seekTo(played + (1 / 30), 'seconds');
+    } else if (e.key === '<') {
+      // seek backward one frame assuming 30fps
+      ref?.current?.seekTo(played - (1 / 30), 'seconds');
+    }
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  /**
+   * Handles double-click on player container.
+   * Exits pseudo-fullscreen mode when user double-clicks the player.
+   * Prevents the double-click from interfering with native player controls.
+   *
+   * @param {React.MouseEvent<HTMLDivElement>} e - Mouse event from player container
+   * @returns {void}
+   */
+  function handlePlayerDoubleClick(e: React.MouseEvent<HTMLDivElement>) {
+    if (pseudoFullscreen) {
+      setPseudoFullscreen(false);
       e.preventDefault();
       e.stopPropagation();
     }
+  }
     
   return (
-    <div className="app">
+    <div className="app" style={{
+      ...(pseudoFullscreen && {
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100vh',
+        width: '100vw',
+        overflow: 'hidden',
+        margin: 0,
+        padding: 0,
+        position: 'fixed',
+        top: 0,
+        left: 0
+      })
+    }}>
 
     {/* EXPERIMENT: this conclusively proved that iframes are ignored by supermemo's input parser
     {
@@ -1095,7 +1173,7 @@ Description:\n${archiveInfo.description}
     </iframe>
     } */}
 
-    { archiveInfo ?
+    { !pseudoFullscreen && archiveInfo ?
       <div className="archive-info col" style={{
         paddingLeft: "0px",
         paddingBottom: "0px",
@@ -1111,13 +1189,26 @@ Description:\n${archiveInfo.description}
         </div>
       </div>
       :
-      <div className='row' 
+      !pseudoFullscreen &&
+    <div className='row' 
       style={{height: '35px'}}
       ><div className='col' style={{marginTop: '5px'}}>Loading metadata...</div></div>
     }
     { (url != "" && isMpdLoaded) ? 
-      <div tabIndex={0} onMouseEnter={() => handleMouseEnter()} onMouseLeave={() => handleMouseLeave()}
-        onKeyDown={(e) => handleKeyDown(e)}>
+      <div 
+        tabIndex={0} 
+        onMouseEnter={() => handleMouseEnter()} 
+        onMouseLeave={() => handleMouseLeave()}
+        onKeyDown={(e) => handleKeyDown(e)}
+        onDoubleClick={(e) => handlePlayerDoubleClick(e)}
+        style={{
+          flex: pseudoFullscreen ? 1 : 'initial',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          minHeight: pseudoFullscreen ? '100%' : 'auto'
+        }}
+      >
         <div>
           { (() => { console.log( "----- element re-rendered"); return null; })() }
         </div>
@@ -1153,8 +1244,9 @@ Description:\n${archiveInfo.description}
                 }
               }
           }}
-          width='100%'
-          minWidth={754}
+          width={pseudoFullscreen ? '100vw' : '100%'}
+          height={pseudoFullscreen ? '100vh' : 'auto'}
+          minWidth={pseudoFullscreen ? 0 : 754}
           // minHeight={424}
           url={url}
           pip={pip}
@@ -1183,45 +1275,47 @@ Description:\n${archiveInfo.description}
         <div>Loading stream...</div>
       </div>
       }
-      <ClipExtractor 
-      resume={resume} 
-      start={start} 
-      stop={stop}
-      boundaries={imposeBoundaries}
-      videoid = {videoid}
-      played={played}
-      duration={duration}
-      setAt={handleSetAt}
-      setAtAbs={handleSetAbs}
-      resetAt={handleResetAt}
-      goTo={handleGoTo}
-      offset={handleOffset}
-      setPlaying={setPlaying}
-      playing
-      repeat
-      handleToggleRepeat={handleToggleRepeat}
-      handleCopyVideoDetails={handleCopyVideoDetails}
-      isShortClip={isShortClip}
-      setHHMMSS={setHHMMSS}
-      options={options}
-      setOptions={setOptions}
-      />
-      {/* <ExtractBoard/> */}
-      {/* <Counter /> */}
-      {/* <Subtitles /> */}
-      {/* <ReactExtension /> */}
-      <ClipTool v_id={queryParameters.get("videoid")?.trim() ?? ""} info={archiveInfo} handleCopyVideoDetails={handleCopyVideoDetails} setResolution={setResolution} 
-      start={start} stop={stop}/>
-      { archiveInfo && <Archive v_id={queryParameters.get("videoid")?.trim() ?? ""} info={archiveInfo} setInfo={setArchiveInfo}/> }
-      { archiveInfo?.captions?.caption_tracks &&
-      archiveInfo.captions.caption_tracks.length > 0 ?
-        <CaptionsTracks
-          url={subtitleUrl}
-          tracks={archiveInfo.captions.caption_tracks}
-          seek={seekVideo}
+      <div style={{ display: pseudoFullscreen ? 'none' : 'block' }}>
+        <ClipExtractor 
+        resume={resume} 
+        start={start} 
+        stop={stop}
+        boundaries={imposeBoundaries}
+        videoid = {videoid}
+        played={played}
+        duration={duration}
+        setAt={handleSetAt}
+        setAtAbs={handleSetAbs}
+        resetAt={handleResetAt}
+        goTo={handleGoTo}
+        offset={handleOffset}
+        setPlaying={setPlaying}
+        playing
+        repeat
+        handleToggleRepeat={handleToggleRepeat}
+        handleCopyVideoDetails={handleCopyVideoDetails}
+        isShortClip={isShortClip}
+        setHHMMSS={setHHMMSS}
+        options={options}
+        setOptions={setOptions}
         />
-        : null
-      }
+        {/* <ExtractBoard/> */}
+        {/* <Counter /> */}
+        {/* <Subtitles /> */}
+        {/* <ReactExtension /> */}
+        <ClipTool v_id={queryParameters.get("videoid")?.trim() ?? ""} info={archiveInfo} handleCopyVideoDetails={handleCopyVideoDetails} setResolution={setResolution} 
+        start={start} stop={stop}/>
+        { archiveInfo && <Archive v_id={queryParameters.get("videoid")?.trim() ?? ""} info={archiveInfo} setInfo={setArchiveInfo}/> }
+        { archiveInfo?.captions?.caption_tracks &&
+        archiveInfo.captions.caption_tracks.length > 0 ?
+          <CaptionsTracks
+            url={subtitleUrl}
+            tracks={archiveInfo.captions.caption_tracks}
+            seek={seekVideo}
+          />
+          : null
+        }
+      </div>
     </div>
   );
 }

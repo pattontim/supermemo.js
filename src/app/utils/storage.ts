@@ -10,6 +10,11 @@ export enum StorageKey {
   /** Always autoplay shorts on start*/
   AUTO_PLAY_SHORTS_ALWAYS = 'AUTO_PLAY_SHORTS_ALWAYS',
 
+  /** Fake fullscreen on short clips */
+  FAKE_FULLSCREEN_SHORTS = 'FAKE_FULLSCREEN_SHORTS',
+
+  /** Use the arrow keys to move bk/fwd frames  */
+  ARROW_FRAME_MODE = 'ARROW_FRAME_MODE',
 }
 
 export function useLocalStorage<T>(key: string, initialValue: T, bufferTime: number = 1000) {

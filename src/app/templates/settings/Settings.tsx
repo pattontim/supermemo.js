@@ -18,6 +18,12 @@ function App() {
     const [playOutsideBounds, setPlayOutsideBounds] = useLocalStorage(StorageKey.AUTO_HOVER_OUTSIDE_CLIP_BOUNDS, true);
     const [pauseOutsideBounds, setPauseOutsideBounds] = useLocalStorage(StorageKey.AUTO_HOVER_OUTSIDE_CLIP_BOUNDS, false);
     
+    // Start shorts in fullscreen
+    const [startShortsInFullscreen, setStartShortsInFullscreen] = useLocalStorage(StorageKey.FAKE_FULLSCREEN_SHORTS, true); 
+
+    // Arrow Frame mode
+    const [arrowFrameMode, setArrowFrameMode] = useLocalStorage(StorageKey.ARROW_FRAME_MODE, false);
+
     const [playerIsActive, setPlayerIsActive] = useState(false);
     const [clipIsActive, setClipIsActive] = useState(false);
     const [keysIsActive, setKeysIsActive] = useState(true);
@@ -113,6 +119,31 @@ function App() {
                       onChange={(e) => setPauseOutsideBounds(e.target.checked)}
                     />
                     Pause any clip
+                  </label>
+                </div>
+                <div className="row">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={startShortsInFullscreen}
+                      onChange={(e) => setStartShortsInFullscreen(e.target.checked)}
+                    />
+                    Start shorts in fullscreen
+                  </label>
+                </div>
+              </div>
+
+              {/* CONTROLS */}
+              <div>
+                <div style={{ fontWeight: 'bold', marginBottom: '10px', fontSize: '14px', color: '#333' }}>Controls</div>
+                <div className="row">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={arrowFrameMode}
+                      onChange={(e) => setArrowFrameMode(e.target.checked)}
+                    />
+                    Use arrow keys to move back/forth frames
                   </label>
                 </div>
               </div>

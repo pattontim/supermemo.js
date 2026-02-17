@@ -246,9 +246,9 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
                 </div>
                 <div className="row">
                     <div className="col">
-                        <input type="checkbox" checked={repeat} id="repeat" className="checkbox" onChange={handleToggleRepeat} />
+                        <input type="checkbox" checked={repeat} id="repeat" className="checkbox" onChange={handleToggleRepeat} onClick={handleToggleRepeat} />
                         {/* <label htmlFor="repeat" id="repeat" title="Repeat (R)">&nbsp;</label> */}
-                        <img src="/iv/images/transparent.png" id="repeat" title="Repeat (R)" alt="Repeat (R)" className="imgBtn repeat" onClick={handleToggleRepeat} />
+                        <img src="/iv/images/transparent.png" id="repeatBtn" title="Repeat (R)" alt="Repeat (R)" className="imgBtn repeat" onClick={handleToggleRepeat} />
                     </div>
                     <div className="col">
                         <button type="button" id="test" onClick={() => goTo('start')}>Test</button>
