@@ -15,6 +15,9 @@ export enum StorageKey {
 
   /** Use the arrow keys to move bk/fwd frames  */
   ARROW_FRAME_MODE = 'ARROW_FRAME_MODE',
+
+  /** Cleanup captions on archive (remove formatting issues, multiline spam, IE11 incompatibilities) */
+  CLEANUP_CAPTIONS_ON_ARCHIVE = 'CLEANUP_CAPTIONS_ON_ARCHIVE',
 }
 
 export function useLocalStorage<T>(key: string, initialValue: T, bufferTime: number = 1000) {

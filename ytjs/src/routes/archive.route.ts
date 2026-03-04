@@ -15,6 +15,7 @@ import { Response } from "node-fetch";
 import { IE11_ITAG_PRESETS, IE11Quality, YtdlpService } from "../services/ytdlp.service";
 import { deepCopy } from "../utils/lib";
 import { FFmpegService } from "../services/ffmpeg.service";
+import { normalizeCaptions } from "../utils/caption-cleanup";
 
 const router = Router();
 
@@ -27,6 +28,7 @@ const router = Router();
  * @param fullUrl
  * @param v_id
  * @param renameExisting
+ * @param cleanupCaptions Whether to normalize caption content (remove formatting issues, IE11 incompatibilities)
  * @returns the caption tracks that were updated
  */
 
@@ -38,7 +40,8 @@ export async function patchCaptions(
 	serverUrl: string,
 	v_id: string,
 	infoJsonPath: string | undefined,
-	renameExisting: boolean
+	renameExisting: boolean,
+	cleanupCaptions: boolean = false
 ) {
 	if (!captionTracks || !captionStreams) {
 		console.warn("no caption tracks or streams found in patchCaptions");
@@ -71,20 +74,44 @@ export async function patchCaptions(
 				renameSync(captionFilePath, newCaptionFilePath);
 			}
 
-			const captionFile = createWriteStream(captionFilePath);
-			const nodeStream = Readable.fromWeb(captionStream);
+			if (cleanupCaptions) {
+				// Read stream content, apply normalization, then write
+				const chunks: Uint8Array[] = [];
+				const reader = captionStream.getReader();
 
-			await new Promise<void>((resolve, reject) => {
-				nodeStream.pipe(captionFile);
-				nodeStream.on("end", () => {
-					resolve();
-				});
-				nodeStream.on("error", (err: Error) => {
-					reject(err);
-				});
-			});
+				try {
+					while (true) {
+						const { done, value } = await reader.read();
+						if (done) break;
+						chunks.push(value);
+					}
+				} finally {
+					reader.releaseLock();
+				}
 
-			captionFile.close();
+				const buffers = chunks.map(chunk => Buffer.from(chunk));
+				const buffer = Buffer.concat(buffers as any);
+				const vttContent = buffer.toString('utf-8');
+				const normalizedContent = normalizeCaptions(vttContent);
+
+				writeFileSync(captionFilePath, normalizedContent, 'utf-8');
+			} else {
+				// Original behavior: pipe stream directly to file
+				const captionFile = createWriteStream(captionFilePath);
+				const nodeStream = Readable.fromWeb(captionStream);
+
+				await new Promise<void>((resolve, reject) => {
+					nodeStream.pipe(captionFile);
+					nodeStream.on("end", () => {
+						resolve();
+					});
+					nodeStream.on("error", (err: Error) => {
+						reject(err);
+					});
+				});
+
+				captionFile.close();
+			}
 
 			const preFix = "http://" + serverUrl + "/fixvtt/";
 			const fsUrl = `http://${serverUrl}/archive/${v_id}/captions/${captionFileName}`;
@@ -181,10 +208,11 @@ router.get("/archive/:v_id", async (req, res) => {
 	const shouldArchiveVideo = req.query.video === 'true';
 	const shouldArchiveCaptions = req.query.captions === 'true';
 	const shouldOverwrite = req.query.overwrite === 'true';
+	const cleanupCaptions = req.query.cleanup === 'true';
 	const shouldArchive = shouldArchiveVideo || shouldArchiveCaptions;
 	const downloadStrategy = (req.query.strategy as string) || "standard"; // 'standard' or 'ytdlp'
 
-	console.log(`archive request for ${v_id} (video: ${shouldArchiveVideo}, captions: ${shouldArchiveCaptions}, overwrite: ${shouldOverwrite})`);
+	console.log(`archive request for ${v_id} (video: ${shouldArchiveVideo}, captions: ${shouldArchiveCaptions}, overwrite: ${shouldOverwrite}, cleanup: ${cleanupCaptions})`);
 
 	// Return existing format if just querying and video exists
 	if (shouldArchive === false && archive[v_id]?.file_formats) {
@@ -350,7 +378,9 @@ router.get("/archive/:v_id", async (req, res) => {
 					newInfo.file_formats = fileFormats;
 					videoDownloadSuccess = true;
 					console.log(`[Video] standard download completed successfully`);
-				} catch {
+				} catch(e) {
+					console.log(`[Video] standard download failed`, e);
+
 					const fFmpegService = new FFmpegService();
 					console.log(`[Video] standard download failed, attempting ffmpeg fallback`);
 					const tempAudioPath = path.join(archiveEntryDir, `temp-audio-${Date.now()}.mp4`);
@@ -518,7 +548,8 @@ router.get("/archive/:v_id", async (req, res) => {
 						fullUrl,
 						v_id,
 						undefined,
-						shouldOverwrite
+						shouldOverwrite,
+						cleanupCaptions
 					);
 
 					if (updatedCaptionTracks.length > 0) {

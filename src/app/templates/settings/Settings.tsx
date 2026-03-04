@@ -24,6 +24,9 @@ function App() {
     // Arrow Frame mode
     const [arrowFrameMode, setArrowFrameMode] = useLocalStorage(StorageKey.ARROW_FRAME_MODE, false);
 
+    // Archive/Download settings
+    const [cleanupCaptionsOnArchive, setCleanupCaptionsOnArchive] = useLocalStorage(StorageKey.CLEANUP_CAPTIONS_ON_ARCHIVE, false);
+
     const [playerIsActive, setPlayerIsActive] = useState(false);
     const [clipIsActive, setClipIsActive] = useState(false);
     const [keysIsActive, setKeysIsActive] = useState(true);
@@ -153,12 +156,25 @@ function App() {
         <div className="divider"></div>
         <div className="accordion-item">
           <div className="accordion-title" onClick={() => setClipIsActive(!clipIsActive)}>
-            <div>Clip [{clipIsActive ? '−' : '+'}]</div>
+            <div>Archive/Download [{clipIsActive ? '−' : '+'}]</div>
           </div>
           {clipIsActive &&
             <div className="accordion-content">
-              <div className="row">
-                <div>Clip settings coming soon...</div>
+              <div style={{ marginBottom: '20px', paddingBottom: '16px', borderBottom: '2px solid #ddd' }}>
+                <div style={{ fontWeight: 'bold', marginBottom: '10px', fontSize: '14px', color: '#333' }}>Caption Settings</div>
+                <div className="row">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={cleanupCaptionsOnArchive}
+                      onChange={(e) => setCleanupCaptionsOnArchive(e.target.checked)}
+                    />
+                    Cleanup captions on archive
+                  </label>
+                </div>
+                <div style={{ fontSize: '12px', color: '#666', marginTop: '8px', marginLeft: '24px' }}>
+                  Removes formatting issues, multiline spam, and IE11 incompatibilities. Normalizes HTML entities like &amp;nbsp; and invisible characters.
+                </div>
               </div>
             </div>
           }

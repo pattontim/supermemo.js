@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ArchiveInfo } from '../../../../ytjs/src/utils/archive';
 import { ytjsHost } from '../../utils/client';
+import { StorageKey, useLocalStorage } from '../../utils/storage';
 
 interface ArchiveProps<T> {
     // TODO
@@ -25,6 +26,9 @@ export default function Archive<T extends unknown> ({ v_id, info, setInfo: setAr
     const [archiveId, setArchiveId] = useState(v_id);
     // const [availableFormats, setAvailableFormats] = useState< ArchiveInfo["file_formats"] >({});
     const [selectedFormat, setSelectedFormat] = useState<keyof ArchiveInfo["file_formats"] | undefined>(undefined);
+    // const [autoHoverLongClips, setAutoHoverLongClips] = useLocalStorage(StorageKey.AUTO_HOVER_LONG_CLIPS, false);
+    const [cleanupCaptionsOnArchive, setCleanupCaptionsOnArchive] = useLocalStorage(StorageKey.CLEANUP_CAPTIONS_ON_ARCHIVE, false);
+    
 
     function handleClick() {
        setIsActive(!isActive)
@@ -36,6 +40,8 @@ export default function Archive<T extends unknown> ({ v_id, info, setInfo: setAr
             return;
         }
 
+        
+
         // TODO plug in to request
         const archiveReq = new XMLHttpRequest();
 
@@ -45,6 +51,7 @@ export default function Archive<T extends unknown> ({ v_id, info, setInfo: setAr
         archiveUrl.searchParams.append("video", `${video}`);
         archiveUrl.searchParams.append("captions", `${captions}`);
         overwrite && archiveUrl.searchParams.append("overwrite", "true");
+        cleanupCaptionsOnArchive && archiveUrl.searchParams.append("cleanup", "true");
         archiveReq.open('GET', archiveUrl.toString());
         // archiveReq.open('GET', "http://" + ytjsHost + "/archive/" + archiveId + "?quality=" + (quality ?? "best"));
         archiveReq.responseType = 'json';
