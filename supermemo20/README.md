@@ -8,7 +8,8 @@ YouTube [WebView is new in SM20]
 
 sm_commands.js - The extracted commands and new structures
 
-C:.
+```
+C:/SuperMemo/
 |   sm20.exe
 |   sm20unin.exe
 |
@@ -164,3 +165,4 @@ C:.
 |
 \---translat
         Trimmed.tra
+```
