@@ -1,0 +1,500 @@
+<!DOCTYPE HTML>
+<html>
+  <!-- Copywrite SuperMemo
+   Fetched from: <TBD>
+   On: TBD -->
+<head>
+    <meta charset="utf-8">
+    <meta content="IE=edge" http-equiv="X-UA-Compatible">
+    <title>SuperMemo YouTube Player</title>
+    <style type="text/css">
+        body,
+        div,
+        h4,
+        p,
+        input,
+        select {
+            margin: 0;
+            padding: 0;
+            font-family: sans-serif;
+        }
+
+        #feedbackOuter {
+            margin: 5px;
+            display: none;
+            width: 415px;
+            text-align: center;
+            border: 1px solid #F5E082;
+            background-color: #FFFFE5;
+            padding: 10px;
+        }
+
+        h4 {
+            color: #c00;
+            margin-bottom: 5px;
+        }
+
+        fieldset {
+            padding: 5px;
+            border: none;
+            display: block;
+        }
+
+        .ctrlGrp {
+            border-bottom: 1px solid #808080;
+            float: left;
+            margin-right: 10px;
+            padding: 5px;
+        }
+
+        .ctrlSubgrp {
+            float: left;
+        }
+
+        .repeat {
+            width: 1.5em;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        button,
+        input {
+            width: 5em;
+            padding: 2px;
+        }
+
+        #resumevideoat,
+        #startvideoat,
+        #stopvideoat {
+            width: 6em !important;
+            font-family: ''Courier New'', monospace;
+            font-size: 12px;
+            text-align: center;
+        }
+
+        #extractName {
+            width: 15em;
+        }
+
+        .imgBtn {
+            cursor: pointer;
+            vertical-align: middle;
+            width: 16px;
+            height: 16px;
+            display: inline-block;
+            background: #eee;
+            border: 1px solid #ccc;
+            text-align: center;
+            line-height: 16px;
+            font-size: 10px;
+        }
+
+        .videoWrapper {
+            position: relative;
+            padding-bottom: 56.25%;
+            /* 16:9 */
+            height: 0;
+            background: #000;
+        }
+
+        .videoWrapper iframe {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        #customPrompt {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #fff;
+            border: 2px solid #333;
+            padding: 20px;
+            z-index: 1000;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+        }
+
+        #modalOverlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.3);
+            z-index: 999;
+        }
+    </style>
+</head>
+
+<body class="yui-skin-sam">
+    <div id="modalOverlay"></div>
+    <div id="customPrompt">
+        <h3 style="margin-top:0">Save As</h3>
+        <form name="promptForm" id="promptForm" onsubmit="return false;">
+            <label for="extractName">Extract name: </label><br>
+            <input type="text" name="extractName" id="extractName" style="margin: 10px 0" />
+            <div style="text-align: right">
+                <button type="button" onclick="confirmExtract()">OK</button>
+                <button type="button" onclick="hidePrompt()">Cancel</button>
+            </div>
+        </form>
+    </div>
+    <div id="feedbackOuter">
+        <div id="feedbackInner"></div>
+    </div>
+    <div class="videoWrapper">
+        <div id="player"></div>
+    </div>
+    <input type="hidden" value="" id="videoid" />
+    <input type="hidden" value="1" id="imposeboundries" />
+    <fieldset>
+        <div class="ctrlGrp">
+            <p>
+                <button type="button" onclick="setAt('resume');">Mark</button>
+                <span class="imgBtn" onclick="move('resume', 'rewind', event)">«</span>
+                <input type="text" value="0:00:00" id="resumevideoat" oninput="sendDataToDelphi()" onchange="sendDataToDelphi()" />
+                <span class="imgBtn" onclick="move('resume', 'forward', event)">»</span>
+                <span class="imgBtn" title="Reset" onclick="resetAt('resume')">↺</span>
+                <button type="button" onclick="resumeVideo();">Resume</button>
+            </p>
+        </div>
+        <div class="ctrlGrp">
+            <p>
+                <button type="button" onclick="setAt('start');">Start</button>
+                <span class="imgBtn" onclick="move('start', 'rewind', event)">«</span>
+                <input type="text" value="0:00:00" id="startvideoat" oninput="sendDataToDelphi()" onchange="sendDataToDelphi()" />
+                <span class="imgBtn" onclick="move('start', 'forward', event)">»</span>
+                <span class="imgBtn" title="Go to Start" onclick="goTo('start')">⇥</span>
+                <span class="imgBtn" title="Reset" onclick="resetAt('start')">↺</span>
+            </p>
+            <p style="margin-top:5px">
+                <button type="button" onclick="setAt('stop');">Stop</button>
+                <span class="imgBtn" onclick="move('stop', 'rewind', event)">«</span>
+                <input type="text" value="0:00:00" id="stopvideoat" oninput="sendDataToDelphi()" onchange="sendDataToDelphi()" />
+                <span class="imgBtn" onclick="move('stop', 'forward', event)">»</span>
+                <span class="imgBtn" title="Go to Stop" onclick="goTo('stop')">⇥</span>
+                <span class="imgBtn" title="Reset" onclick="resetAt('stop')">↺</span>
+            </p>
+        </div>
+        <div class="ctrlGrp repeat">
+            <label><input type="checkbox" checked id="repeat" title="Repeat (R)"> R</label>
+        </div>
+        <div class="ctrlGrp">
+            <button type="button" onclick="testExtract();" style="display:block; margin-bottom:5px">Test</button>
+            <button type="button" onclick="resetExtract();">Reset</button>
+        </div>
+        <div class="ctrlGrp">
+            <button type="button" onclick="showPrompt();" style="margin-bottom:5px">Extract</button>
+            <select id="extracts" onchange="feedCurrentExtract();"></select>
+            <span class="imgBtn" title="Remove Extract" onclick="removeCurrentExtract()">🗑</span>
+        </div>
+    </fieldset>
+    <script type="text/javascript">
+        var ytplayer;
+        var iSBackward = 2, iSForward = 7, iSecs = 1;
+
+        function sendDataToDelphi() {
+            var startVal = document.getElementById('startvideoat').value;
+            var stopVal = document.getElementById('stopvideoat').value;
+            if (convertHHMMSS2Duration(startVal) > convertHHMMSS2Duration(stopVal)) {
+                if (ytplayer && typeof ytplayer.getDuration === 'function') {
+                    document.getElementById('stopvideoat').value = convertDuration2HHMMSS(ytplayer.getDuration());
+                }
+            }
+
+            if (window.chrome && window.chrome.webview) {
+                var sel = document.getElementById('extracts');
+                var extractsList = [];
+                for (var i = 0; i < sel.options.length; i++) {
+                    extractsList.push({
+                        name: sel.options[i].text,
+                        value: sel.options[i].value
+                    });
+                }
+                window.chrome.webview.postMessage({ 
+                    type: 'youtubeData',
+                    videoId: document.getElementById('videoid').value,
+                    resume: document.getElementById('resumevideoat').value,
+                    start: document.getElementById('startvideoat').value,
+                    stop: document.getElementById('stopvideoat').value,
+                    extracts: extractsList
+                });
+            }
+        }
+
+        var params = new URLSearchParams(window.location.search);
+        var oUrlQuery = {
+            videoid: params.get('videoid') || '',
+            resume: params.get('resume') || '0:00:00',
+            start: params.get('start') || '0:00:00',
+            stop: params.get('stop') || '0:00:00',
+            ts: params.get('ts') || ''
+        };
+        document.getElementById("videoid").value = oUrlQuery.videoid;
+        document.getElementById("resumevideoat").value = oUrlQuery.resume;
+        document.getElementById("startvideoat").value = oUrlQuery.start;
+        document.getElementById("stopvideoat").value = oUrlQuery.stop;
+        var tag = document.createElement('script');
+        tag.src = "https://www.youtube.com/iframe_api";
+        var firstScriptTag = document.getElementsByTagName('script')[0];
+        firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+        function onYouTubeIframeAPIReady() {
+            ytplayer = new YT.Player('player', {
+                height: '390',
+                width: '640',
+                videoId: oUrlQuery.videoid,
+                events: {
+                    'onReady': onPlayerReady,
+                    'onStateChange': onPlayerStateChange,
+                    'onError': onPlayerError
+                }
+            });
+        }
+        function onPlayerReady(event) {
+            var iStopAt = convertHHMMSS2Duration(document.getElementById("stopvideoat").value);
+            if (iStopAt === 0 && ytplayer) {
+                var duration = ytplayer.getDuration();
+                if (duration > 0) {
+                    document.getElementById("stopvideoat").value = convertDuration2HHMMSS(duration);
+                }
+            }
+            if (document.getElementById("imposeboundries").value == "1") {
+                ytplayer.playVideo();
+                playVideo("start");
+            } else {
+                ytplayer.playVideo();
+                playVideo("resume");
+            }
+            setInterval(stopVideo, 250);
+            sendDataToDelphi();
+        }
+        function playVideo(from) {
+            if (ytplayer && ytplayer.seekTo) {
+                ytplayer.seekTo(convertHHMMSS2Duration(document.getElementById(from + "videoat").value), true);
+            }
+        }
+        function resumeVideo() {
+            if (ytplayer) {
+                ytplayer.playVideo();
+                playVideo('resume');
+            }
+        }
+        function stopVideo() {
+            if (!ytplayer || !ytplayer.getCurrentTime) return;
+            var fCurrentTime = ytplayer.getCurrentTime();
+            var iDuration = ytplayer.getDuration();
+            var iStopAt = convertHHMMSS2Duration(document.getElementById("stopvideoat").value);
+            var iStartAt = convertHHMMSS2Duration(document.getElementById("startvideoat").value);
+            var bRepeat = document.getElementById("repeat").checked;
+            if (fCurrentTime >= iStopAt && document.getElementById("imposeboundries").value == "1") {
+                if (bRepeat) {
+                    playVideo("start");
+                } else {
+                    ytplayer.pauseVideo();
+                }
+            }
+            if (iDuration > 0 && (iDuration - fCurrentTime) < 0.5) {
+                if (bRepeat) playVideo("start");
+                else ytplayer.pauseVideo();
+            }
+        }
+        function onPlayerStateChange(event) {
+            if (event.data == YT.PlayerState.PLAYING) {
+                var iStopAt = convertHHMMSS2Duration(document.getElementById("stopvideoat").value);
+                if (iStopAt === 0 && ytplayer) {
+                    var duration = ytplayer.getDuration();
+                    if (duration > 0) {
+                        document.getElementById("stopvideoat").value = convertDuration2HHMMSS(duration);
+                        sendDataToDelphi();
+                    }
+                }
+            }
+        }
+        function onPlayerError(event) {
+            document.getElementById("feedbackInner").innerHTML = "<h4>Error " + event.data + "</h4><p>Could not load video.</p>";
+            document.getElementById("feedbackOuter").style.display = "block";
+        }
+        function setAt(type) {
+            if (ytplayer) {
+                var time = Math.floor(ytplayer.getCurrentTime());
+                document.getElementById(type + "videoat").value = convertDuration2HHMMSS(time);
+                console.log("Setting " + type + " to " + time);
+                sendDataToDelphi();
+            }
+        }
+        function move(type, dir, event) {
+            var el = document.getElementById(type + "videoat");
+            var time = convertHHMMSS2Duration(el.value);
+            var step = event.ctrlKey ? (dir === 'rewind' ? iSBackward : iSForward) : iSecs;
+            time = (dir === 'rewind') ? Math.max(0, time - step) : time + step;
+            el.value = convertDuration2HHMMSS(time);
+            sendDataToDelphi();
+        }
+        function resetAt(type) {
+            if (type === 'stop' && ytplayer) {
+                document.getElementById(type + "videoat").value = convertDuration2HHMMSS(ytplayer.getDuration());
+            } else {
+                document.getElementById(type + "videoat").value = "0:00:00";
+            }
+            sendDataToDelphi();
+        }
+        function goTo(type) {
+            if (ytplayer) {
+                ytplayer.playVideo();
+                playVideo(type);
+                document.getElementById("imposeboundries").value = "0";
+            }
+        }
+        function testExtract() {
+            if (ytplayer) {
+                ytplayer.playVideo();
+                document.getElementById("imposeboundries").value = "1";
+                playVideo("start");
+            }
+        }
+        function resetExtract() {
+            document.getElementById("imposeboundries").value = "0";
+            resetAt("start");
+            resetAt("stop");
+            sendDataToDelphi();
+        }
+        function showPrompt() {
+            document.getElementById('modalOverlay').style.display = 'block';
+            document.getElementById('customPrompt').style.display = 'block';
+            document.getElementById('extractName').value = "Extract #" + (document.getElementById('extracts').options.length + 1);
+            document.getElementById('extractName').focus();
+        }
+        function hidePrompt() {
+            document.getElementById('modalOverlay').style.display = 'none';
+            document.getElementById('customPrompt').style.display = 'none';
+        }
+        function confirmExtract() {
+            var name = document.getElementById('extractName').value;
+            var startEl = document.getElementById('startvideoat');
+            var stopEl = document.getElementById('stopvideoat');
+            var val = startEl.value + " - " + stopEl.value;
+            var sel = document.getElementById('extracts');
+            sel.options[sel.options.length] = new Option(name, val);
+            sel.selectedIndex = sel.options.length - 1;
+            
+            // Start should get the value of Stop, while Stop should reset
+            startEl.value = stopEl.value;
+            hidePrompt();
+            resetAt('stop');
+        }
+        function removeCurrentExtract() {
+            var sel = document.getElementById('extracts');
+            if (sel.selectedIndex >= 0) {
+                sel.remove(sel.selectedIndex);
+                sendDataToDelphi();
+            }
+        }
+        function feedCurrentExtract() {
+            var sel = document.getElementById('extracts');
+            if (sel.selectedIndex < 0) return;
+            var val = sel.value.split(" - ");
+            document.getElementById('startvideoat').value = val[0];
+            document.getElementById('stopvideoat').value = val[1];
+            testExtract();
+        }
+        function convertDuration2HHMMSS(seconds) {
+            var h = Math.floor(seconds / 3600);
+            var m = Math.floor((seconds % 3600) / 60);
+            var s = seconds % 60;
+            return (h > 0 ? h + ":" : "") + (m < 10 && h > 0 ? "0" + m : m) + ":" + (s < 10 ? "0" + s : s);
+        }
+        function convertHHMMSS2Duration(time) {
+            var parts = time.split(":").map(Number);
+            if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+            if (parts.length === 2) return parts[0] * 60 + parts[1];
+            return parts[0] || 0;
+        }
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'r' || e.key === 'R') {
+                var tag = document.activeElement.tagName;
+                if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+                document.getElementById('repeat').checked = !document.getElementById('repeat').checked;
+            }
+            if (e.key === 'Escape') {
+                if (document.getElementById('customPrompt').style.display === 'block') {
+                    hidePrompt();
+                    e.preventDefault();
+                }
+            }
+        });
+
+        document.addEventListener('focusin', function (e) {
+            var isInput = (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA');
+            if (window.chrome && window.chrome.webview) {
+                window.chrome.webview.postMessage({ type: 'focusInfo', isInput: isInput });
+            }
+        });
+
+        document.addEventListener('focusout', function (e) {
+            if (window.chrome && window.chrome.webview) {
+                window.chrome.webview.postMessage({ type: 'focusInfo', isInput: false });
+            }
+        });
+
+        function handleEsc() {
+            if (document.getElementById('customPrompt').style.display === 'block') {
+                hidePrompt();
+            } else {
+                window.chrome.webview.postMessage({ type: 'command', command: 'ESCAPE' });
+            }
+        }
+
+        function handleJump(delta) {
+            if (!ytplayer || !ytplayer.getCurrentTime) return;
+            var tag = document.activeElement.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+            ytplayer.seekTo(Math.max(0, ytplayer.getCurrentTime() + delta), true);
+        }
+
+        function handlePlayPause() {
+            if (!ytplayer || !ytplayer.getPlayerState) return;
+            var tag = document.activeElement.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+            var state = ytplayer.getPlayerState();
+            if (state === YT.PlayerState.PLAYING) {
+                ytplayer.pauseVideo();
+            } else {
+                ytplayer.playVideo();
+            }
+        }
+
+        function handleFocusCycle() {
+            var playerIframe = document.querySelector('.videoWrapper iframe');
+            if (document.activeElement === playerIframe) {
+                // Focus is in YouTube, move to SuperMemo
+                window.chrome.webview.postMessage({ type: 'command', command: 'FOCUS_SUPERMEMO' });
+            } else {
+                // Focus is in Control Panel, move to YouTube
+                focusYouTube();
+            }
+        }
+
+        function focusYouTube() {
+            var playerIframe = document.querySelector('.videoWrapper iframe');
+            if (playerIframe) {
+                playerIframe.focus();
+            }
+        }
+
+        function focusControlPanel() {
+            // Focus the first button in the control panel
+            var firstBtn = document.querySelector('fieldset button');
+            if (firstBtn) {
+                firstBtn.focus();
+            }
+        }
+    </script>
+</body>
+
+</html>

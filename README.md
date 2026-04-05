@@ -16,6 +16,8 @@ SuperMemo extract extension engine. Allows user to load different types of React
 
 ![Screenshot](main-screen.png)
 
+### PDF (coming soon, new in SM20)
+
 ## Foreword
 
 I now consider this a beta and usable, it won't overwrite your cards under expected operation. However, I recommend that you [backup your collection](https://www.supermemo.wiki/en/supermemo/backup-guide) before starting to use this extension.
@@ -24,32 +26,60 @@ I now consider this a beta and usable, it won't overwrite your cards under expec
 
 ### Dependencies
 
-* SuperMemo 18
+* SuperMemo 18 or 20 (18 is recommended)
 * Windows 
-* NodeJS (install CLI tools if you don't have it already)
-* npm
+* NodeJS (install CLI tools via scoop if you don't have it already)
+* pnpm
 
-### Quick start
+### Quick start [SM18 only]
 
 * backup YouTube.htm in your install SuperMemo/bin folder (Usually C:/SuperMemo/bin)
 
-* copy YouTube.htm from this folder over C:/SuperMemo/bin/YouTube.htm, overwriting it
+* copy YouTube.htm from the supermemo.js root folder over top of C:/SuperMemo/bin/YouTube.htm, overwriting it
 
-* run `npm install` in supermemo.js root folder
+* run `pnpm install` in supermemo.js root folder
 
 * cd to ytjs folder: `cd ytjs`
 
-* run `npm install` again to install deps for the ytjs server
+* run `pnpm install` again to install deps for the ytjs server
 
 * cd to root folder: `cd ..`
 
-* run `npm run build` to build the react app that SuperMemo will load
+* Edit the file supermemo.js/ytjs/src/server.js and change
 
-* run `npm run ytjs` to start the video server
+    > export const fullUrlForClient = "10.0.2.2" + ":" + port;
+
+    To
+
+    > export const fullUrlForClient = "localhost" + ":" + port;
+
+    AND
+
+    supermemo.js/src/app/utils/client.ts
+
+    > export const ytjsHost = '10.0.2.2:3000'
+
+    TO
+
+    > export const ytjsHost = 'localhost:3000'
+
+* run `pnpm run build` to build the react app that SuperMemo will load
+
+* run `pnpm run ytjs` to start the video server
 
 * import a YT video in supermemo using CTRL+N
 
-* from now on you will need to run `npm run ytjs` whenever you want to load videos in SM. Restore the backup you made to go back to regular behaviour. 
+* from now on you will need to run `pnpm run ytjs` whenever you want to load videos in SM. Restore the backup you made to go back to regular behaviour. 
+
+### Quick start [SM20 only]
+
+SM20 is currently not supported until I take a deeper look (extracts are not created).
+
+~~* backup the Youtube folder in your SuperMemo/bin folder (Usually C:/SuperMemo/bin)~~
+
+~~* copy Youtube.htm from the supermemo.js root folder over top of C:/SuperMemo/bin/Youtube/WebBrowser.htm, overwriting it~~
+
+~~* Continue the SM18 steps above from  'run pnpm install in supermemo.js root folder' and onward~~
 
 
 ## Building the react app
@@ -74,6 +104,10 @@ Videos are stored in <SUPERMEMO_JS_FOLDER>/dist/archive. You can delete folders 
 
 ## Help
 
+### No command named pnpm or nodejs
+
+Install nodejs and pnpm. On windows use 'scoop install nodejs' and 'scoop install pnpm'. On linux install these using your package manager.
+
 ### Videos won't load
 
 YouTube is currently experimenting with their API and so videos intermittently might not load. First follow the update instructions to see if a fix is available. If you are having still having trouble, please open an issue. Alternatively, you can scan the FreeTube and NewPipe projects issue pages. These usually indicate when a fix is coming first.
@@ -94,7 +128,7 @@ There was a bug in the code that caused ONLY the auto caption to be saved if bot
 
 3. Ensure you are on a stable internet connection with full battery and will not put your computer to sleep for tle next hour.
 
-4. Open a browser and navigate to http://localhost:3000/v1fix/ . Wait until you see 'done' in the browser and in the console you see the console text 'done updating archive to version 2'. Do not use your collection during this time. Do not refresh the page. Make sure you close the browser tab after you see done message.
+4. DO NOT CONTINUE IF YOU DON'T KNOW WHAT THIS MEANS. Open a browser and navigate to http://localhost:3000/v1fix/ . Wait until you see 'done' in the browser and in the console you see the console text 'done updating archive to version 2'. Do not use your collection during this time. Do not refresh the page. Make sure you close the browser tab after you see done message.
 
 ### Backup your collection and archive
 
@@ -106,19 +140,17 @@ Backup your supermemo collection via the regular process. Archived videos are st
 
 1. Run `git pull` in the root folder
 
-2. run `npm install` in supermemo.js root folder
+2. run `pnpm install` in supermemo.js root folder
 
 3. cd to ytjs folder: `cd ytjs`
 
-4. run `npm install` again to install deps for the ytjs server
+4. run `pnpm install` again to install deps for the ytjs server
 
 5. cd to root folder: `cd ..`
 
-6. run `npm run build` to build the react app that SuperMemo will load
+6. run `pnpm run build` to build the react app that SuperMemo will load
 
-7. delete all of the files in the ./cache folder to clear the innertube cache
-
-8. run `npm run ytjs` to start the video server
+7. run `pnpm run ytjs` to start the video server
 
 ### One of my extract timestamps wiped!?
 
@@ -196,6 +228,8 @@ See LICENSE
 ## Acknowledgments
 
 * [SuperMemo yt.htm](https://www.super-memory.com/)
+
+* SuperMemo for the supermemo18 and supermemo20 scripts
 
 ## The coffee pledge
 

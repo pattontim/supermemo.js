@@ -1,0 +1,1202 @@
+<!DOCTYPE html>
+<html lang="en">
+  <!-- Copywrite SuperMemo
+   Fetched from: <TBD>
+   On: TBD -->
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SuperMemo PDF Reader</title>
+
+  <!-- PDF.js from CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap');
+
+    :root {
+      --ink: #1a1410;
+      --paper: #f5f0e8;
+      --paper2: #ede8dc;
+      --amber: #c8820a;
+      --amber-lt: #f0c060;
+      --extract: rgba(0, 150, 200, 0.25);
+      --highlight: rgba(255, 235, 59, 0.45);
+      --bookmark: #edb400;
+      --sidebar-w: 280px;
+      --toolbar-h: 48px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Lora', Georgia, serif;
+      background: var(--paper2);
+      color: var(--ink);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      user-select: none;
+      /* Prevent accidentally selecting UI elements */
+    }
+
+    /* Selection Color */
+    ::selection {
+      background: var(--highlight);
+      color: inherit;
+    }
+
+    .textLayer span::selection {
+      background: var(--highlight);
+      color: transparent;
+    }
+
+    /* ── TOOLBAR ── */
+    #toolbar {
+      height: var(--toolbar-h);
+      background: var(--ink);
+      color: var(--paper);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 12px;
+      flex-shrink: 0;
+      border-bottom: 2px solid var(--amber);
+      z-index: 100;
+    }
+
+    #toolbar .logo {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      color: var(--amber-lt);
+      margin-right: 8px;
+      white-space: nowrap;
+    }
+
+    #toolbar .sep {
+      width: 1px;
+      height: 24px;
+      background: #444;
+      margin: 0 4px;
+    }
+
+    #toolbar button {
+      background: transparent;
+      border: 1px solid #555;
+      color: var(--paper);
+      border-radius: 4px;
+      padding: 4px 10px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      cursor: pointer;
+      transition: background .15s, border-color .15s;
+      white-space: nowrap;
+    }
+
+    #toolbar button:hover {
+      background: #333;
+      border-color: var(--amber);
+    }
+
+    #toolbar button.primary {
+      background: var(--amber);
+      border-color: var(--amber);
+      color: var(--ink);
+      font-weight: 500;
+    }
+
+    #toolbar button.primary:hover {
+      background: var(--amber-lt);
+    }
+
+    #toolbar input[type=number] {
+      width: 48px;
+      background: #2a2a2a;
+      border: 1px solid #555;
+      color: var(--paper);
+      border-radius: 4px;
+      padding: 3px 6px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      text-align: center;
+    }
+
+    #page-info {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: #aaa;
+      white-space: nowrap;
+    }
+
+    #progress-wrap {
+      flex: 1;
+      height: 6px;
+      background: #333;
+      border-radius: 3px;
+      overflow: hidden;
+      min-width: 60px;
+      max-width: 200px;
+    }
+
+    #progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, var(--amber), var(--amber-lt));
+      width: 0%;
+      transition: width .4s;
+    }
+
+    #pct-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      color: #888;
+      white-space: nowrap;
+    }
+
+    /* ── BODY LAYOUT ── */
+    #body {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* ── SIDEBAR ── */
+    #sidebar {
+      width: var(--sidebar-w);
+      background: var(--paper);
+      border-right: 1px solid #d0c8b8;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+
+    #sidebar-header {
+      padding: 10px 12px 8px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      color: #888;
+      border-bottom: 1px solid #ddd;
+      text-transform: uppercase;
+    }
+
+    #extracts-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+
+    .extract-item {
+      background: var(--paper2);
+      border: 1px solid #ddd;
+      border-left: 3px solid #0096c8;
+      border-radius: 4px;
+      padding: 8px 10px;
+      margin-bottom: 6px;
+      cursor: pointer;
+      transition: border-color .15s, background .15s;
+    }
+
+    .extract-item:hover {
+      background: #ede6d6;
+      border-color: var(--amber);
+    }
+
+    .extract-item .ex-page {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px;
+      color: var(--amber);
+      margin-bottom: 3px;
+    }
+
+    .extract-item .ex-text {
+      font-size: 11px;
+      color: var(--ink);
+      line-height: 1.4;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    #sidebar-footer {
+      padding: 10px 12px;
+      border-top: 1px solid #ddd;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      color: #aaa;
+    }
+
+    /* ── PDF CANVAS AREA ── */
+    #viewer-wrap {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: auto;
+      background: #888;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      position: relative;
+    }
+
+    .page-container {
+      position: relative;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+      background: white;
+      display: block;
+    }
+
+    .page-container canvas {
+      display: block;
+    }
+
+    /* Text layer for selection */
+    .textLayer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      opacity: 1;
+      line-height: 1;
+      pointer-events: all;
+      z-index: 10;
+    }
+
+    .textLayer span {
+      position: absolute;
+      white-space: pre;
+      cursor: text;
+      transform-origin: 0% 0%;
+      user-select: text !important;
+      -webkit-user-select: text !important;
+      color: transparent;
+      -webkit-text-fill-color: transparent;
+      line-height: 1.2;
+    }
+
+    .textLayer span::selection {
+      background: yellow !important;
+      color: black !important;
+      -webkit-text-fill-color: black !important;
+    }
+
+    /* Annotation overlay canvas */
+    .anno-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: none;
+    }
+
+    /* Bookmark flag */
+    .bookmark-flag {
+      position: absolute;
+      right: -2px;
+      width: 20px;
+      height: 28px;
+      background: var(--bookmark);
+      clip-path: polygon(0 0, 100% 0, 100% 80%, 50% 100%, 0 80%);
+      z-index: 20;
+      cursor: pointer;
+      transition: transform .15s;
+    }
+
+    .bookmark-flag:hover {
+      transform: scale(1.15);
+    }
+
+    .bookmark-flag .bf-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 7px;
+      color: var(--ink);
+      text-align: center;
+      padding-top: 4px;
+      line-height: 1;
+    }
+
+    /* ── FLOATING TOOLBAR (appears on selection) ── */
+    #float-toolbar {
+      position: fixed;
+      display: none;
+      background: var(--ink);
+      border: 1px solid var(--amber);
+      border-radius: 6px;
+      padding: 6px 8px;
+      gap: 6px;
+      align-items: center;
+      z-index: 9999;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+    }
+
+    #float-toolbar.visible {
+      display: flex;
+    }
+
+    #float-toolbar button {
+      background: transparent;
+      border: 1px solid #555;
+      color: var(--paper);
+      border-radius: 4px;
+      padding: 4px 10px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background .12s;
+    }
+
+    #float-toolbar button:hover {
+      background: #333;
+      border-color: var(--amber);
+    }
+
+    #float-toolbar button.ext-btn {
+      background: var(--amber);
+      border-color: var(--amber);
+      color: var(--ink);
+      font-weight: 500;
+    }
+
+    #float-toolbar button.ext-btn:hover {
+      background: var(--amber-lt);
+    }
+
+    /* ── TOAST ── */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: var(--ink);
+      color: var(--amber-lt);
+      border: 1px solid var(--amber);
+      border-radius: 6px;
+      padding: 10px 20px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      opacity: 0;
+      transition: opacity .3s, transform .3s;
+      pointer-events: none;
+      z-index: 9999;
+    }
+
+    #toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* ── LOADING ── */
+    #loading {
+      position: fixed;
+      inset: 0;
+      background: var(--paper2);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      gap: 16px;
+    }
+
+    #loading h2 {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      letter-spacing: 0.1em;
+      color: var(--amber);
+    }
+
+    #loading p {
+      font-size: 13px;
+      color: #888;
+    }
+
+    .spinner {
+      width: 36px;
+      height: 36px;
+      border: 3px solid #ddd;
+      border-top-color: var(--amber);
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    /* scrollbar */
+    #viewer-wrap::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    #viewer-wrap::-webkit-scrollbar-track {
+      background: #666;
+    }
+
+    #viewer-wrap::-webkit-scrollbar-thumb {
+      background: #999;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- Loading overlay -->
+  <div id="loading" contenteditable="false">
+    <div class="spinner"></div>
+    <h2>LOADING PDF</h2>
+    <p id="load-status">Initialising PDF.js…</p>
+  </div>
+
+  <!-- Toolbar -->
+  <div id="toolbar" contenteditable="false">
+    <span class="logo">SM·PDF</span>
+    <div class="sep"></div>
+    <button onclick="prevPage()">◀ Prev</button>
+    <input type="number" id="page-input" min="1" value="1" onchange="goToPage(parseInt(this.value))">
+    <span id="page-info">/ —</span>
+    <button onclick="nextPage()">Next ▶</button>
+    <div class="sep"></div>
+    <button onclick="zoomOut()">−</button>
+    <button onclick="zoomIn()">+</button>
+    <div class="sep"></div>
+    <div id="progress-wrap" title="Reading progress">
+      <div id="progress-bar"></div>
+    </div>
+    <span id="pct-label">0%</span>
+    <div class="sep"></div>
+    <button onclick="setBookmark()" title="Save reading position">🔖 Bookmark</button>
+    <button onclick="extractPicture()" title="Create a picture extract from the clipboard">📷 Extract Picture</button>
+    <button onclick="snipAndExtractPicture()" title="Launch Windows snipping and create a picture extract">✂ Snip & Extract</button>
+    <button class="primary" onclick="convertToHTML()" title="Convert full PDF to HTML for SuperMemo">⚡ → HTML</button>
+    <button onclick="markDone()" title="Mark PDF as finished and delete from SuperMemo">✓ Done</button>
+  </div>
+
+  <!-- Main body -->
+  <div id="body" contenteditable="false">
+    <!-- Sidebar: extracted items -->
+    <div id="sidebar">
+      <div id="sidebar-header">Extracts · <span id="extract-count">0</span></div>
+      <div id="extracts-list"></div>
+      <div id="sidebar-footer">Click extract to jump to page</div>
+    </div>
+
+    <!-- PDF viewer -->
+    <div id="viewer-wrap"></div>
+  </div>
+
+  <!-- Floating selection toolbar -->
+  <div id="float-toolbar" contenteditable="false">
+    <button class="ext-btn" onclick="extractSelection()">Extract → SM</button>
+    <button onclick="extractPicture()">Extract Picture</button>
+    <button onclick="snipAndExtractPicture()">Snip & Extract</button>
+    <button onclick="highlightSelection()">Highlight</button>
+    <button onclick="dismissFloat()">✕</button>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" contenteditable="false"></div>
+
+  <script>
+    // ═══════════════════════════════════════════════
+    //  CONFIG — Get PDF path from URL
+    // ═══════════════════════════════════════════════
+    const urlParams = new URLSearchParams(window.location.search);
+    const PDF_PATH = urlParams.get('pdf');
+
+    const SCALE_DEFAULT = 1.4;
+
+    // ═══════════════════════════════════════════════
+    //  STATE
+    // ═══════════════════════════════════════════════
+    let pdfDoc = null;
+    let currentPage = 1;
+    let totalPages = 0;
+    let scale = SCALE_DEFAULT;
+    let renderedPages = {};   // pageNum -> { container, canvas, textLayer, annoCanvas }
+    let extracts = [];    // { id, page, text, charStart, charEnd }
+    let bookmarks = [];    // { page, scrollY, label }
+    let lastBookmark = null;
+    let selectionRange = null;
+    let selectionPage = null;
+
+    // ═══════════════════════════════════════════════
+    //  PDF.js INIT
+    // ═══════════════════════════════════════════════
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    async function loadPDF() {
+      setLoadStatus('Opening ' + PDF_PATH + '…');
+      try {
+        const loadingTask = pdfjsLib.getDocument(PDF_PATH);
+        loadingTask.onProgress = (p) => {
+          if (p.total) setLoadStatus(`Loading… ${Math.round(p.loaded / p.total * 100)}%`);
+        };
+        pdfDoc = await loadingTask.promise;
+        totalPages = pdfDoc.numPages;
+        document.getElementById('page-info').textContent = '/ ' + totalPages;
+        document.getElementById('page-input').max = totalPages;
+
+        setLoadStatus('Rendering pages…');
+        loadBookmarkState();
+        await renderAllPages();
+        hideLoading();
+        restoreBookmark();
+        toast('PDF loaded — ' + totalPages + ' pages');
+      } catch (err) {
+        setLoadStatus('Error: ' + err.message);
+        console.error(err);
+      }
+    }
+
+    async function renderAllPages() {
+      const viewer = document.getElementById('viewer-wrap');
+      viewer.innerHTML = '';
+      renderedPages = {};
+
+      for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+        const page = await pdfDoc.getPage(pageNum);
+        const viewport = page.getViewport({ scale });
+
+        // Wrapper
+        const container = document.createElement('div');
+        container.className = 'page-container';
+        container.id = 'page-' + pageNum;
+        container.style.width = viewport.width + 'px';
+        container.style.height = viewport.height + 'px';
+
+        // Main canvas
+        const canvas = document.createElement('canvas');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+
+        // Annotation overlay canvas
+        const annoCanvas = document.createElement('canvas');
+        annoCanvas.className = 'anno-canvas';
+        annoCanvas.width = viewport.width;
+        annoCanvas.height = viewport.height;
+
+        // Text layer div
+        const textDiv = document.createElement('div');
+        textDiv.className = 'textLayer';
+        textDiv.style.setProperty('--scale-factor', viewport.scale);
+
+        container.appendChild(canvas);
+        container.appendChild(annoCanvas);
+        container.appendChild(textDiv);
+        viewer.appendChild(container);
+
+        // Render page
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+
+        // Render text layer
+        const textContent = await page.getTextContent();
+        await pdfjsLib.renderTextLayer({
+          textContentSource: textContent,
+          container: textDiv,
+          viewport,
+          textDivs: []
+        }).promise;
+
+        // Force inline styles on all rendered spans just in case PDF.js or SuperMemo overrides them
+        const spans = textDiv.querySelectorAll('span');
+        spans.forEach(span => {
+          span.style.pointerEvents = 'all';
+          span.style.userSelect = 'text';
+          span.style.setProperty('-webkit-user-select', 'text', 'important');
+        });
+
+        // Debugging event propagation for selection
+        textDiv.addEventListener('mousedown', (e) => console.log('textLayer mousedown:', e.target.tagName));
+        textDiv.addEventListener('mouseup', (e) => console.log('textLayer mouseup:', window.getSelection().toString()));
+
+        renderedPages[pageNum] = { container, canvas, annoCanvas, textDiv, viewport };
+        setLoadStatus(`Rendering page ${pageNum} of ${totalPages}…`);
+      }
+    }
+
+    // ═══════════════════════════════════════════════
+    //  NAVIGATION
+    // ═══════════════════════════════════════════════
+    function prevPage() { goToPage(currentPage - 1); }
+    function nextPage() { goToPage(currentPage + 1); }
+
+    function goToPage(n) {
+      n = Math.max(1, Math.min(totalPages, n));
+      currentPage = n;
+      document.getElementById('page-input').value = n;
+      const el = document.getElementById('page-' + n);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      updateProgress();
+    }
+
+    // Track current page from scroll position
+    document.addEventListener('DOMContentLoaded', () => {
+      const vw = document.getElementById('viewer-wrap');
+      if (vw) {
+        vw.addEventListener('scroll', () => {
+          updateCurrentPageFromScroll();
+        });
+      }
+    });
+
+    function updateCurrentPageFromScroll() {
+      const vw = document.getElementById('viewer-wrap');
+      if (!vw) return;
+      const scrollMid = vw.scrollTop + vw.clientHeight / 2;
+      for (let p = 1; p <= totalPages; p++) {
+        const el = document.getElementById('page-' + p);
+        if (!el) continue;
+        if (el.offsetTop + el.offsetHeight > scrollMid) {
+          currentPage = p;
+          document.getElementById('page-input').value = p;
+          updateProgress();
+          break;
+        }
+      }
+    }
+
+    function updateProgress() {
+      const pct = Math.round((currentPage / Math.max(1, totalPages)) * 100);
+      document.getElementById('progress-bar').style.width = pct + '%';
+      document.getElementById('pct-label').textContent = pct + '%';
+    }
+
+    // ═══════════════════════════════════════════════
+    //  ZOOM
+    // ═══════════════════════════════════════════════
+    function zoomIn() { scale = Math.min(3.0, scale + 0.2); rerenderAll(); }
+    function zoomOut() { scale = Math.max(0.5, scale - 0.2); rerenderAll(); }
+
+    function rerenderAll() {
+      const savedPage = currentPage;
+      renderAllPages().then(() => {
+        redrawAllAnnotations();
+        goToPage(savedPage);
+      });
+    }
+
+    // ═══════════════════════════════════════════════
+    //  TEXT SELECTION → FLOATING TOOLBAR
+    // ═══════════════════════════════════════════════
+
+    // Suppress SuperMemo's injected click handler when user has a text selection.
+    // Without this, HandleClickEvent in Delphi calls SetCaretPosition which collapses
+    // the selection on the first attempt (second attempt works because focus is already set).
+    // IMPORTANT: Must NOT block clicks on buttons/toolbar, only on the text layer.
+    document.addEventListener('click', (e) => {
+      // Let button and toolbar clicks pass through
+      if (e.target.closest('#float-toolbar') || e.target.closest('#toolbar') ||
+        e.target.tagName === 'BUTTON') return;
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed && sel.toString().trim().length >= 3) {
+        e.stopImmediatePropagation(); // Block the SM-injected click handler
+      }
+    }, true); // 'true' = capturing phase, runs BEFORE the SM-injected handler
+
+    document.addEventListener('mouseup', (e) => {
+      // Small delay so selection is settled
+      setTimeout(() => checkSelection(e), 50);
+    });
+
+    function checkSelection(e) {
+      // Don't re-show or hide if we are interacting with the floating toolbar itself
+      const ft = document.getElementById('float-toolbar');
+      if (ft && ft.contains(e.target)) return;
+
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed || !sel.toString().trim()) {
+        dismissFloat();
+        return;
+      }
+
+      const text = sel.toString().trim();
+      if (text.length < 3) return;
+
+      selectionRange = sel.getRangeAt(0).cloneRange();
+
+      // Detect which page the selection is on
+      let node = sel.anchorNode;
+      while (node && node.nodeType !== 1) node = node.parentNode;
+      while (node && !node.id?.startsWith('page-')) node = node.parentElement;
+      selectionPage = node ? parseInt(node.id.replace('page-', '')) : currentPage;
+
+      // Position float toolbar near mouse
+      ft.classList.add('visible');
+      const x = Math.min(e.clientX, window.innerWidth - 200);
+      const y = Math.max(e.clientY - 60, 60);
+      ft.style.left = x + 'px';
+      ft.style.top = y + 'px';
+    }
+
+    function dismissFloat() {
+      const ft = document.getElementById('float-toolbar');
+      if (ft) ft.classList.remove('visible');
+      selectionRange = null;
+      window.getSelection()?.removeAllRanges();
+    }
+
+    // ═══════════════════════════════════════════════
+    //  EXTRACT SELECTION → SUPERMEMO
+    // ═══════════════════════════════════════════════
+    function extractSelection() {
+      if (!selectionRange) return;
+      const text = selectionRange.toString().trim();
+      if (!text) return;
+
+      const id = Date.now();
+      const extract = { id, page: selectionPage, text };
+      extracts.push(extract);
+
+      // Draw highlight on annotation canvas
+      highlightRangeOnCanvas(selectionRange, selectionPage, 'extract');
+
+      // Add to sidebar
+      addExtractToSidebar(extract);
+
+      // Send to SuperMemo via WebView2 message bridge
+      sendToSuperMemo('EXTRACT', {
+        id,
+        page: selectionPage,
+        text,
+        totalPages,
+        pdfPath: PDF_PATH,
+        extractIndex: extracts.length
+      });
+
+      // Auto-bookmark current position
+      saveBookmarkSilent();
+
+      window.getSelection().removeAllRanges();
+      dismissFloat();
+      saveState();
+      toast('Extracted to SuperMemo ✓');
+    }
+
+    function extractPicture() {
+      const page = currentPage || selectionPage || 1;
+      sendToSuperMemo('PICTURE_EXTRACT', {
+        page,
+        totalPages,
+        pdfPath: PDF_PATH
+      });
+      saveBookmarkSilent();
+      saveState();
+      dismissFloat();
+      toast('Picture extract requested ✓');
+    }
+
+    function snipAndExtractPicture() {
+      const page = currentPage || selectionPage || 1;
+      sendToSuperMemo('PICTURE_SNIP_EXTRACT', {
+        page,
+        totalPages,
+        pdfPath: PDF_PATH
+      });
+      saveBookmarkSilent();
+      saveState();
+      dismissFloat();
+      toast('Windows snipping started ✓');
+    }
+
+    function highlightSelection() {
+      if (!selectionRange) return;
+      highlightRangeOnCanvas(selectionRange, selectionPage, 'highlight');
+      saveBookmarkSilent();
+      window.getSelection().removeAllRanges();
+      dismissFloat();
+      saveState();
+      toast('Highlighted and Bookmarked ✓');
+    }
+
+    // ═══════════════════════════════════════════════
+    //  CANVAS ANNOTATION DRAWING
+    // ═══════════════════════════════════════════════
+    // We store annotations as rects per page
+    let annotations = {}; // pageNum -> [{xr,yr,wr,hr,type}]  (ratios 0-1)
+
+    function annoColor(type) {
+      return type === 'extract' ? 'rgba(0, 150, 200, 0.35)' : 'rgba(255, 255, 0, 0.45)';
+    }
+
+    function highlightRangeOnCanvas(range, pageNum, type) {
+      const pageData = renderedPages[pageNum];
+      if (!pageData) return;
+
+      const rects = range.getClientRects();
+      const containerRect = pageData.container.getBoundingClientRect();
+      const cW = pageData.annoCanvas.width;
+      const cH = pageData.annoCanvas.height;
+      const ctx = pageData.annoCanvas.getContext('2d');
+
+      if (!annotations[pageNum]) annotations[pageNum] = [];
+
+      Array.from(rects).forEach(r => {
+        const x = r.left - containerRect.left;
+        const y = r.top - containerRect.top;
+        const w = r.width;
+        const h = r.height;
+        ctx.fillStyle = annoColor(type);
+        ctx.fillRect(x, y, w, h);
+        // Store as ratios so they survive scale changes
+        annotations[pageNum].push({ xr: x / cW, yr: y / cH, wr: w / cW, hr: h / cH, type });
+      });
+    }
+
+    function redrawAllAnnotations() {
+      Object.keys(annotations).forEach(pageNum => {
+        const pageData = renderedPages[pageNum];
+        if (!pageData) return;
+        const cW = pageData.annoCanvas.width;
+        const cH = pageData.annoCanvas.height;
+        const ctx = pageData.annoCanvas.getContext('2d');
+        ctx.clearRect(0, 0, cW, cH);
+        annotations[pageNum].forEach(a => {
+          ctx.fillStyle = annoColor(a.type);
+          ctx.fillRect(a.xr * cW, a.yr * cH, a.wr * cW, a.hr * cH);
+        });
+      });
+    }
+
+    // ═══════════════════════════════════════════════
+    //  BOOKMARKS
+    // ═══════════════════════════════════════════════
+    function setBookmark() {
+      const vw = document.getElementById('viewer-wrap');
+      saveBookmarkAt(currentPage, vw.scrollTop, 'Manual bookmark p.' + currentPage);
+      toast('Bookmark saved — page ' + currentPage);
+    }
+
+    function saveBookmarkSilent() {
+      const vw = document.getElementById('viewer-wrap');
+      saveBookmarkAt(currentPage, vw.scrollTop, 'auto');
+    }
+
+    function saveBookmarkAt(page, scrollY, label) {
+      lastBookmark = { page, scrollY, label, time: Date.now() };
+      // Draw visual flag
+      drawBookmarkFlag(page, scrollY);
+      saveState();
+      // 'BOOKMARK' event notification removed as it was redundant and caused path errors
+    }
+
+
+    function drawBookmarkFlag(pageNum, scrollY) {
+      // Remove old flags for this page
+      document.querySelectorAll('.bookmark-flag').forEach(el => {
+        if (el.dataset.page == pageNum) el.remove();
+      });
+
+      const container = document.getElementById('page-' + pageNum);
+      if (!container) return;
+
+      const vw = document.getElementById('viewer-wrap');
+      const containerTop = container.offsetTop;
+      const relY = Math.max(0, scrollY - containerTop);
+
+      const flag = document.createElement('div');
+      flag.className = 'bookmark-flag';
+      flag.dataset.page = pageNum;
+      flag.style.top = Math.min(relY, container.offsetHeight - 30) + 'px';
+      flag.title = 'Bookmark: page ' + pageNum;
+      flag.innerHTML = `<div class="bf-label">p.${pageNum}</div>`;
+      flag.onclick = () => { goToPage(pageNum); };
+      container.appendChild(flag);
+    }
+
+    function restoreBookmark() {
+      if (!lastBookmark) return;
+      const { page, scrollY } = lastBookmark;
+      currentPage = page;
+      document.getElementById('page-input').value = page;
+      const vw = document.getElementById('viewer-wrap');
+      setTimeout(() => {
+        vw.scrollTop = scrollY;
+        drawBookmarkFlag(page, scrollY);
+        toast('Resumed at page ' + page);
+      }, 300);
+    }
+
+    // ═══════════════════════════════════════════════
+    //  SIDEBAR
+    // ═══════════════════════════════════════════════
+    function addExtractToSidebar(extract) {
+      const list = document.getElementById('extracts-list');
+      const item = document.createElement('div');
+      item.className = 'extract-item';
+      item.innerHTML = `
+    <div class="ex-page">p.${extract.page} · #${extracts.length}</div>
+    <div class="ex-text">${escapeHTML(extract.text)}</div>
+  `;
+      item.onclick = () => goToPage(extract.page);
+      list.appendChild(item);
+      document.getElementById('extract-count').textContent = extracts.length;
+    }
+
+    function escapeHTML(s) {
+      return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // ═══════════════════════════════════════════════
+    //  SUPERMEMO MESSAGE BRIDGE (WebView2)
+    // ═══════════════════════════════════════════════
+    function sendToSuperMemo(type, payload) {
+      const msg = JSON.stringify({ type, payload });
+      // WebView2 bridge
+      if (window.chrome?.webview?.postMessage) {
+        window.chrome.webview.postMessage(msg);
+        return;
+      }
+      // Fallback: custom URL scheme (older WebView / WebBrowser)
+      // window.location.href = 'supermemo://' + encodeURIComponent(msg);
+
+      // Dev mode: just log
+      console.log('[→ SuperMemo]', type, payload);
+    }
+
+    // Listen for messages FROM SuperMemo (e.g. load state, commands)
+    let pendingState = null;  // Buffer for state that arrives before pages are rendered
+
+    if (window.chrome?.webview) {
+      window.chrome.webview.addEventListener('message', (e) => {
+        try {
+          // PostWebMessageAsJson delivers e.data as a parsed object, not a string
+          const msg = (typeof e.data === 'string') ? JSON.parse(e.data) : e.data;
+          handleSMMessage(msg);
+        } catch (err) { console.error('SM message error:', err); }
+      });
+    }
+
+    function applyLoadedState(payload) {
+      if (payload.bookmark) {
+        lastBookmark = payload.bookmark;
+        restoreBookmark();
+      }
+      if (payload.extracts) {
+        extracts = payload.extracts;
+        extracts.forEach(addExtractToSidebar);
+      }
+      if (payload.annotations) {
+        // Migrate old absolute-pixel format {x,y,w,h} to ratio format {xr,yr,wr,hr}
+        Object.keys(payload.annotations).forEach(pageNum => {
+          const pageData = renderedPages[pageNum];
+          if (!pageData) return;
+          const cW = pageData.annoCanvas.width;
+          const cH = pageData.annoCanvas.height;
+          payload.annotations[pageNum] = payload.annotations[pageNum].map(a => {
+            if ('xr' in a) return a; // already new format
+            return { xr: a.x / cW, yr: a.y / cH, wr: a.w / cW, hr: a.h / cH, type: a.type };
+          });
+        });
+        annotations = payload.annotations;
+        redrawAllAnnotations();
+      }
+    }
+
+    function handleSMMessage(msg) {
+      switch (msg.type) {
+        case 'LOAD_STATE':
+          // If pages aren't rendered yet, buffer the state for later
+          if (!pdfDoc || Object.keys(renderedPages).length === 0) {
+            pendingState = msg.payload;
+          } else {
+            applyLoadedState(msg.payload);
+          }
+          break;
+        case 'GO_TO_PAGE':
+          goToPage(msg.payload.page);
+          break;
+        case 'REQUEST_EXTRACT':
+          if (selectionRange && !selectionRange.collapsed) {
+            extractSelection();
+          } else {
+            sendToSuperMemo('NO_SELECTION', {});
+          }
+          break;
+      }
+    }
+
+    // ═══════════════════════════════════════════════
+    //  CONVERT TO HTML (Pathway 1)
+    // ═══════════════════════════════════════════════
+    async function convertToHTML() {
+      if (!pdfDoc) return;
+      toast('Converting to HTML… this may take a moment');
+
+      let html = `<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8">
+<style>
+  body { font-family: Georgia, serif; max-width: 780px; margin: 40px auto; line-height: 1.7; color: #1a1410; }
+  p { margin: 0 0 1em; }
+  .page-break { border-top: 1px dashed #ccc; margin: 24px 0; color: #aaa; font-size: 11px; font-family: monospace; }
+</style>
+</head>
+<body>
+<h1 style="font-size:18px; color:#888; font-family:monospace;">Converted from: ${PDF_PATH}</h1>
+`;
+
+      for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+        const page = await pdfDoc.getPage(pageNum);
+        const textContent = await page.getTextContent();
+
+        html += `<div class="page-break">— page ${pageNum} —</div>\n`;
+
+        let lastY = null;
+        let para = '';
+        textContent.items.forEach(item => {
+          if (lastY !== null && Math.abs(item.transform[5] - lastY) > 5) {
+            if (para.trim()) html += `<p>${escapeHTML(para.trim())}</p>\n`;
+            para = '';
+          }
+          para += item.str + ' ';
+          lastY = item.transform[5];
+        });
+        if (para.trim()) html += `<p>${escapeHTML(para.trim())}</p>\n`;
+      }
+
+      html += '</body></html>';
+
+      // Send HTML to SuperMemo to create new element
+      sendToSuperMemo('HTML_CONVERT', {
+        html,
+        pdfPath: PDF_PATH,
+        pageCount: totalPages
+      });
+
+      toast('HTML sent to SuperMemo ✓ (' + totalPages + ' pages)');
+    }
+
+    // ═══════════════════════════════════════════════
+    //  MARK DONE
+    // ═══════════════════════════════════════════════
+    function markDone() {
+      if (!confirm(`Mark PDF as fully read?\n\nThis will notify SuperMemo to delete the PDF element.\n${extracts.length} extracts will remain in your knowledge tree.`)) return;
+      sendToSuperMemo('DONE', {
+        pdfPath: PDF_PATH,
+        extractCount: extracts.length,
+        totalPages
+      });
+      toast('PDF marked as done — SuperMemo will archive it ✓');
+    }
+
+    // ═══════════════════════════════════════════════
+    //  STATE PERSISTENCE (localStorage as fallback)
+    // ═══════════════════════════════════════════════
+    const STATE_KEY = 'smpdf_' + btoa(PDF_PATH).slice(0, 20);
+
+    function saveState() {
+      try {
+        const state = {
+          bookmark: lastBookmark,
+          extracts: extracts.map(e => ({ id: e.id, page: e.page, text: e.text.slice(0, 200) })),
+          annotations,
+          scale
+        };
+        localStorage.setItem(STATE_KEY, JSON.stringify(state));
+
+        // Use WebView2 bridge to save state persistently in SuperMemo
+        // pdfPath omitted to avoid 'path not supported' errors if it contains complex chars
+        sendToSuperMemo('SAVE_STATE', {
+          state: state
+        });
+      } catch (e) { }
+    }
+
+    function loadBookmarkState() {
+      try {
+        const raw = localStorage.getItem(STATE_KEY);
+        if (!raw) return;
+        const state = JSON.parse(raw);
+        if (state.bookmark) lastBookmark = state.bookmark;
+        if (state.extracts) extracts = state.extracts;
+        if (state.annotations) annotations = state.annotations;
+        if (state.scale) scale = state.scale;
+        extracts.forEach(addExtractToSidebar);
+      } catch (e) { }
+    }
+
+    // ═══════════════════════════════════════════════
+    //  KEYBOARD SHORTCUTS
+    // ═══════════════════════════════════════════════
+    document.addEventListener('keydown', (e) => {
+      if (e.target.tagName === 'INPUT') return;
+      switch (e.key) {
+        case 'ArrowRight':
+        case 'ArrowDown': nextPage(); break;
+        case 'ArrowLeft':
+        case 'ArrowUp': prevPage(); break;
+        case 'b': case 'B': setBookmark(); break;
+        case '+': zoomIn(); break;
+        case '-': zoomOut(); break;
+        case 'Escape': dismissFloat(); break;
+      }
+    });
+
+    // ═══════════════════════════════════════════════
+    //  UI HELPERS
+    // ═══════════════════════════════════════════════
+    function setLoadStatus(msg) {
+      document.getElementById('load-status').textContent = msg;
+    }
+
+    function hideLoading() {
+      document.getElementById('loading').style.display = 'none';
+    }
+
+    let toastTimer;
+    function toast(msg) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => el.classList.remove('show'), 2800);
+    }
+
+    // ═══════════════════════════════════════════════
+    //  BOOT
+    // ═══════════════════════════════════════════════
+    window.addEventListener('load', async () => {
+      // Hook scroll listener
+      const vw = document.getElementById('viewer-wrap');
+      vw.addEventListener('scroll', updateCurrentPageFromScroll);
+
+      // Load the PDF first — pages MUST be rendered before state can be applied
+      await loadPDF();
+
+      // Draw any annotations that were loaded from localStorage by loadBookmarkState()
+      // (which runs inside loadPDF, BEFORE renderAllPages creates the canvases)
+      if (Object.keys(annotations).length > 0) {
+        redrawAllAnnotations();
+      }
+
+      // Now request persistent state from SuperMemo
+      sendToSuperMemo('REQUEST_STATE', { pdfPath: PDF_PATH });
+
+      // Also apply any state that arrived while we were rendering (pendingState)
+      if (pendingState) {
+        applyLoadedState(pendingState);
+        pendingState = null;
+      }
+    });
+  </script>
+<!-- I clipped this out -->
+<!-- <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"6c635f5b8d42459091b4bbb836af7736","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script> -->
+</body>
+ 
+</html>
