@@ -73,6 +73,8 @@ export async function createInnertube({
 		location: location,
 		enable_safety_mode: !!safetyMode,
 		client_type: clientType,
+		// player_id: "9f4cc5e4",
+		// player_id: "4c5cf06a",
 
 		// use browser fetch
 		// @ts-expect-error lol

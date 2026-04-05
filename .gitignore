@@ -16,6 +16,8 @@ dist/*.bundle.js.LICENSE.txt
 ytjs/dist/server-config.js
 ytjs/dist/src/**
 ytjs/dist/ytjs/**
+ytjs/.tsbuildinfo
+ytjs/dist
 
 #### !MANUAL EDITS HERE
 temp

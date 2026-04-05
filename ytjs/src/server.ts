@@ -386,6 +386,8 @@ async function connectInnertube(videoId?: string) {
 		return await Innertube.create({
 			retrieve_player: false,
 			client_type: clientTypeName,
+			// player_id: "9f4cc5e4",
+			// player_id: "4c5cf06a",
 		});
 	}
 }
