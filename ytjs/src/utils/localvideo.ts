@@ -122,7 +122,6 @@ export async function createInnertube({
 					return new Response(responseText, {
 						status: response.status,
 						statusText: response.statusText,
-						// @ts-expect-error headers type
 						headers: response.headers,
 					});
 				// typeof input === 'string' ? input : input.url
