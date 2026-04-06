@@ -16,6 +16,8 @@ import { StorageKey, useLocalStorage } from '../../utils/storage';
 import ClipTool from '../../features/clip/ClipTool';
 import { ytjsHost } from '../../utils/client';
 import { decodeOptionsFromSearchParam, encodeOptionsToSearchParam, decodeSessionFromSearchParam, encodeSessionToSearchParam, Option, Session } from "../../utils/supermemo";
+import { runtime } from '../../utils/runtime-detector';
+import { supermemo } from '../../utils/webview-bridge';
 
 function App() {
   const queryParameters = new URLSearchParams(window.location.search)
@@ -341,13 +343,36 @@ function App() {
     }
   }, [url, isMpdLoaded, isShortClip, archiveInfo]);
 
+  // ============================================================================
+  // INITIALIZATION: Runtime Detection & SuperMemo Bridge
+  // ============================================================================
+  
+  useEffect(() => {
+    // Initialize SuperMemo bridge
+    const bridgeRuntime = supermemo.getRuntime();
+    console.log('[SM Player] Runtime:', bridgeRuntime);
+    
+    // Log runtime capabilities
+    const caps = runtime.detectCapabilities();
+    console.log('[SM Player] Browser Capabilities:', {
+      dashVersion: caps.dashVersion,
+      hlsVersion: caps.hlsVersion,
+      supportsClipboard: caps.supportsClipboard,
+      supportsModernES: caps.supportsModernES,
+    });
+  }, []);
+
   useEffect(() => {
     const url = new URL("http://" + ytjsHost + "/streamUrl/" + queryParameters.get('videoid'));
     const startSec = convertHHMMSS2Seconds(start);
     const stopSec = convertHHMMSS2Seconds(stop);
     url.searchParams.append('startSec', startSec.toString());
     url.searchParams.append('stopSec', stopSec.toString());
-    url.searchParams.append('target', 'IE');
+    
+    // Use runtime-detected target instead of hardcoded 'IE'
+    const target = runtime.getStreamTarget();
+    url.searchParams.append('target', target);
+    console.log('[SM Player] Requesting stream with target:', target);
 
     const req = new XMLHttpRequest();
     req.open('GET', url.toString(), true);
@@ -1217,9 +1242,7 @@ Description:\n${archiveInfo.description}
           className='react-player'
           config={{
               file: {
-                dashVersion: '4.5.2', //last version supporting IE
-                // https://github.com/video-dev/hls.js/releases/tag/v1.2.0
-                hlsVersion: '1.2.0', //last version theoretically supporting IE11: https://github.com/video-dev/hls.js/pull/4802
+                ...runtime.getPlayerConfig(),
                 attributes: {
                   crossOrigin: "true",
                   autoPlay: false,

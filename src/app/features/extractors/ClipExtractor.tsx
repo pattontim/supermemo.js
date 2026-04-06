@@ -3,6 +3,7 @@ import { useState } from "react";
 import { convertHHMMSS2Seconds, convertHHMMSS2Vector3D, convertVector3D2HHMMSS, formatTime } from "../../utils/Duration";
 // import { PlayerProps } from "../../utils/types";
 import { Option } from "../../utils/supermemo";
+import { supermemo } from "../../utils/webview-bridge";
 
 interface PlayerProps<T> {
     resume: string | null;
@@ -145,8 +146,20 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
 
             const formattedOption = selStart + ' - ' + selStop;
             const newOption = { value: formattedOption, label: newOptionText };
-            setOptions([...options, newOption]);
+            const updatedOptions = [...options, newOption];
+            setOptions(updatedOptions);
             setSelectedOption(newOption);
+            
+            // TODO: check if writes stale state for non-extracts props
+            // Send clip data to SuperMemo via bridge (SM18 DOM or SM20 WebView2)
+            supermemo.sendClipData({
+              videoId: videoid || '',
+              resume: resume || '0:00:00',
+              start: start || '0:00:00',
+              stop: stop || '0:00:00',
+              extracts: updatedOptions,
+            });
+            
             // setAtAbs('start', convertHHMMSS2Seconds(stop));
             resetAt('stop');
             setPlaying(true);
@@ -163,6 +176,17 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
             const [selStart, selStop] = selectedOption.split(' - ');
             setAtAbs('start', convertHHMMSS2Seconds(selStart));
             setAtAbs('stop', convertHHMMSS2Seconds(selStop));
+            
+            // TODO: check if writes stale state for non-extracts props
+            // Send updated clip data to SuperMemo
+            supermemo.sendClipData({
+              videoId: videoid || '',
+              resume: resume || '0:00:00',
+              start: selStart || '0:00:00',
+              stop: selStop || '0:00:00',
+              extracts: options,
+            });
+            
             goTo('start');
         }
     };

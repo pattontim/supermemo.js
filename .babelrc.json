@@ -1,0 +1,34 @@
+{
+  "presets": [
+    [
+      "@babel/preset-env",
+      {
+        "targets": {
+          "ie": "11",
+          "edge": "95"
+        },
+        "useBuiltIns": "usage",
+        "corejs": 3
+      }
+    ],
+    "@babel/preset-react"
+  ],
+  "env": {
+    "webview2": {
+      "presets": [
+        [
+          "@babel/preset-env",
+          {
+            "targets": {
+              "edge": "95",
+              "chrome": "90"
+            },
+            "useBuiltIns": "usage",
+            "corejs": 3
+          }
+        ],
+        "@babel/preset-react"
+      ]
+    }
+  }
+}

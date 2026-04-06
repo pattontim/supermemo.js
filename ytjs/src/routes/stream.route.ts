@@ -254,6 +254,7 @@ router.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
         if (target == "IE") {
             console.log("playable: " + JSON.stringify(videoInfo.playability_status));
             console.log("vid data: " + JSON.stringify(videoInfo.basic_info));
+            console.log("[Manifest] Generating IE11-compatible DASH manifest (H.264 + AAC only)");
 
             const manifestOptions = {
                 url_transformer: (url: URL) =>
@@ -283,7 +284,27 @@ router.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
             console.time("filterAudioAdaptationSets");
             manifest = filterAudioAdaptationSets(manifest);
             console.timeEnd("filterAudioAdaptationSets");
+        } else if (target == "webview2") {
+            console.log("playable: " + JSON.stringify(videoInfo.playability_status));
+            console.log("vid data: " + JSON.stringify(videoInfo.basic_info));
+            console.log("[Manifest] Generating WebView2-compatible DASH manifest (all modern codecs)");
+
+            // WebView2 supports all modern codecs, so no format filtering needed
+            const manifestOptions = {
+                url_transformer: (url: URL) =>
+                    new URL(`http://${fullUrlForClient}/proxy/${url}`),
+            };
+
+            console.time("toDash");
+            manifest = await videoInfo.toDash(manifestOptions);
+            console.timeEnd("toDash");
+
+            // Still filter audio tracks for WebView2
+            console.time("filterAudioAdaptationSets");
+            manifest = filterAudioAdaptationSets(manifest);
+            console.timeEnd("filterAudioAdaptationSets");
         } else {
+            console.log("[Manifest] Generating default DASH manifest (no codec restrictions)");
             const manifestOptions = {
                 url_transformer: (url: URL) =>
                     new URL(`http://${fullUrlForClient}/proxy/${url}`),

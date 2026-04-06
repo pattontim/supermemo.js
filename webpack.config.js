@@ -11,19 +11,30 @@ const path = require('path');
 const ForkTsCheckerWebpackPlugin = require('fork-ts-checker-webpack-plugin');
 const webpack = require('webpack');
 
-module.exports = {
+/**
+ * Dual-target webpack configuration
+ * Supports:
+ * - IE11 build (default): targets ES5 with full polyfills
+ * - WebView2 build: targets modern Chromium with minimal polyfills
+ * 
+ * Usage:
+ * npm run build                    # IE11 build
+ * NODE_ENV=production npm run build # IE11 production
+ * TARGET=webview2 npm run build     # WebView2 build
+ * TARGET=webview2 NODE_ENV=production npm run build # WebView2 production
+ */
+
+const buildTarget = process.env.TARGET || 'ie11';
+console.log(`Building for target: ${buildTarget}`);
+
+const baseConfig = {
   entry : {
-    // helloworld: './src/index.tsx',
     smplayer: './src/app/templates/smplayer/index.tsx',
     home: './src/app/templates/home/index.tsx',
     settings: './src/app/templates/settings/index.tsx',
     hidden_settings: './src/app/templates/hidden_settings/index.tsx',
     archive: './src/app/templates/archive/index.tsx',
     hidden_archive: './src/app/templates/hidden_archive/index.tsx',
-    // create: './src/app/templates/create/index.tsx',
-  },
-  output: {
-    filename: '[name].bundle.js'
   },
   mode: mode,
   module: {
@@ -33,12 +44,23 @@ module.exports = {
         exclude: path.resolve(__dirname, 'node_modules'),
         use: {
           loader: 'babel-loader',
+          options: {
+            envName: buildTarget === 'webview2' ? 'webview2' : undefined,
+          },
         },
       },
       {
         test: /\.(ts|tsx)$/,
         exclude: path.resolve(__dirname, 'node_modules'),
-        use: ['babel-loader', 'ts-loader'],
+        use: [
+          {
+            loader: 'babel-loader',
+            options: {
+              envName: buildTarget === 'webview2' ? 'webview2' : undefined,
+            },
+          },
+          'ts-loader'
+        ],
       },
       {  
         test: /\.css$/,
@@ -46,7 +68,7 @@ module.exports = {
           {
             loader: 'css-loader',
             options: {
-              modules: true, // Enable CSS modules
+              modules: true,
             },
           }
         ],
@@ -60,13 +82,31 @@ module.exports = {
     new ForkTsCheckerWebpackPlugin(),
     new webpack.DefinePlugin({
       'SERVER_CONFIG': SERVER_CONFIG[environment],
+      'BUILD_TARGET': JSON.stringify(buildTarget),
     })
   ],
-  // target: target,
-  target: ['web', 'es5'],
   devtool: 'cheap-module-source-map',
-  // devServer: {
-  //   static: './dist',
-  //   port: 3000,
-  // }
+};
+
+// Target-specific configuration
+const targetConfigs = {
+  ie11: {
+    output: {
+      filename: 'ie11/[name].bundle.js'
+    },
+    target: ['web', 'es5'],
+  },
+  webview2: {
+    output: {
+      filename: 'webview2/[name].bundle.js'
+    },
+    target: ['web', 'es2017'],
+  }
+};
+
+const config = buildTarget === 'webview2' ? targetConfigs.webview2 : targetConfigs.ie11;
+
+module.exports = {
+  ...baseConfig,
+  ...config,
 };

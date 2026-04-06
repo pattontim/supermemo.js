@@ -188,17 +188,34 @@ const longRunningRequestMiddleware = (threshold: number = 5000) => {
 	};
 };
 
-function transformWebVTT(vtt: string) {
+function transformWebVTT(vtt: string, target?: string) {
+	// For IE11, strip all styling and metadata that causes parsing issues
+	if (target === 'IE') {
+		console.log('[VTT] Applying IE11-compatible transformations (strip styling)');
+		const kindRegex = /Kind: (.*)\n/;
+		const langKindRegex = /Language: (.*)\n/;
+		const styleRegex = /Style:\n(::cue\(.*?\)\s*{\s*.*?\s*}\n?)*\n?##\n?/gs;
+		return vtt
+			.replace(kindRegex, "")
+			.replace(langKindRegex, "")
+			.replace(styleRegex, "");
+	}
+	
+	// For WebView2 and modern browsers, preserve the original formatting
+	if (target === 'webview2' || target === 'default') {
+		console.log('[VTT] Serving original VTT with all styling preserved');
+		return vtt;
+	}
+	
+	// Fallback to IE11 transformations
+	console.log('[VTT] Target not specified, applying IE11-compatible transformations');
 	const kindRegex = /Kind: (.*)\n/;
 	const langKindRegex = /Language: (.*)\n/;
-	// const styleRegex = /Style:\n(::cue\(.*?\)\s*{\s*.*?\s*}\n?)*/gs;
 	const styleRegex = /Style:\n(::cue\(.*?\)\s*{\s*.*?\s*}\n?)*\n?##\n?/gs;
-	// const alignRegex = /align:start position:0%\n/;
 	return vtt
 		.replace(kindRegex, "")
 		.replace(langKindRegex, "")
 		.replace(styleRegex, "");
-	// .replace(alignRegex, 'align:start position:0%\n');
 }
 
 export async function getCacheWait(
@@ -261,7 +278,7 @@ export async function fetchWait(
 	}
 }
 
-export async function fetchTransformedVTT(url: URL) {
+export async function fetchTransformedVTT(url: URL, target?: string) {
 	const baseUrl = new URL(url.href);
 	baseUrl.searchParams.set("fmt", "vtt");
 
@@ -278,7 +295,7 @@ export async function fetchTransformedVTT(url: URL) {
 		}
 
 		const text = await res.text();
-		return transformWebVTT(text);
+		return transformWebVTT(text, target);
 	} catch (error: any) {
 		console.error(`Error fetching VTT file: ${error.message}`);
 		// return null;
