@@ -6,6 +6,10 @@ server/yt_old.htm
 server/*
 dist/main*.js*
 dist/reactPlayer*.js*
+dist/ie11/main*.js*
+dist/ie11/reactPlayer*.js*
+dist/webview2/main*.js*
+dist/webview2/reactPlayer*.js*
 ytjs/dist/archive
 dist/archive
 dist/elements
@@ -13,6 +17,12 @@ dist/elements
 dist/*.bundle.js
 dist/*.bundle.js.map
 dist/*.bundle.js.LICENSE.txt
+dist/ie11/*.bundle.js
+dist/ie11/*.bundle.js.map
+dist/ie11/*.bundle.js.LICENSE.txt
+dist/webview2/*.bundle.js
+dist/webview2/*.bundle.js.map
+dist/webview2/*.bundle.js.LICENSE.txt
 ytjs/dist/server-config.js
 ytjs/dist/src/**
 ytjs/dist/ytjs/**
