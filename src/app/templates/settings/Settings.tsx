@@ -24,6 +24,12 @@ function App() {
     // Arrow Frame mode
     const [arrowFrameMode, setArrowFrameMode] = useLocalStorage(StorageKey.ARROW_FRAME_MODE, false);
 
+    // Click-to-zoom mode
+    const [clickZoom, setClickZoom] = useLocalStorage(StorageKey.CLICK_ZOOM, false);
+
+    // Mouse-follow zoom mode
+    const [followZoom, setFollowZoom] = useLocalStorage(StorageKey.FOLLOW_ZOOM, false);
+
     // Archive/Download settings
     const [cleanupCaptionsOnArchive, setCleanupCaptionsOnArchive] = useLocalStorage(StorageKey.CLEANUP_CAPTIONS_ON_ARCHIVE, false);
 
@@ -147,6 +153,26 @@ function App() {
                       onChange={(e) => setArrowFrameMode(e.target.checked)}
                     />
                     Use arrow keys to move back/forth frames
+                  </label>
+                </div>
+                <div className="row">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={clickZoom}
+                      onChange={(e) => setClickZoom(e.target.checked)}
+                    />
+                    Click to zoom video (1.5x, centered on click)
+                  </label>
+                </div>
+                <div className="row">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={followZoom}
+                      onChange={(e) => setFollowZoom(e.target.checked)}
+                    />
+                    Zoom video follows mouse (1.5x)
                   </label>
                 </div>
               </div>

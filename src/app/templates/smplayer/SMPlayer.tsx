@@ -58,6 +58,19 @@ function App() {
    * When true, left/right arrow keys seek backward/forward by one frame (1/30 second).
    */
   const [arrowFrameMode, setArrowFrameMode] = useLocalStorage(StorageKey.ARROW_FRAME_MODE, false);
+
+  /**
+   * Click-zoom mode - Magnifies the video 1.5x inside the fixed-size player.
+   * The zoomed viewport recenters on the position where the user clicks the video.
+   * The transform is only applied on click (no per-mousemove updates).
+   */
+  const [clickZoom] = useLocalStorage(StorageKey.CLICK_ZOOM, false);
+
+  /**
+   * Mouse-follow zoom mode - Magnifies the video 1.5x inside the fixed-size player.
+   * The zoomed viewport recenters continuously on the cursor position (mousemove).
+   */
+  const [followZoom] = useLocalStorage(StorageKey.FOLLOW_ZOOM, false);
   
   // ============================================================================
   // STATE: Clip Boundary Management (HH:MM:SS format)
@@ -344,6 +357,18 @@ function App() {
   }, [url, isMpdLoaded, isShortClip, archiveInfo]);
 
   // ============================================================================
+  // EFFECT: Reset click-zoom transform when mode toggles off or stream changes
+  // ============================================================================
+  useEffect(() => {
+    if (!clickZoom && !followZoom) {
+      const video = ref.current?.getInternalPlayer() as HTMLVideoElement | undefined;
+      if (video && video.style) {
+        video.style.transform = '';
+      }
+    }
+  }, [clickZoom, followZoom, url]);
+
+  // ============================================================================
   // INITIALIZATION: Runtime Detection & SuperMemo Bridge
   // ============================================================================
   
@@ -450,6 +475,46 @@ function App() {
     console.log('onPause')
     setPlaying(false)
   }
+
+  const ZOOM = 1.5;
+
+  /**
+   * Applies the zoom transform so the point at normalized position (px, py)
+   * under the cursor stays centered in the clipped viewport.
+   * Mutates the <video> element's style imperatively (no React re-render).
+   * @param {React.MouseEvent<HTMLDivElement>} e - Mouse event from player container
+   * @returns {void}
+   */
+  const applyZoom = (e: React.MouseEvent<HTMLDivElement>) => {
+    const video = ref.current?.getInternalPlayer() as HTMLVideoElement | undefined;
+    if (!video || !(video instanceof HTMLVideoElement)) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const px = Math.min(Math.max((e.clientX - rect.left) / rect.width, 0), 1);
+    const py = Math.min(Math.max((e.clientY - rect.top) / rect.height, 0), 1);
+    video.style.transformOrigin = '0 0';
+    video.style.transform =
+      'scale(' + ZOOM + ') translate(' +
+      (-px * (1 - 1 / ZOOM) * rect.width) + 'px,' +
+      (-py * (1 - 1 / ZOOM) * rect.height) + 'px)';
+  };
+
+  /**
+   * Click handler - applies zoom centered on the click position when click-zoom is enabled.
+   * @param {React.MouseEvent<HTMLDivElement>} e - Click event from player container
+   * @returns {void}
+   */
+  const handlePlayerClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (clickZoom) applyZoom(e);
+  };
+
+  /**
+   * Mouse-move handler - continuously recenters the zoom on the cursor when follow-zoom is enabled.
+   * @param {React.MouseEvent<HTMLDivElement>} e - Mouse event from player container
+   * @returns {void}
+   */
+  const handlePlayerMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (followZoom) applyZoom(e);
+  };
 
   /**
    * Handles seek/scrub event from ReactPlayer.
@@ -1109,6 +1174,13 @@ Description:\n${archiveInfo.description}
         setPlaying(false);
       }
     }
+    // Reset click-zoom transform when leaving the player
+    if (clickZoom || followZoom) {
+      const video = ref.current?.getInternalPlayer() as HTMLVideoElement | undefined;
+      if (video && video.style) {
+        video.style.transform = '';
+      }
+    }
   }
 
   /**
@@ -1225,13 +1297,17 @@ Description:\n${archiveInfo.description}
         onMouseEnter={() => handleMouseEnter()} 
         onMouseLeave={() => handleMouseLeave()}
         onKeyDown={(e) => handleKeyDown(e)}
+        onClick={(e) => handlePlayerClick(e)}
+        onMouseMove={(e) => handlePlayerMouseMove(e)}
         onDoubleClick={(e) => handlePlayerDoubleClick(e)}
         style={{
           flex: pseudoFullscreen ? 1 : 'initial',
           display: 'flex',
           justifyContent: 'center',
           alignItems: 'center',
-          minHeight: pseudoFullscreen ? '100%' : 'auto'
+          minHeight: pseudoFullscreen ? '100%' : 'auto',
+          overflow: (clickZoom || followZoom) ? 'hidden' : 'visible',
+          position: 'relative'
         }}
       >
         <div>
