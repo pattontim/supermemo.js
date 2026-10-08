@@ -306,8 +306,56 @@ router.get("/archivei/", async (req, res) => {
 	res.send(archive);
 });
 
+/** Lightweight archive stats — avoids shipping the full archive payload. */
+router.get("/archivei/stats", async (req, res) => {
+	const entries = Object.values(archive) as any[];
+	res.json({
+		archiveCount: entries.length,
+		totalFiles: entries.reduce(
+			(acc, info) => acc + Object.keys(info.file_formats || {}).length, 0),
+	});
+});
+
+/** Server-side search + sort + pagination over the archive. */
+router.get("/archivei/search", async (req, res) => {
+	const q = ((req.query.q as string) || "").toLowerCase();
+	const sort = (req.query.sort as string) || "date";
+	const page = Math.max(1, parseInt(req.query.page as string) || 1);
+	const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 10));
+
+	let entries = Object.entries(archive) as [string, any][];
+
+	if (q) {
+		entries = entries.filter(([v_id, info]) =>
+			[info.title, info.author_name, info.description, info.published, v_id]
+				.join(" ").toLowerCase().includes(q));
+	}
+
+	entries.sort(([, a], [, b]) => {
+		switch (sort) {
+			case "title":  return (a.title || "").localeCompare(b.title || "");
+			case "author": return (a.author_name || "").localeCompare(b.author_name || "");
+			case "date":
+			default: return new Date(b.archived_on).getTime() - new Date(a.archived_on).getTime();
+		}
+	});
+
+	const total = entries.length;
+	const items = entries.slice((page - 1) * limit, page * limit);
+	res.json({
+		items: Object.fromEntries(items),
+		total, page, limit,
+		totalPages: Math.max(1, Math.ceil(total / limit)),
+	});
+});
+
 router.get("/cachei/", async (req, res) => {
 	res.send(cache);
+});
+
+/** Lightweight cache count — avoids shipping the full cache payload. */
+router.get("/cachei/count", async (req, res) => {
+	res.json({ count: Object.keys(cache).length });
 });
 
 router.get("/v1fix/", async (req, res) => {

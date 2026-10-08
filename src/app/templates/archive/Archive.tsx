@@ -18,126 +18,107 @@ interface ArchiveData {
   [v_id: string]: ArchiveInfoData;
 }
 
-interface CacheStats {
-  totalCount: number;
+interface SearchResponse {
+  items: ArchiveData;
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
 }
 
 type SortBy = 'title' | 'date' | 'author';
 
+const PAGE_SIZE = 10;
+// false = render nothing until a search is submitted ("results only on search/enter")
+// true  = show the first page (date-sorted) on mount
+const FETCH_FIRST_PAGE_ON_MOUNT = false;
+
 function Archive() {
-  const [archive, setArchive] = useState<ArchiveData>({});
-  const [filteredArchive, setFilteredArchive] = useState<ArchiveData>({});
+  const [results, setResults] = useState<ArchiveData>({});
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState<SortBy>('date');
-  const [loading, setLoading] = useState(true);
-  const [cacheStats, setCacheStats] = useState<CacheStats>({ totalCount: 0 });
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [searched, setSearched] = useState(FETCH_FIRST_PAGE_ON_MOUNT);
+  const [loading, setLoading] = useState(false);
+  const [stats, setStats] = useState({ archiveCount: 0, totalFiles: 0, cached: 0 });
 
-  // Fetch archive data on mount
+  const fetchPage = (q: string, sort: SortBy, p: number) => {
+    setLoading(true);
+    const xhr = new XMLHttpRequest();
+    xhr.open(
+      'GET',
+      '/archivei/search?q=' + encodeURIComponent(q) +
+      '&sort=' + sort + '&page=' + p + '&limit=' + PAGE_SIZE,
+      true
+    );
+    xhr.onload = () => {
+      if (xhr.status === 200) {
+        try {
+          const data: SearchResponse = JSON.parse(xhr.responseText);
+          setResults(data.items);
+          setTotal(data.total);
+          setPage(data.page);
+          setTotalPages(data.totalPages);
+        } catch (e) {
+          console.error('Failed to parse results:', e);
+        }
+      } else {
+        console.error('Failed to fetch results:', xhr.statusText);
+      }
+      setLoading(false);
+    };
+    xhr.onerror = () => {
+      console.error('Failed to fetch results: Network error');
+      setLoading(false);
+    };
+    xhr.send();
+  };
+
+  // Mount: only lightweight stats — no archive payload.
   useEffect(() => {
-    const fetchArchive = () => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('GET', '/archivei/', true);
-      xhr.onload = () => {
-        if (xhr.status === 200) {
-          try {
-            const data = JSON.parse(xhr.responseText);
-            setArchive(data);
-            setFilteredArchive(data);
-          } catch (error) {
-            console.error('Failed to parse archive data:', error);
-          }
-        } else {
-          console.error('Failed to fetch archive:', xhr.statusText);
-        }
-        setLoading(false);
-      };
-      xhr.onerror = () => {
-        console.error('Failed to fetch archive: Network error');
-        setLoading(false);
-      };
-      xhr.send();
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', '/archivei/stats', true);
+    xhr.onload = () => {
+      if (xhr.status === 200) {
+        try {
+          const d = JSON.parse(xhr.responseText);
+          setStats(s => ({ ...s, archiveCount: d.archiveCount, totalFiles: d.totalFiles }));
+        } catch (e) { console.error(e); }
+      }
     };
+    xhr.send();
 
-    const fetchCacheStats = () => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('GET', '/cachei/', true);
-      xhr.onload = () => {
-        if (xhr.status === 200) {
-          try {
-            const data = JSON.parse(xhr.responseText);
-            setCacheStats({ totalCount: Object.keys(data).length });
-          } catch (error) {
-            console.error('Failed to parse cache stats:', error);
-          }
-        } else {
-          console.error('Failed to fetch cache stats:', xhr.statusText);
-        }
-      };
-      xhr.onerror = () => {
-        console.error('Failed to fetch cache stats: Network error');
-      };
-      xhr.send();
+    const xhr2 = new XMLHttpRequest();
+    xhr2.open('GET', '/cachei/count', true);
+    xhr2.onload = () => {
+      if (xhr2.status === 200) {
+        try { setStats(s => ({ ...s, cached: JSON.parse(xhr2.responseText).count })); }
+        catch (e) { console.error(e); }
+      }
     };
+    xhr2.send();
 
-    fetchArchive();
-    fetchCacheStats();
+    if (FETCH_FIRST_PAGE_ON_MOUNT) fetchPage('', 'date', 1);
   }, []);
 
   const performSearch = () => {
-    const term = searchTerm.toLowerCase();
-    if (!term) {
-      setFilteredArchive(archive);
-      return;
-    }
-
-    const filtered = Object.entries(archive).reduce((acc, [v_id, info]) => {
-      const searchableContent = [
-        info.title,
-        info.author_name,
-        info.description,
-        info.published,
-        v_id,
-      ]
-        .join(' ')
-        .toLowerCase();
-
-      if (searchableContent.includes(term)) {
-        acc[v_id] = info;
-      }
-      return acc;
-    }, {} as ArchiveData);
-
-    setFilteredArchive(filtered);
+    setSearched(true);
+    fetchPage(searchTerm.trim(), sortBy, 1);
   };
 
-  const sortedEntries = Object.entries(filteredArchive).sort(([, a], [, b]) => {
-    switch (sortBy) {
-      case 'title':
-        return a.title.localeCompare(b.title);
-      case 'author':
-        return a.author_name.localeCompare(b.author_name);
-      case 'date':
-      default:
-        return new Date(b.archived_on).getTime() - new Date(a.archived_on).getTime();
-    }
-  });
+  const changeSort = (s: SortBy) => {
+    setSortBy(s);
+    if (searched) fetchPage(searchTerm.trim(), s, 1);
+  };
 
-  if (loading) {
-    return (
-      <div className="app">
-        <div className="col">
-          <b>Archive</b>
-        </div>
-        <div style={{ padding: '20px' }}>Loading archive...</div>
-      </div>
-    );
-  }
+  const gotoPage = (p: number) => {
+    if (p < 1 || p > totalPages) return;
+    fetchPage(searchTerm.trim(), sortBy, p);
+  };
 
-  const archiveCount = Object.keys(archive).length;
-  const fileFormatsCount = Object.values(archive).reduce(
-    (acc, info) => acc + Object.keys(info.file_formats || {}).length,
-    0
-  );
+  const entries = Object.entries(results); // already sorted server-side
 
   return (
     <div className="app">
@@ -149,13 +130,13 @@ function Archive() {
         <div className="row">
           <div style={{ padding: '8px 12px' }}>
             <span style={{ marginRight: '20px' }}>
-              <strong>Archived Videos:</strong> {archiveCount}
+              <strong>Archived Videos:</strong> {stats.archiveCount}
             </span>
             <span style={{ marginRight: '20px' }}>
-              <strong>Cached Videos:</strong> {cacheStats.totalCount}
+              <strong>Cached Videos:</strong> {stats.cached}
             </span>
             <span>
-              <strong>Total Files:</strong> {fileFormatsCount}
+              <strong>Total Files:</strong> {stats.totalFiles}
             </span>
           </div>
         </div>
@@ -178,7 +159,8 @@ function Archive() {
           <SMButton
             onClick={() => {
               setSearchTerm('');
-              setFilteredArchive(archive);
+              setSearched(true);
+              fetchPage('', sortBy, 1);
             }}
             style={{ marginLeft: '4px' }}
           >
@@ -195,7 +177,7 @@ function Archive() {
             <span key={option} style={{ display: 'flex', alignItems: 'center', marginRight: '15px' }}>
               <SMRadio
                 checked={sortBy === option}
-                onSelect={() => setSortBy(option)}
+                onSelect={() => changeSort(option)}
                 label={option.charAt(0).toUpperCase() + option.slice(1)}
               />
             </span>
@@ -206,15 +188,32 @@ function Archive() {
       {/* Results Section */}
       <div style={{ marginBottom: '20px' }}>
         <div style={{ fontWeight: 'bold', marginBottom: '10px', fontSize: '14px', color: '#333' }}>
-          Results ({sortedEntries.length})
+          Results ({total})
         </div>
         <div>
-          {sortedEntries.length === 0 ? (
+          {!searched ? (
+            <div style={{ padding: '20px', color: '#666' }}>
+              Enter a search term to browse the archive.
+            </div>
+          ) : loading ? (
+            <div style={{ padding: '20px', color: '#666' }}>Loading…</div>
+          ) : entries.length === 0 ? (
             <div style={{ padding: '20px', color: '#666' }}>No results found</div>
           ) : (
-            sortedEntries.map(([v_id, info]) => <ArchiveItem key={v_id} v_id={v_id} info={info} />)
+            entries.map(([v_id, info]) => <ArchiveItem key={v_id} v_id={v_id} info={info} />)
           )}
         </div>
+
+        {/* Pagination — SMButton so no <input>/<button> leaks into SM's DOM scan */}
+        {searched && !loading && totalPages > 1 && (
+          <div className="row" style={{ justifyContent: 'center', marginTop: '10px', alignItems: 'center' }}>
+            <SMButton onClick={() => gotoPage(page - 1)}>« Prev</SMButton>
+            <span style={{ margin: '0 12px', fontSize: '13px' }}>
+              Page {page} of {totalPages}
+            </span>
+            <SMButton onClick={() => gotoPage(page + 1)}>Next »</SMButton>
+          </div>
+        )}
       </div>
     </div>
   );
