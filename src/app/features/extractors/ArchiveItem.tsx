@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { SMButton } from '../sm/SMControls';
 
 // TODO: pick from archive.ts
 type ArchiveInfoData = {
@@ -160,7 +161,7 @@ function ArchiveItem({ v_id, info }: ArchiveItemProps) {
             >
               📋 Copy Link
             </a>
-            <button
+            <SMButton
               onClick={() => {
                 const url = `/archive/${v_id}/info.json`;
                 fetch(url, { method: 'GET' })
@@ -176,11 +177,10 @@ function ArchiveItem({ v_id, info }: ArchiveItemProps) {
                 border: '1px solid #ddd',
                 borderRadius: '3px',
                 fontSize: '12px',
-                cursor: 'pointer',
               }}
             >
               🌐 Open on Host
-            </button>
+            </SMButton>
           </div>
 
           {/* Video ID */}

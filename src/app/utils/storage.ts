@@ -37,12 +37,29 @@ export function useLocalStorage<T>(key: string, initialValue: T, bufferTime: num
     }
   });
 
+  // Re-read localStorage when another component instance writes this key.
+  // IE11-safe: document.createEvent instead of `new Event()`.
+  useEffect(() => {
+    const onChange = () => {
+      try {
+        const item = window.localStorage.getItem(key);
+        setValue(item ? JSON.parse(item) : initialValue);
+      } catch (e) { console.error(e); }
+    };
+    const evt = 'smstorage:' + key;
+    window.addEventListener(evt, onChange);
+    return () => window.removeEventListener(evt, onChange);
+  }, [key]);
+
   useEffect(() => {
     const writeToStorage = () => {
       try {
         // console.log('sync writeToStorage', key, value);
         window.localStorage.setItem(key, JSON.stringify(value));
         (window as any).lastWritten = Date.now();
+        const evt = document.createEvent('Event');
+        evt.initEvent('smstorage:' + key, true, true);
+        window.dispatchEvent(evt);
       } catch (error) {
         console.error(error);
       }

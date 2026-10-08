@@ -14,6 +14,7 @@ import { convertHHMMSS2Seconds, convertSeconds2HHMMSS, constrainToRange, formatT
 import Archive from '../../features/archive/Archive';
 import { StorageKey, useLocalStorage } from '../../utils/storage';
 import ClipTool from '../../features/clip/ClipTool';
+import { InlinePane } from '../../features/sm/InlinePane';
 import { ytjsHost } from '../../utils/client';
 import { decodeOptionsFromSearchParam, encodeOptionsToSearchParam, decodeSessionFromSearchParam, encodeSessionToSearchParam, Option, Session } from "../../utils/supermemo";
 import { runtime } from '../../utils/runtime-detector';
@@ -319,6 +320,14 @@ function App() {
    * @type {boolean}
    */
   const [pseudoFullscreen, setPseudoFullscreen] = useState(false);
+
+  /**
+   * Inline accordion pane visibility. Panes mount with the parent (see
+   * LOAD_PANES_WITH_PARENT in features/sm/InlinePane) and these flags only
+   * toggle their visibility; the ⚙/🔍︎ archive-info glyphs drive them.
+   */
+  const [settingsPaneOpen, setSettingsPaneOpen] = useState(false);
+  const [archivePaneOpen, setArchivePaneOpen] = useState(false);
 
   // ============================================================================
   // REFS: Player Instance References
@@ -747,27 +756,6 @@ function App() {
   // ============================================================================
   // EVENT HANDLERS: Settings & Navigation
   // ============================================================================
-
-  /**
-   * Navigates to hidden page while preserving current session state.
-   * Encodes all current state (resume, start, stop, played, options) into URL params.
-   * When user returns from hidden, this state is restored via session restoration logic.
-   * @param {string} url - The base URL of the hidden page
-   * @returns {void}
-   */
-  function handleOpenHidden(url: string) {
-    const updatedSession: Session = {
-      resume,
-      start,
-      stop,
-      played,
-      options
-    };
-
-    const hiddenURL = new URL(document.location.href.replace("smplayer.html", url));
-    hiddenURL.searchParams.set("session", encodeSessionToSearchParam(updatedSession));
-    window.location.href = hiddenURL.toString();
-  }
 
   /**
    * Toggles clip boundary repeat mode.
@@ -1278,8 +1266,8 @@ Description:\n${archiveInfo.description}
         ...(isShortClip && {backgroundColor: "yellowgreen"})
       }}>
         <div className='row' style={{ border: "1px solid black", borderBottom: "0px", borderRight: "0px", borderTop: "0px"} }>
-          <div onClick={() => handleOpenHidden("hidden_settings.html")} style={{borderRight: "1px solid black"}}>⚙</div>
-          <div onClick={() => handleOpenHidden("hidden_archive.html")} style={{borderRight: "1px solid black"}}>🔍︎</div>
+          <div onClick={() => setSettingsPaneOpen(!settingsPaneOpen)} style={{borderRight: "1px solid black"}}>⚙</div>
+          <div onClick={() => setArchivePaneOpen(!archivePaneOpen)} style={{borderRight: "1px solid black"}}>🔍︎</div>
           <div className="archive-info-title" title={archiveInfo.title} onClick={() => handleTitleClicked()}>
             {archiveInfo.title.substring(0, 44) + (archiveInfo.title.length > 46 ? ".." : "")}
           </div>
@@ -1404,6 +1392,18 @@ Description:\n${archiveInfo.description}
         {/* <ReactExtension /> */}
         <ClipTool v_id={queryParameters.get("videoid")?.trim() ?? ""} info={archiveInfo} handleCopyVideoDetails={handleCopyVideoDetails} setResolution={setResolution} 
         start={start} stop={stop}/>
+        <InlinePane
+          paneKey="settings"
+          title="Settings"
+          expanded={settingsPaneOpen}
+          onToggle={setSettingsPaneOpen}
+        />
+        <InlinePane
+          paneKey="archive"
+          title="Archive"
+          expanded={archivePaneOpen}
+          onToggle={setArchivePaneOpen}
+        />
         { archiveInfo && <Archive v_id={queryParameters.get("videoid")?.trim() ?? ""} info={archiveInfo} setInfo={setArchiveInfo}/> }
         { archiveInfo?.captions?.caption_tracks &&
         archiveInfo.captions.caption_tracks.length > 0 ?

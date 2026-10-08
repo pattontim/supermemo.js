@@ -1,5 +1,6 @@
 import ArchiveItem from '../../../app/features/extractors/ArchiveItem';
 import React, { useState, useEffect } from 'react';
+import { SMButton, SMRadio, SMTextInput } from '../../features/sm/SMControls';
 
 // TODO: pick from archive.ts
 type ArchiveInfoData = {
@@ -81,13 +82,6 @@ function Archive() {
     fetchArchive();
     fetchCacheStats();
   }, []);
-
-  // Handle search on Enter key
-  const handleSearch = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      performSearch();
-    }
-  };
 
   const performSearch = () => {
     const term = searchTerm.toLowerCase();
@@ -173,51 +167,38 @@ function Archive() {
           Search
         </div>
         <div className="row">
-          <input
-            type="text"
+          <SMTextInput
             placeholder="Search by title, author, description..."
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            onKeyDown={handleSearch}
-            style={{
-              flex: 1,
-              minWidth: '250px',
-              padding: '8px',
-              boxSizing: 'border-box',
-              marginRight: '8px',
-            }}
+            onChange={setSearchTerm}
+            onEnter={performSearch}
+            style={{ flex: 1, minWidth: '250px', marginRight: '8px' }}
           />
-          <button onClick={performSearch} style={{ padding: '0 12px' }}>
-            Search
-          </button>
-          <button
+          <SMButton onClick={performSearch}>Search</SMButton>
+          <SMButton
             onClick={() => {
               setSearchTerm('');
               setFilteredArchive(archive);
             }}
-            style={{ padding: '0 12px' }}
+            style={{ marginLeft: '4px' }}
           >
             Clear
-          </button>
+          </SMButton>
         </div>
 
         {/* Sort Options */}
-        <div className="row" style={{ marginTop: '10px' }}>
-          <label style={{ display: 'flex', alignItems: 'center', marginRight: '20px' }}>
+        <div className="row" style={{ marginTop: '10px', alignItems: 'center' }}>
+          <span style={{ display: 'flex', alignItems: 'center', marginRight: '20px' }}>
             Sort by:
-          </label>
+          </span>
           {(['date', 'title', 'author'] as const).map((option) => (
-            <label key={option} style={{ display: 'flex', alignItems: 'center', marginRight: '15px' }}>
-              <input
-                type="radio"
-                name="sort"
-                value={option}
+            <span key={option} style={{ display: 'flex', alignItems: 'center', marginRight: '15px' }}>
+              <SMRadio
                 checked={sortBy === option}
-                onChange={(e) => setSortBy(e.target.value as SortBy)}
-                style={{ marginRight: '5px' }}
+                onSelect={() => setSortBy(option)}
+                label={option.charAt(0).toUpperCase() + option.slice(1)}
               />
-              {option.charAt(0).toUpperCase() + option.slice(1)}
-            </label>
+            </span>
           ))}
         </div>
       </div>

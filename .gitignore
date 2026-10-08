@@ -28,6 +28,7 @@ ytjs/dist/src/**
 ytjs/dist/ytjs/**
 ytjs/.tsbuildinfo
 ytjs/dist
+dist/ie11/*.chunk.js
 
 #### !MANUAL EDITS HERE
 temp

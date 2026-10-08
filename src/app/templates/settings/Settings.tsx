@@ -1,5 +1,25 @@
 import { StorageKey, useLocalStorage } from "../../../app/utils/storage";
 import React, { useState } from "react";
+import { SMCheckbox } from "../../features/sm/SMControls";
+
+/**
+ * Settings that require a page reload to take effect (e.g., startup-only
+ * behaviors, flags consumed by SM at page open). Any future setting added
+ * here renders with a "(reload)" marker and contributes to the reload
+ * notice shown after it changes.
+ */
+const REQUIRES_RELOAD = new Set<StorageKey>([
+  StorageKey.AUTO_PLAY_SHORTS_ALWAYS,   // startup autoplay already executed
+  StorageKey.FAKE_FULLSCREEN_SHORTS,    // affects startup layout
+]);
+
+// same dispatcher as storage.ts — kept local so the Flags accordion's
+// raw localStorage.setItem also propagates to live hook instances
+export const notifyStorageKey = (key: string) => {
+  const evt = document.createEvent('Event');
+  evt.initEvent('smstorage:' + key, true, true);
+  window.dispatchEvent(evt);
+};
 
 
 function App() {
@@ -36,10 +56,20 @@ function App() {
     const [playerIsActive, setPlayerIsActive] = useState(false);
     const [clipIsActive, setClipIsActive] = useState(false);
     const [keysIsActive, setKeysIsActive] = useState(true);
+    const [reloadNeeded, setReloadNeeded] = useState(false);
+
+    const trackReload = (key: StorageKey) => {
+      if (REQUIRES_RELOAD.has(key)) setReloadNeeded(true);
+    };
 
 
   return (
     <div className="app">
+      {reloadNeeded && (
+        <div className="row" style={{ padding: '6px 10px', backgroundColor: '#fff3cd', border: '1px solid #d6b656', marginBottom: '8px' }}>
+          Reload the element for changes to take effect.
+        </div>
+      )}
       <div className="accordion">
         <div className="accordion-item">
           <div className="accordion-title" onClick={() => setPlayerIsActive(!playerIsActive)}>
@@ -51,34 +81,26 @@ function App() {
               <div style={{ marginBottom: '20px', paddingBottom: '16px', borderBottom: '2px solid #ddd' }}>
                 <div style={{ fontWeight: 'bold', marginBottom: '10px', fontSize: '14px', color: '#333' }}>Short Clips</div>
                 <div className="row">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={playShortOnHover}
-                      onChange={(e) => setPlayShortOnHover(e.target.checked)}
-                    />
-                    Play on hover
-                  </label>
+                  <SMCheckbox
+                    checked={playShortOnHover}
+                    onChange={setPlayShortOnHover}
+                    label="Play on hover"
+                  />
                 </div>
                 <div className="row">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={pauseShortOnHover}
-                      onChange={(e) => setPauseShortOnHover(e.target.checked)}
-                    />
-                    Pause on hover away
-                  </label>
+                  <SMCheckbox
+                    checked={pauseShortOnHover}
+                    onChange={setPauseShortOnHover}
+                    label="Pause on hover away"
+                  />
                 </div>
                 <div className="row">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={autoplayShortsAlways}
-                      onChange={(e) => setAutoplayShortsAlways(e.target.checked)}
-                    />
-                    Always autoplay shorts on start
-                  </label>
+                  <SMCheckbox
+                    checked={autoplayShortsAlways}
+                    onChange={(v) => { setAutoplayShortsAlways(v); trackReload(StorageKey.AUTO_PLAY_SHORTS_ALWAYS); }}
+                    label="Always autoplay shorts on start"
+                    requiresReload={REQUIRES_RELOAD.has(StorageKey.AUTO_PLAY_SHORTS_ALWAYS)}
+                  />
                 </div>
               </div>
 
@@ -86,24 +108,18 @@ function App() {
               <div style={{ marginBottom: '20px', paddingBottom: '16px', borderBottom: '2px solid #ddd' }}>
                 <div style={{ fontWeight: 'bold', marginBottom: '10px', fontSize: '14px', color: '#333' }}>Long Clips</div>
                 <div className="row">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={playLongOnHover}
-                      onChange={(e) => setPlayLongOnHover(e.target.checked)}
-                    />
-                    Play on hover
-                  </label>
+                  <SMCheckbox
+                    checked={playLongOnHover}
+                    onChange={setPlayLongOnHover}
+                    label="Play on hover"
+                  />
                 </div>
                 <div className="row">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={pauseLongOnHover}
-                      onChange={(e) => setPauseLongOnHover(e.target.checked)}
-                    />
-                    Pause on hover away
-                  </label>
+                  <SMCheckbox
+                    checked={pauseLongOnHover}
+                    onChange={setPauseLongOnHover}
+                    label="Pause on hover away"
+                  />
                 </div>
               </div>
 
@@ -111,34 +127,26 @@ function App() {
               <div>
                 <div style={{ fontWeight: 'bold', marginBottom: '10px', fontSize: '14px', color: '#333' }}>Outside Clip Bounds</div>
                 <div className="row">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={playOutsideBounds}
-                      onChange={(e) => setPlayOutsideBounds(e.target.checked)}
-                    />
-                    Play any clip
-                  </label>
+                  <SMCheckbox
+                    checked={playOutsideBounds}
+                    onChange={setPlayOutsideBounds}
+                    label="Play any clip"
+                  />
                 </div>
                 <div className="row">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={pauseOutsideBounds}
-                      onChange={(e) => setPauseOutsideBounds(e.target.checked)}
-                    />
-                    Pause any clip
-                  </label>
+                  <SMCheckbox
+                    checked={pauseOutsideBounds}
+                    onChange={setPauseOutsideBounds}
+                    label="Pause any clip"
+                  />
                 </div>
                 <div className="row">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={startShortsInFullscreen}
-                      onChange={(e) => setStartShortsInFullscreen(e.target.checked)}
-                    />
-                    Start shorts in fullscreen
-                  </label>
+                  <SMCheckbox
+                    checked={startShortsInFullscreen}
+                    onChange={(v) => { setStartShortsInFullscreen(v); trackReload(StorageKey.FAKE_FULLSCREEN_SHORTS); }}
+                    label="Start shorts in fullscreen"
+                    requiresReload={REQUIRES_RELOAD.has(StorageKey.FAKE_FULLSCREEN_SHORTS)}
+                  />
                 </div>
               </div>
 
@@ -146,34 +154,25 @@ function App() {
               <div>
                 <div style={{ fontWeight: 'bold', marginBottom: '10px', fontSize: '14px', color: '#333' }}>Controls</div>
                 <div className="row">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={arrowFrameMode}
-                      onChange={(e) => setArrowFrameMode(e.target.checked)}
-                    />
-                    Use arrow keys to move back/forth frames
-                  </label>
+                  <SMCheckbox
+                    checked={arrowFrameMode}
+                    onChange={setArrowFrameMode}
+                    label="Use arrow keys to move back/forth frames"
+                  />
                 </div>
                 <div className="row">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={clickZoom}
-                      onChange={(e) => setClickZoom(e.target.checked)}
-                    />
-                    Click to zoom video (1.5x, centered on click)
-                  </label>
+                  <SMCheckbox
+                    checked={clickZoom}
+                    onChange={setClickZoom}
+                    label="Click to zoom video (1.5x, centered on click)"
+                  />
                 </div>
                 <div className="row">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={followZoom}
-                      onChange={(e) => setFollowZoom(e.target.checked)}
-                    />
-                    Zoom video follows mouse (1.5x)
-                  </label>
+                  <SMCheckbox
+                    checked={followZoom}
+                    onChange={setFollowZoom}
+                    label="Zoom video follows mouse (1.5x)"
+                  />
                 </div>
               </div>
             </div>
@@ -189,14 +188,11 @@ function App() {
               <div style={{ marginBottom: '20px', paddingBottom: '16px', borderBottom: '2px solid #ddd' }}>
                 <div style={{ fontWeight: 'bold', marginBottom: '10px', fontSize: '14px', color: '#333' }}>Caption Settings</div>
                 <div className="row">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={cleanupCaptionsOnArchive}
-                      onChange={(e) => setCleanupCaptionsOnArchive(e.target.checked)}
-                    />
-                    Cleanup captions on archive
-                  </label>
+                  <SMCheckbox
+                    checked={cleanupCaptionsOnArchive}
+                    onChange={setCleanupCaptionsOnArchive}
+                    label="Cleanup captions on archive"
+                  />
                 </div>
                 <div style={{ fontSize: '12px', color: '#666', marginTop: '8px', marginLeft: '24px' }}>
                   Removes formatting issues, multiline spam, and IE11 incompatibilities. Normalizes HTML entities like &amp;nbsp; and invisible characters.
@@ -229,6 +225,7 @@ function App() {
                         } else if (currentValue === "false") {
                           localStorage.setItem(key, "true");
                         }
+                        notifyStorageKey(key);
                         setKeysIsActive(!keysIsActive);
                         setTimeout(() => setKeysIsActive(!keysIsActive), 0);
                       }}

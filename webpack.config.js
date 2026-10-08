@@ -32,9 +32,7 @@ const baseConfig = {
     smplayer: './src/app/templates/smplayer/index.tsx',
     home: './src/app/templates/home/index.tsx',
     settings: './src/app/templates/settings/index.tsx',
-    hidden_settings: './src/app/templates/hidden_settings/index.tsx',
     archive: './src/app/templates/archive/index.tsx',
-    hidden_archive: './src/app/templates/hidden_archive/index.tsx',
   },
   mode: mode,
   module: {
@@ -92,13 +90,15 @@ const baseConfig = {
 const targetConfigs = {
   ie11: {
     output: {
-      filename: 'ie11/[name].bundle.js'
+      filename: 'ie11/[name].bundle.js',
+      chunkFilename: 'ie11/[name].chunk.js'
     },
     target: ['web', 'es5'],
   },
   webview2: {
     output: {
-      filename: 'webview2/[name].bundle.js'
+      filename: 'webview2/[name].bundle.js',
+      chunkFilename: 'webview2/[name].chunk.js'
     },
     target: ['web', 'es2017'],
   }
