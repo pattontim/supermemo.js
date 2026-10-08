@@ -31,6 +31,72 @@
         visible. SM does searches for this as a raw string
       -->
     </div>
-    <script src="/smplayer.bundle.js"></script>
+
+    <script>
+      // Dual-Target Bundle Loader for SM18 (IE11) and SM20 (WebView2)
+      // Automatically detects browser and loads the appropriate bundle
+      
+      (function() {
+        // Detect target from URL parameter first (from server-side routing)
+        // const params = new URLSearchParams(window.location.search);
+        // IE11 supported...
+        // const params = window.location.search + '&target=ie11';
+        // let target = params.get('target') || 'ie11';
+        // let target = window.location.search.includes('target=webview2') ? 'webview2' : 'ie11';
+        let target = "ie11";
+        
+        // Override with browser detection if available
+        if (window.MSInputMethodContext && document.documentMode) {
+          // IE11 detected
+          target = 'ie11';
+          console.log('[Loader] IE11 detected (window.documentMode)');
+        } else if (window.chrome && window.chrome.webview) {
+          // WebView2 detected
+          target = 'webview2';
+          console.log('[Loader] WebView2 detected (window.chrome.webview)');
+        } else {
+          // Modern browser - default to IE11 for SM18 compatibility in dev
+          target = 'ie11';
+          console.log('[Loader] Modern browser detected, defaulting to ie11');
+        }
+        
+        console.log('[Loader] Loading bundle for target:', target, 'from:', location.href);
+        
+        // Inject global vars for bundle
+        window.BUILD_TARGET = target;
+        window.BUNDLE_MODE = 'http';
+        
+        // Load the appropriate bundle based on target
+        const bundleUrl = '/' + target + '/smplayer.bundle.js';
+        const script = document.createElement('script');
+        script.src = bundleUrl;
+        script.type = 'text/javascript';
+        script.async = true;
+        
+        script.onerror = function() {
+          console.error('[Loader] Error loading bundle:', bundleUrl);
+          console.error('[Loader] Check that webpack builds were run for target:', target);
+          console.error('[Loader] Available bundles: /ie11/smplayer.bundle.js, /webview2/smplayer.bundle.js');
+        //   document.getElementById('root').innerHTML = 
+        //   `
+        //     <div style="padding: 20px; font-family: monospace; color: red;">
+        //       Error: Failed to load bundle from ${bundleUrl}<br>
+        //       <br>
+        //       Target: ${target}<br>
+        //       Browser: ${navigator.userAgent.substring(0, 50)}...<br>
+        //       <br>
+        //       <small>Check console for more details</small>
+        //     </div>
+        //   `;
+        // };
+        };
+        
+        script.onload = function() {
+          console.log('[Loader] Bundle loaded successfully');
+        };
+        
+        document.body.appendChild(script);
+      })();
+    </script>
   </body>
 </html>

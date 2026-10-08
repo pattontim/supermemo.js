@@ -18,6 +18,12 @@ export enum StorageKey {
 
   /** Cleanup captions on archive (remove formatting issues, multiline spam, IE11 incompatibilities) */
   CLEANUP_CAPTIONS_ON_ARCHIVE = 'CLEANUP_CAPTIONS_ON_ARCHIVE',
+
+  /** Click-to-zoom mode: magnify video 1.5x, recenter on click position */
+  CLICK_ZOOM = 'CLICK_ZOOM',
+
+  /** Mouse-follow zoom: magnify video 1.5x, viewport follows the cursor */
+  FOLLOW_ZOOM = 'FOLLOW_ZOOM',
 }
 
 export function useLocalStorage<T>(key: string, initialValue: T, bufferTime: number = 1000) {
