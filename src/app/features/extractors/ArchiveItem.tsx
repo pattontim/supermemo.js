@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { SMButton } from '../sm/SMControls';
+import { SMButton } from '../sm/SMElements';
 
 // TODO: pick from archive.ts
 type ArchiveInfoData = {

@@ -210,7 +210,7 @@ export default function ClipExtractor<T extends unknown>({resume, start, stop, b
     }
 
     return (
-        <div style={{ opacity: isActive ? 1 : 0.5 }} onMouseEnter={() => handleMouseEnter()}>
+        <div hidden style={{ opacity: isActive ? 1 : 0.5 }} onMouseEnter={() => handleMouseEnter()}>
             <div id="customPrompt" hidden>
                 <div className="hd">Save As</div>
                 <div className="bd">

@@ -6,6 +6,7 @@ import ReactPlayer from 'react-player/lazy';
 // import ExtractBoard from './features/clip/ExtractBoard.js'; 
 import ClipExtractor from '../../features/extractors/ClipExtractor';
 import CaptionsTracks from '../../features/language/CaptionsTracks';
+import SMControls, { SMControlsHandle } from '../../features/player/SMControls';
 // import Counter from './features/counter/Counter.js';
 // import Subtitles from './features/language/Subtitles.js';
 import { ArchiveInfo } from '../../../../ytjs/src/utils/archive';
@@ -194,9 +195,10 @@ function App() {
    * Controls visibility flag.
    * When true, displays native ReactPlayer controls (play, pause, progress bar, volume, etc.).
    * When false, hides all built-in controls for custom UI implementations.
+   * Set to false here because SMControls renders a custom Hitchhiker-style bar over the player.
    * @type {boolean}
    */
-  const [controls, setControls] = useState(true);
+  const [controls, setControls] = useState(false);
 
   /**
    * Light mode flag - Enables thumbnail preview loading behavior.
@@ -329,6 +331,20 @@ function App() {
   const [settingsPaneOpen, setSettingsPaneOpen] = useState(false);
   const [archivePaneOpen, setArchivePaneOpen] = useState(false);
 
+  /**
+   * Custom player controls UI state (SMControls overlay).
+   * - smSettingsOpen: the in-player video.js-style settings popover visibility.
+   * - trackList: caption tracks available on the <video> element.
+   * - activeSrclang: srclang of the currently shown caption track (null = off).
+   * - qualityHeights: available DASH video heights (strings) for the Quality submenu.
+   * - selectedOption: the extract currently mirrored in the overlay/settings list.
+   */
+  const [smSettingsOpen, setSmSettingsOpen] = useState(false);
+  const [trackList, setTrackList] = useState<{ label: string, srclang: string }[]>([]);
+  const [activeSrclang, setActiveSrclang] = useState<string | null>(null);
+  const [qualityHeights, setQualityHeights] = useState<string[]>([]);
+  const [selectedOption, setSelectedOption] = useState<Option | null>(null);
+
   // ============================================================================
   // REFS: Player Instance References
   // ============================================================================
@@ -340,6 +356,19 @@ function App() {
    * @type {React.RefObject<ReactPlayer>}
    */
   const ref = useRef<ReactPlayer>(null)
+
+  /**
+   * Imperative handle to the custom control overlay so the player-wide mouse
+   * handlers can drive show/hide (instant hide on leave, re-arm idle on move).
+   */
+  const smControlsRef = useRef<SMControlsHandle>(null)
+
+  /** Player container ref, used to attach a non-React `selectstart` guard so
+   * double-clicks never select the video element / clipboard. */
+  const playerContainerRef = useRef<HTMLDivElement | null>(null)
+
+  /** Monotonic counter for auto-naming extracts created from the overlay. */
+  const extractNum = useRef(1)
 
   // // SM browser as remote component
   // useEffect(() => {
@@ -522,6 +551,7 @@ function App() {
    * @returns {void}
    */
   const handlePlayerMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if(smControlsRef.current) smControlsRef.current.notifyActivity();
     if (followZoom) applyZoom(e);
   };
 
@@ -577,6 +607,7 @@ function App() {
    */
   const handleProgress = (state: any) => {
     console.log('onProgress', state.playedSeconds, (state.playedSeconds * 10).toFixed(2) + '%')
+    setLoaded(state.loaded ?? 0)
     if(isShortClip) {
       scheduleBeep(state.playedSeconds);
     }
@@ -796,7 +827,8 @@ function App() {
     seekVideo(start);
     setPlaying(true);
     console.log('player ready');
-    customDebugger();    
+    customDebugger();
+    refreshQualityHeights();    
 
     // Restore player position from session when returning from settings
     if (sessionRestored && session && ref.current) {
@@ -804,6 +836,10 @@ function App() {
       ref.current.seekTo(session.played);
       setPlayed(session.played);
     }
+    refreshTracks();
+    // CaptionsTracks appends <track> elements in its own effect which may run
+    // after this callback; re-read shortly after so the captions menu is populated.
+    setTimeout(refreshTracks, 500);
   }
 
   /**
@@ -941,6 +977,208 @@ function App() {
     } else if (type === "stop") {
         setStop(formatTime(convertHHMMSS2Seconds(stop) + offset, duration));
     }
+  }
+
+  // ============================================================================
+  // CUSTOM CONTROLS: Extract management & caption toggling (SMControls overlay)
+  // ============================================================================
+
+  /**
+   * Sends clip data to SuperMemo through the same bridge path used by ClipExtractor.
+   * Keeps the SM18 hidden-input contract (videoid/start/stop/extracts) intact.
+   * @param extracts - The full extracts list to persist.
+   * @param overrideStart - Optional start override (used when selecting an extract).
+   * @param overrideStop - Optional stop override (used when selecting an extract).
+   * @returns {void}
+   */
+  function sendClipData(extracts: Option[], overrideStart?: string, overrideStop?: string) {
+    supermemo.sendClipData({
+      videoId: videoid || '',
+      resume: resume || '0:00:00',
+      start: overrideStart || start || '0:00:00',
+      stop: overrideStop || stop || '0:00:00',
+      extracts: extracts,
+    });
+  }
+
+  /**
+   * Creates a new extract from an explicit [fromSec, toSec] range and appends it.
+   * Prompts for a name on release (per the agreed hold-to-extract behavior), and
+   * toggles the emulated #customPromptVisible flag so SM's Learn button stays valid.
+   * @param fromSec - Extract start in seconds.
+   * @param toSec - Extract end in seconds.
+   * @returns {void}
+   */
+  function createExtract(fromSec: number, toSec: number) {
+    setPlaying(false);
+    const startSec = Math.min(fromSec, toSec);
+    const stopSec = Math.max(fromSec, toSec);
+    const defaultName = "Extract #" + extractNum.current++;
+    // Mirror ClipExtractor's SM18 prompt contract: #customPromptVisible must be 1
+    // while prompting and the #extractName field carries the suggested name.
+    const promptVisibleInput = document.getElementById('customPromptVisible') as HTMLInputElement;
+    const promptNameInput = document.getElementById('extractName') as HTMLInputElement;
+    if (promptVisibleInput) promptVisibleInput.value = "1";
+    if (promptNameInput) promptNameInput.value = defaultName;
+    const newOptionText = prompt('Enter an extract name:', defaultName);
+    if (newOptionText) {
+      const newOption: Option = {
+        value: formatTime(startSec, duration) + ' - ' + formatTime(stopSec, duration),
+        label: newOptionText
+      };
+      const updatedOptions = [...options, newOption];
+      setOptions(updatedOptions);
+      setSelectedOption(newOption);
+      sendClipData(updatedOptions);
+      handleResetAt('stop');
+    }
+    if (promptVisibleInput) promptVisibleInput.value = "0";
+    if (promptNameInput) promptNameInput.value = "";
+    setPlaying(true);
+  }
+
+  /**
+   * Extracts with a fixed offset around the current playhead (click on the ✂ button).
+   * @param offsetSec - Offset applied around `played` (e.g. -5 for the last 5 seconds).
+   * @returns {void}
+   */
+  function handleExtractClick(offsetSec: number) {
+    createExtract(played + offsetSec, played);
+  }
+
+  /**
+   * Selects an extract: mirrors its bounds into start/stop, persists, and plays it.
+   * Mirrors ClipExtractor.handleSelectChange.
+   * @param opt - The extract option to select.
+   * @returns {void}
+   */
+  function handleSelectExtract(opt: Option) {
+    const parts = opt.value.split(' - ');
+    const selStart = parts[0];
+    const selStop = parts[1];
+    setSelectedOption(opt);
+    handleSetAbs('start', convertHHMMSS2Seconds(selStart));
+    handleSetAbs('stop', convertHHMMSS2Seconds(selStop));
+    sendClipData(options, selStart, selStop);
+    handleGoTo('start');
+  }
+
+  /**
+   * Moves one boundary of an extract (drag on the nav bar) in whole seconds.
+   * Keyed by array index (not object identity) because each commit replaces the
+   * option object, which would otherwise make the drag's stored reference stale.
+   * @param index - Index of the extract in `options`.
+   * @param which - Which bound to move: "start" or "stop".
+   * @param sec - The new absolute time in seconds (already snapped by the caller).
+   * @returns {void}
+   */
+  function handleMoveExtractBound(index: number, which: "start" | "stop", sec: number) {
+    const opt = options[index];
+    if (!opt) return;
+    const parts = opt.value.split(' - ');
+    parts[which === "start" ? 0 : 1] = formatTime(sec, duration);
+    const updated = options.map(function (o, idx) {
+      return idx === index ? { value: parts.join(' - '), label: o.label } : o;
+    });
+    setOptions(updated);
+    sendClipData(updated);
+  }
+
+  /**
+   * Removes a pending extract (X button or dragged off the nav bar).
+   * @param opt - The extract option to remove.
+   * @returns {void}
+   */
+  function handleRemoveExtract(opt: Option) {
+    const updated = options.filter(function (o) { return o !== opt; });
+    setOptions(updated);
+    if (selectedOption === opt) setSelectedOption(null);
+    sendClipData(updated);
+  }
+
+  /**
+   * Reads the <video> element's text tracks into state for the captions menu.
+   * CaptionsTracks appends <track> elements in an effect, so this may return an
+   * empty list if called too early; callers re-invoke it when the menu opens.
+   * @returns {void}
+   */
+  function refreshTracks() {
+    const videoElement = document.getElementsByTagName('video')[0];
+    if (!videoElement) return;
+    const list: { label: string, srclang: string }[] = [];
+    const textTracks = videoElement.textTracks;
+    for (let i = 0; i < textTracks.length; i++) {
+      const track = textTracks[i];
+      list.push({
+        label: track.label || ('Track ' + (i + 1)),
+        srclang: (track as any).srclang || (track as any).language || ''
+      });
+    }
+    setTrackList(list);
+  }
+
+  /**
+   * Selects a caption language by flipping text track modes on the <video>.
+   * Same mechanism CaptionsTracks uses; covers both mp4 (appended tracks) and
+   * mpd (dash.js-surfaced manifest tracks). Passing null turns captions off.
+   * @param lang - The srclang/language to show, or null for off.
+   * @returns {void}
+   */
+  function selectTrack(lang: string | null) {
+    const videoElement = document.getElementsByTagName('video')[0];
+    if (!videoElement) return;
+    setActiveSrclang(lang);
+    const textTracks = videoElement.textTracks;
+    for (let i = 0; i < textTracks.length; i++) {
+      const track = textTracks[i];
+      const trackLang = (track as any).srclang || (track as any).language || '';
+      track.mode = lang && trackLang === lang ? "showing" : "hidden";
+    }
+  }
+
+  /**
+   * Reads the DASH video bitrate list into height strings for the Quality menu.
+   * Safe to call for non-DASH (mp4) sources; leaves the list empty then.
+   * @returns {void}
+   */
+  function refreshQualityHeights() {
+    const player = ref.current?.getInternalPlayer('dash');
+    if (!player) {
+      setQualityHeights([]);
+      return;
+    }
+    const heights = player.getBitrateInfoListFor('video').map(function (info: { height: any }) {
+      return String(info.height);
+    });
+    setQualityHeights(heights);
+  }
+
+  /**
+   * Seeks the player to an absolute time in seconds (used by the custom seek bar).
+   * Routes through handleSeek so boundary enforcement stays consistent.
+   * @param sec - Target position in seconds.
+   * @returns {void}
+   */
+  function seekToSec(sec: number) {
+    setPlayed(sec);
+    if (ref.current) ref.current.seekTo(sec, 'seconds');
+    handleSeek(sec);
+  }
+
+  /**
+   * Sets the media element volume directly (bypassing the react-player prop
+   * round-trip) and mirrors it into state. The direct write guarantees the
+   * custom slider never desyncs (e.g. when the volumechange listener attached
+   * before the <video> existed).
+   * @param v - Volume level 0..1.
+   * @returns {void}
+   */
+  function setVolumeAbs(v: number) {
+    const el = ref.current && (ref.current.getInternalPlayer() as HTMLVideoElement);
+    if (el && typeof el.volume === 'number') {
+      el.volume = v;
+    }
+    setVolume(v);
   }
 
   // ============================================================================
@@ -1139,6 +1377,7 @@ Description:\n${archiveInfo.description}
    * @returns {void}
    */
   function handleMouseEnter(){
+    if(smControlsRef.current) smControlsRef.current.notifyActivity();
     if(autoHover){
       setIsMouseOverPlayer(true);
       if(isShortClip || autoHoverLongClips){
@@ -1156,6 +1395,7 @@ Description:\n${archiveInfo.description}
    * @returns {void}
    */
   function handleMouseLeave() {
+    if(smControlsRef.current) smControlsRef.current.hideNow();
     if(autoHover){
       setIsMouseOverPlayer(false);
       if(isShortClip || autoHoverLongClips){
@@ -1228,9 +1468,10 @@ Description:\n${archiveInfo.description}
    * @returns {void}
    */
   function handlePlayerDoubleClick(e: React.MouseEvent<HTMLDivElement>) {
+    // Never let a double-click select the <video> element / clipboard.
+    e.preventDefault();
     if (pseudoFullscreen) {
       setPseudoFullscreen(false);
-      e.preventDefault();
       e.stopPropagation();
     }
   }
@@ -1288,6 +1529,18 @@ Description:\n${archiveInfo.description}
         onClick={(e) => handlePlayerClick(e)}
         onMouseMove={(e) => handlePlayerMouseMove(e)}
         onDoubleClick={(e) => handlePlayerDoubleClick(e)}
+        ref={(el) => {
+          playerContainerRef.current = el;
+          // Attach a one-time non-React guard so double-clicks / drags never
+          // select the <video> element or trigger clipboard selection.
+          if (el && !(el as any).__smSelectGuard) {
+            (el as any).__smSelectGuard = true;
+            el.addEventListener('selectstart', (ev: Event) => ev.preventDefault());
+            el.addEventListener('mousedown', (ev: MouseEvent) => {
+              if (ev.detail > 1) ev.preventDefault();
+            });
+          }
+        }}
         style={{
           flex: pseudoFullscreen ? 1 : 'initial',
           display: 'flex',
@@ -1295,7 +1548,10 @@ Description:\n${archiveInfo.description}
           alignItems: 'center',
           minHeight: pseudoFullscreen ? '100%' : 'auto',
           overflow: (clickZoom || followZoom) ? 'hidden' : 'visible',
-          position: 'relative'
+          position: 'relative',
+          userSelect: 'none',
+          WebkitUserSelect: 'none',
+          msUserSelect: 'none'
         }}
       >
         <div>
@@ -1356,6 +1612,41 @@ Description:\n${archiveInfo.description}
           onProgress={handleProgress}
           onDuration={handleDuration}>
         </ReactPlayer>
+        <SMControls
+          ref={smControlsRef}
+          playing={playing}
+          setPlaying={setPlaying}
+          played={played}
+          duration={duration}
+          loaded={loaded}
+          volume={volume}
+          setVolume={setVolumeAbs}
+          muted={muted}
+          setMuted={setMuted}
+          playbackRate={playbackRate}
+          setPlaybackRate={setPlaybackRate}
+          seekToSec={seekToSec}
+          setSeeking={setSeeking}
+          resume={resume}
+          start={start}
+          stop={stop}
+          options={options}
+          onSelectExtract={handleSelectExtract}
+          onMoveExtractBound={handleMoveExtractBound}
+          onRemoveExtract={handleRemoveExtract}
+          onExtractClick={() => handleExtractClick(-5)}
+          onExtractHold={(from, to) => createExtract(from, to)}
+          extractOffsetSec={-5}
+          settingsOpen={smSettingsOpen}
+          setSettingsOpen={setSmSettingsOpen}
+          onFullscreen={() => setPseudoFullscreen(!pseudoFullscreen)}
+          qualities={qualityHeights}
+          setResolution={setResolution}
+          tracks={trackList}
+          activeTrack={activeSrclang}
+          onSelectTrack={selectTrack}
+          onRequestTracks={refreshTracks}
+        />
       </div>
       :
       <div style={{width: '100%', minWidth: 754, minHeight: 424, display: 'flex', justifyContent: 'center', alignItems: 'center'}}>

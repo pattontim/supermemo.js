@@ -1,6 +1,6 @@
 import { StorageKey, useLocalStorage } from "../../../app/utils/storage";
 import React, { useState } from "react";
-import { SMCheckbox } from "../../features/sm/SMControls";
+import { SMCheckbox } from "../../features/sm/SMElements";
 
 /**
  * Settings that require a page reload to take effect (e.g., startup-only

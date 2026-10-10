@@ -1,6 +1,6 @@
 import ArchiveItem from '../../../app/features/extractors/ArchiveItem';
 import React, { useState, useEffect } from 'react';
-import { SMButton, SMRadio, SMTextInput } from '../../features/sm/SMControls';
+import { SMButton, SMRadio, SMTextInput } from '../../features/sm/SMElements';
 
 // TODO: pick from archive.ts
 type ArchiveInfoData = {

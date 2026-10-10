@@ -29,6 +29,9 @@ ytjs/dist/ytjs/**
 ytjs/.tsbuildinfo
 ytjs/dist
 dist/ie11/*.chunk.js
+dist/ie11
+dist/webview2
+_temp
 
 #### !MANUAL EDITS HERE
 temp
