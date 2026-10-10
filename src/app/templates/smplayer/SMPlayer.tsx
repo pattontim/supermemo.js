@@ -542,6 +542,9 @@ function App() {
    * @returns {void}
    */
   const handlePlayerClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    // Keep keyboard focus on the wrapper (which owns handleKeyDown) rather than
+    // letting the clicked <video> steal it and act on the native space key.
+    e.currentTarget.focus();
     if (clickZoom) applyZoom(e);
   };
 
@@ -1444,9 +1447,11 @@ Description:\n${archiveInfo.description}
         seekVideo(formatTime(played - 1, duration));
       }
     } else if (e.key === ' ' || e.key === 'Spacebar') {
-      // e.preventDefault();
-      // e.stopPropagation();
-      // setPlaying(!playing);
+      // Suppress the browser/<video> native space toggle, which would flip the
+      // media element behind react-player's back and desync the custom bar.
+      e.preventDefault();
+      e.stopPropagation();
+      setPlaying(!playing);
       return;
     } else if (e.key === '>') {
       // seek forward one frame assuming 30fps

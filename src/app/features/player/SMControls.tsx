@@ -438,6 +438,26 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
                     var spanStop = b[1];
                     return (
                         <React.Fragment key={i}>
+                            {/* diagonal cross linking the start<->stop bounds
+                                (lt->rb and rt->lb). pointerEvents:none + zIndex:1
+                                keep it decorative and behind the interactive
+                                layers (center click = z2, tick drag = z3). */}
+                            <svg
+                                style={{
+                                    position: "absolute",
+                                    left: pct(spanLeft),
+                                    width: pct(Math.max(0, spanStop - spanLeft)),
+                                    top: -4,
+                                    height: "calc(100% + 8px)",
+                                    pointerEvents: "none",
+                                    overflow: "visible",
+                                    zIndex: 1
+                                }}
+                                preserveAspectRatio="none"
+                            >
+                                <line x1="0%" y1="0" x2="100%" y2="100%" stroke={EXTRACT_TICK} strokeWidth="1" />
+                                <line x1="100%" y1="0" x2="0%" y2="100%" stroke={EXTRACT_TICK} strokeWidth="1" />
+                            </svg>
                             {/* clickable center between the bounds: plays the extract */}
                             <div
                                 title={opt.value + " — " + opt.label}
