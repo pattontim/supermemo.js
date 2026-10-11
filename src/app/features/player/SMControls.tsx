@@ -659,7 +659,18 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
                     <span style={{ fontSize: 13, margin: "0 8px", verticalAlign: "middle" }}>
                         {formatTime(p.played, p.duration)} / {formatTime(p.duration, p.duration)}
                     </span>
+                </div>
 
+                <div
+                    style={{
+                        display: "table-cell",
+                        verticalAlign: "middle",
+                        padding: "2px 10px",
+                        whiteSpace: "nowrap",
+                        textAlign: "right",
+                        width: 116
+                    }}
+                >
                     {/* extract: click = offset extract, hold = range extract.
                         Does NOT pause on press (that would stop the timeline);
                         pause + prompt happen on release via finishExtract(). */}
@@ -700,18 +711,6 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
                             </span>
                         </span>
                     </button>
-                </div>
-
-                <div
-                    style={{
-                        display: "table-cell",
-                        verticalAlign: "middle",
-                        padding: "2px 10px",
-                        whiteSpace: "nowrap",
-                        textAlign: "right",
-                        width: 116
-                    }}
-                >
                     <button
                         type="button"
                         style={iconBtn}
