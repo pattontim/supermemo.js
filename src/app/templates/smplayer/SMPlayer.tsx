@@ -1092,6 +1092,31 @@ function App() {
   }
 
   /**
+   * Moves one boundary of the current clip selection (drag on the blue markers)
+   * in whole seconds. Unlike handleMoveExtractBound this writes the clip's
+   * start/stop state directly. The opposite bound is clamped so the selection
+   * can never invert/collapse (the blue band only renders while stop > start).
+   * @param which - Which clip bound to move: "start" or "stop".
+   * @param sec - The new absolute time in seconds (already snapped by the caller).
+   * @returns {void}
+   */
+  function handleMoveClipBound(which: "start" | "stop", sec: number) {
+    const startSec = start ? convertHHMMSS2Seconds(start) : 0;
+    const stopSec = stop ? convertHHMMSS2Seconds(stop) : 0;
+    if (which === "start") {
+      const clamped = Math.min(sec, stopSec - 1);
+      const val = formatTime(Math.max(0, clamped), duration);
+      setStart(val);
+      sendClipData(options, val, undefined);
+    } else {
+      const clamped = Math.max(sec, startSec + 1);
+      const val = formatTime(clamped, duration);
+      setStop(val);
+      sendClipData(options, undefined, val);
+    }
+  }
+
+  /**
    * Removes a pending extract (X button or dragged off the nav bar).
    * @param opt - The extract option to remove.
    * @returns {void}
@@ -1677,6 +1702,7 @@ Description:\n${archiveInfo.description}
           options={options}
           onSelectExtract={handleSelectExtract}
           onMoveExtractBound={handleMoveExtractBound}
+          onMoveClipBound={handleMoveClipBound}
           onRemoveExtract={handleRemoveExtract}
           onExtractClick={() => handleExtractClick(-5)}
           onExtractHold={(from, to) => createExtract(from, to)}

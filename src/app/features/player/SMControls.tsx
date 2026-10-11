@@ -121,6 +121,7 @@ interface SMControlsProps {
     options: Option[];
     onSelectExtract: (opt: Option) => void;
     onMoveExtractBound: (index: number, which: "start" | "stop", sec: number) => void;
+    onMoveClipBound: (which: "start" | "stop", sec: number) => void;
     onRemoveExtract: (opt: Option) => void;
     onExtractClick: () => void;
     onExtractHold: (fromSec: number, toSec: number) => void;
@@ -168,7 +169,13 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
     var held = useRef(false);
     var pointerDown = useRef(false);
     var drag = useRef<{ index: number; which: "start" | "stop"; moved: boolean } | null>(null);
+    var clipDrag = useRef<{ which: "start" | "stop"; moved: boolean } | null>(null);
     var lastSnap = useRef<number | null>(null);
+    var [markersVisible, setMarkersVisible] = useState(false);
+    // Whether the current scrub gesture started on the blue clip band, and
+    // whether it moved (so a no-move press = click-in-place to reveal markers).
+    var bandPress = useRef(false);
+    var scrubMoved = useRef(false);
     var stripRef = useRef<HTMLDivElement>(null);
     var volRef = useRef<HTMLDivElement>(null);
     var volWrapRef = useRef<HTMLSpanElement>(null);
@@ -221,9 +228,21 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
     // level for the duration of the gesture fixes that.
     useEffect(function () {
         function onMove(e: any) {
-            if (!scrubbingRef.current && !drag.current && !volDragging.current) return;
+            if (!scrubbingRef.current && !drag.current && !clipDrag.current && !volDragging.current) return;
             if (volDragging.current) {
                 applyVol(e);
+                return;
+            }
+            if (clipDrag.current) {
+                var snappedC = Math.round(secFromClientX(e.clientX));
+                setHoverSec(snappedC);
+                clipDrag.current.moved = true;
+                // Only commit on whole-second changes so a fast drag doesn't spam
+                // setStart/setStop + sendClipData on every pixel.
+                if (snappedC !== lastSnap.current) {
+                    lastSnap.current = snappedC;
+                    propsRef.current.onMoveClipBound(clipDrag.current.which, snappedC);
+                }
                 return;
             }
             if (drag.current) {
@@ -239,6 +258,7 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
                 return;
             }
             if (scrubbingRef.current) {
+                scrubMoved.current = true; // any move = a scrub, not a click-in-place
                 var s = secFromClientX(e.clientX);
                 setHoverSec(s);
                 propsRef.current.seekToSec(s);
@@ -280,10 +300,25 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
                 drag.current = null;
                 lastSnap.current = null;
             }
+            if (clipDrag.current) {
+                // Hide the blue markers only after an actual drag (per the spec:
+                // dragging and releasing inside the extract hides them). A bare
+                // mousedown-mouseup on a marker is a click, so keep them visible,
+                // mirroring the !d.moved click-vs-drag convention used above.
+                if (clipDrag.current.moved) setMarkersVisible(false);
+                clipDrag.current = null;
+                lastSnap.current = null;
+            }
             if (scrubbingRef.current) {
                 scrubbingRef.current = false;
                 setScrubbing(false);
                 propsRef.current.setSeeking(false);
+                // A press that began on the blue band and never moved is a
+                // click-in-place: reveal the draggable markers. A press on the
+                // bare strip (or one that dragged) just scrubs as usual.
+                if (bandPress.current && !scrubMoved.current) setMarkersVisible(true);
+                bandPress.current = false;
+                scrubMoved.current = false;
             }
             if (held.current) finishExtract();
         }
@@ -546,15 +581,85 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
                     }}
                 />
 
-                {/* current clip selection (start..stop) highlighted blue */}
-                {p.duration > 0 && selStop > selStart
-                    ? tick(
-                          "selection",
-                          pct(selStart),
-                          SELECTION,
-                          { width: pct(selStop - selStart), opacity: 0.5, top: 0, bottom: 0 }
-                      )
-                    : null}
+                {/* current clip selection (start..stop) highlighted blue — click
+                    in place reveals draggable markers; drag+release hides them */}
+                {p.duration > 0 && selStop > selStart ? (
+                    <React.Fragment>
+                        {/* blue selection band: press here starts a scrub (so
+                            click-drag navigates like the bare strip); a press
+                            that never moves reveals the markers on release */}
+                        <div
+                            style={{
+                                position: "absolute",
+                                top: 0,
+                                bottom: 0,
+                                left: pct(selStart),
+                                width: pct(selStop - selStart),
+                                background: SELECTION,
+                                opacity: 0.5,
+                                cursor: "pointer",
+                                zIndex: 2
+                            }}
+                            onMouseDown={function (e) {
+                                // A marker-handle drag already owns the gesture.
+                                if (drag.current || clipDrag.current) return;
+                                e.stopPropagation();
+                                pointerDown.current = true;
+                                bandPress.current = true;
+                                scrubMoved.current = false;
+                                beginScrub(e);
+                            }}
+                        />
+
+                        {/* draggable blue markers at each end (only while revealed) */}
+                        {markersVisible
+                            ? ([["start", selStart], ["stop", selStop]] as ["start" | "stop", number][]).map(function (pair) {
+                                  var which = pair[0];
+                                  var at = pair[1];
+                                  return (
+                                      <div
+                                          key={"clip-" + which}
+                                          style={{
+                                              position: "absolute",
+                                              top: -4,
+                                              bottom: -4,
+                                              width: tapWidth(18),
+                                              left: "calc(" + pct(at) + " - " + tapWidth(9) + ")",
+                                              cursor: "ew-resize",
+                                              background: "transparent",
+                                              zIndex: 4
+                                          }}
+                                          onMouseDown={function (e) {
+                                              e.stopPropagation();
+                                              e.preventDefault();
+                                              bandPress.current = false; // marker drag, not a band press
+                                              clipDrag.current = { which: which, moved: false };
+                                              // Seed with the current bound so the first
+                                              // move registers without a wasted commit.
+                                              lastSnap.current = Math.round(at);
+                                              armIdle();
+                                          }}
+                                          onClick={function (e) {
+                                              e.stopPropagation();
+                                          }}
+                                      >
+                                          <div
+                                              style={{
+                                                  position: "absolute",
+                                                  left: "50%",
+                                                  marginLeft: -3,
+                                                  top: 0,
+                                                  bottom: 0,
+                                                  width: 6,
+                                                  background: SELECTION
+                                              }}
+                                          />
+                                      </div>
+                                  );
+                              })
+                            : null}
+                    </React.Fragment>
+                ) : null}
 
                 {/* resume / "Mark" tick */}
                 {resumeSec > 0 ? tick("resume", pct(resumeSec), HOVER_TICK, { top: -4, bottom: -4, width: 2 }) : null}
