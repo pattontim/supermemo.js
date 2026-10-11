@@ -26,6 +26,18 @@ export enum StorageKey {
   FOLLOW_ZOOM = 'FOLLOW_ZOOM',
 }
 
+/**
+ * Dispatches the smstorage:<key> event so any live useLocalStorage instance
+ * re-reads its value. Use this alongside a raw localStorage.setItem when
+ * toggling a setting outside of useLocalStorage (e.g. the overlay menus).
+ * IE11-safe: document.createEvent instead of `new Event()`.
+ */
+export const notifyStorageKey = (key: string) => {
+  const evt = document.createEvent('Event');
+  evt.initEvent('smstorage:' + key, true, true);
+  window.dispatchEvent(evt);
+};
+
 export function useLocalStorage<T>(key: string, initialValue: T, bufferTime: number = 1000) {
   const [value, setValue] = useState<T>(() => {
     try {

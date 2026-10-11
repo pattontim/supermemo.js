@@ -12,9 +12,8 @@ import SMControls, { SMControlsHandle } from '../../features/player/SMControls';
 import { ArchiveInfo } from '../../../../ytjs/src/utils/archive';
 
 import { convertHHMMSS2Seconds, convertSeconds2HHMMSS, constrainToRange, formatTime, convertHHMMSS2Vector3D } from '../../utils/Duration';
-import Archive from '../../features/archive/Archive';
 import { StorageKey, useLocalStorage } from '../../utils/storage';
-import ClipTool from '../../features/clip/ClipTool';
+import { screenshotVideo, copyCue, translateCue, summarizeWithAI, openInYouTube } from '../../utils/videoActions';
 import { InlinePane } from '../../features/sm/InlinePane';
 import { ytjsHost } from '../../utils/client';
 import { decodeOptionsFromSearchParam, encodeOptionsToSearchParam, decodeSessionFromSearchParam, encodeSessionToSearchParam, Option, Session } from "../../utils/supermemo";
@@ -73,6 +72,12 @@ function App() {
    * The zoomed viewport recenters continuously on the cursor position (mousemove).
    */
   const [followZoom] = useLocalStorage(StorageKey.FOLLOW_ZOOM, false);
+
+  /**
+   * Cleanup-captions-on-archive flag. Read here so the overlay's Archive
+   * actions honour the same setting the old Archive accordion used.
+   */
+  const [cleanupCaptionsOnArchive] = useLocalStorage(StorageKey.CLEANUP_CAPTIONS_ON_ARCHIVE, false);
   
   // ============================================================================
   // STATE: Clip Boundary Management (HH:MM:SS format)
@@ -324,11 +329,10 @@ function App() {
   const [pseudoFullscreen, setPseudoFullscreen] = useState(false);
 
   /**
-   * Inline accordion pane visibility. Panes mount with the parent (see
-   * LOAD_PANES_WITH_PARENT in features/sm/InlinePane) and these flags only
-   * toggle their visibility; the ⚙/🔍︎ archive-info glyphs drive them.
+   * Inline accordion pane visibility. The archive search browser is the one
+   * surviving accordion (its ⚙/🔍︎ archive-info glyph drives it); the old
+   * settings pane now lives inside the SMControls overlay menus.
    */
-  const [settingsPaneOpen, setSettingsPaneOpen] = useState(false);
   const [archivePaneOpen, setArchivePaneOpen] = useState(false);
 
   /**
@@ -1250,6 +1254,47 @@ Description:\n${archiveInfo.description}
       alert('Video details copied to clipboard!');
   }
 
+  /** Validates a SuperMemo / YouTube video id (slug of the expected length). */
+  function isValidSMId(id: string, expectedLen: number = 11) {
+    if (id.trim().length != expectedLen) return false;
+    const matching = id.trim().match(/^[a-zA-Z0-9_\-]+$/);
+    if (!matching || matching.length != 1) return false;
+    return matching[0].length == expectedLen;
+  }
+
+  /**
+   * Archives the current video (lifted from the old Archive accordion).
+   * Requests the backend archive endpoint with the requested quality and
+   * options; defaults mirror the accordion's Best / captions behaviour.
+   */
+  function handleArchive(quality?: string, overwrite: boolean = false, captions: boolean = true, video: boolean = true) {
+    const archiveId = queryParameters.get("videoid")?.trim() ?? "";
+    if (!isValidSMId(archiveId)) {
+      alert("Invalid YouTube Video ID: " + archiveId);
+      return;
+    }
+
+    const archiveReq = new XMLHttpRequest();
+    const archiveUrl = new URL("http://" + ytjsHost + "/archive/" + archiveId);
+    video && archiveUrl.searchParams.append("quality", quality ?? "best");
+    archiveUrl.searchParams.append("video", `${video}`);
+    archiveUrl.searchParams.append("captions", `${captions}`);
+    overwrite && archiveUrl.searchParams.append("overwrite", "true");
+    cleanupCaptionsOnArchive && archiveUrl.searchParams.append("cleanup", "true");
+    archiveReq.open('GET', archiveUrl.toString());
+    archiveReq.responseType = 'json';
+    archiveReq.onload = function () {
+      if (archiveReq.status !== 200) {
+        console.log('Error: ' + archiveReq.status);
+        alert("Failed to archive video!");
+        return;
+      }
+      console.log("Metadata:" + archiveReq.response);
+      alert("Successfully Archived!");
+    }
+    archiveReq.send();
+  }
+
   /**
    * Updates styling of stop time input field based on player state.
    * Applied border styling:
@@ -1373,37 +1418,32 @@ Description:\n${archiveInfo.description}
 
   /**
    * Handles mouse entering the player area.
-   * If `autoHover` is enabled:
-   * - Sets isMouseOverPlayer to true
+   * Always tracks mouse presence (isMouseOverPlayer), which handlePlay uses to
+   * permit manual playback. Auto-play is gated separately on `autoHover`:
    * - For short clips: Starts automatic playback
    * - For long clips: Starts playback only if `autoHoverLongClips` is enabled
    * @returns {void}
    */
   function handleMouseEnter(){
     if(smControlsRef.current) smControlsRef.current.notifyActivity();
-    if(autoHover){
-      setIsMouseOverPlayer(true);
-      if(isShortClip || autoHoverLongClips){
-        setPlaying(true);
-      }
+    setIsMouseOverPlayer(true);
+    if(autoHover && (isShortClip || autoHoverLongClips)){
+      setPlaying(true);
     }
   }
 
   /**
    * Handles mouse leaving the player area.
-   * If `autoHover` is enabled:
-   * - Sets isMouseOverPlayer to false
+   * Always tracks mouse presence; auto-pause is gated separately on `autoHover`:
    * - For short clips: Stops automatic playback
    * - For long clips: Stops playback only if `autoHoverLongClips` is enabled
    * @returns {void}
    */
   function handleMouseLeave() {
     if(smControlsRef.current) smControlsRef.current.hideNow();
-    if(autoHover){
-      setIsMouseOverPlayer(false);
-      if(isShortClip || autoHoverLongClips){
-        setPlaying(false);
-      }
+    setIsMouseOverPlayer(false);
+    if(autoHover && (isShortClip || autoHoverLongClips)){
+      setPlaying(false);
     }
     // Reset click-zoom transform when leaving the player
     if (clickZoom || followZoom) {
@@ -1512,7 +1552,6 @@ Description:\n${archiveInfo.description}
         ...(isShortClip && {backgroundColor: "yellowgreen"})
       }}>
         <div className='row' style={{ border: "1px solid black", borderBottom: "0px", borderRight: "0px", borderTop: "0px"} }>
-          <div onClick={() => setSettingsPaneOpen(!settingsPaneOpen)} style={{borderRight: "1px solid black"}}>⚙</div>
           <div onClick={() => setArchivePaneOpen(!archivePaneOpen)} style={{borderRight: "1px solid black"}}>🔍︎</div>
           <div className="archive-info-title" title={archiveInfo.title} onClick={() => handleTitleClicked()}>
             {archiveInfo.title.substring(0, 44) + (archiveInfo.title.length > 46 ? ".." : "")}
@@ -1651,6 +1690,14 @@ Description:\n${archiveInfo.description}
           activeTrack={activeSrclang}
           onSelectTrack={selectTrack}
           onRequestTracks={refreshTracks}
+          v_id={queryParameters.get("videoid")?.trim() ?? ""}
+          info={archiveInfo}
+          onScreenshot={screenshotVideo}
+          onCopyCue={function (ctx?: number) { copyCue(ctx); }}
+          onTranslateCue={function (ctx?: number) { translateCue(ctx); }}
+          onSummarize={function () { summarizeWithAI(queryParameters.get("videoid")?.trim() ?? ""); }}
+          onOpenYT={function () { openInYouTube(queryParameters.get("videoid")?.trim() ?? "", start); }}
+          onArchive={handleArchive}
         />
       </div>
       :
@@ -1686,21 +1733,12 @@ Description:\n${archiveInfo.description}
         {/* <Counter /> */}
         {/* <Subtitles /> */}
         {/* <ReactExtension /> */}
-        <ClipTool v_id={queryParameters.get("videoid")?.trim() ?? ""} info={archiveInfo} handleCopyVideoDetails={handleCopyVideoDetails} setResolution={setResolution} 
-        start={start} stop={stop}/>
-        <InlinePane
-          paneKey="settings"
-          title="Settings"
-          expanded={settingsPaneOpen}
-          onToggle={setSettingsPaneOpen}
-        />
         <InlinePane
           paneKey="archive"
           title="Archive"
           expanded={archivePaneOpen}
           onToggle={setArchivePaneOpen}
         />
-        { archiveInfo && <Archive v_id={queryParameters.get("videoid")?.trim() ?? ""} info={archiveInfo} setInfo={setArchiveInfo}/> }
         { archiveInfo?.captions?.caption_tracks &&
         archiveInfo.captions.caption_tracks.length > 0 ?
           <CaptionsTracks

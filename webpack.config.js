@@ -31,7 +31,6 @@ const baseConfig = {
   entry : {
     smplayer: './src/app/templates/smplayer/index.tsx',
     home: './src/app/templates/home/index.tsx',
-    settings: './src/app/templates/settings/index.tsx',
     archive: './src/app/templates/archive/index.tsx',
   },
   mode: mode,

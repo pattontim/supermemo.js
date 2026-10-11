@@ -9,7 +9,6 @@ import React, { Suspense, lazy, useEffect, useState } from 'react';
 export const LOAD_PANES_WITH_PARENT = false;
 
 const PANES = {
-  settings: lazy(() => import('../../templates/settings/Settings')),
   archive: lazy(() => import('../../templates/archive/Archive')),
 } as const;
 

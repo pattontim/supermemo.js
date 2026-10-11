@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef } from "react";
 import { convertHHMMSS2Seconds, formatTime } from "../../utils/Duration";
 import { Option } from "../../utils/supermemo";
+import { StorageKey, notifyStorageKey } from "../../utils/storage";
+import { ArchiveInfo } from "../../../../ytjs/src/utils/archive";
 
 /**
  * SMControls
@@ -32,6 +34,62 @@ var SELECTION = "#167ac6";
 var BAR_BG = "rgba(20,20,20,0.65)";
 var FG = "#eeeeee";
 var HOVER_TICK = "#ffffff";
+var ON_COLOR = "#4CAF50";
+var OFF_COLOR = "#f44336";
+
+/** Player-behaviour settings surfaced as on/off toggles in the Settings menu.
+ * Keys map 1:1 to StorageKey enum values (the same localStorage contract the
+ * old Settings accordion used, so live useLocalStorage hooks stay in sync).
+ * Rows are grouped exactly as the old accordion grouped them; as before, the
+ * "play" and "pause" rows of a hover group share one underlying key. */
+var SETTINGS_PLAYER: { group: string; rows: { key: string; label: string }[] }[] = [
+    {
+        group: "Short Clips",
+        rows: [
+            { key: StorageKey.AUTO_HOVER, label: "Play/pause on hover" },
+            { key: StorageKey.AUTO_PLAY_SHORTS_ALWAYS, label: "Always autoplay shorts on start" }
+        ]
+    },
+    {
+        group: "Long Clips",
+        rows: [
+            { key: StorageKey.AUTO_HOVER_LONG_CLIPS, label: "Apply hover to long clips" }
+        ]
+    },
+    {
+        group: "Outside Clip Bounds",
+        rows: [
+            { key: StorageKey.AUTO_HOVER_OUTSIDE_CLIP_BOUNDS, label: "Play/pause outside clip bounds" },
+            { key: StorageKey.FAKE_FULLSCREEN_SHORTS, label: "Start shorts in fullscreen" }
+        ]
+    },
+    {
+        group: "Controls",
+        rows: [
+            { key: StorageKey.ARROW_FRAME_MODE, label: "Arrow keys move back/forth frames" },
+            { key: StorageKey.CLICK_ZOOM, label: "Click to zoom" },
+            { key: StorageKey.FOLLOW_ZOOM, label: "Follow-mouse zoom" }
+        ]
+    }
+];
+
+/** Archive/download settings (also surfaced in a settings submenu). */
+var SETTINGS_ARCHIVE: { key: string; label: string }[] = [
+    { key: StorageKey.CLEANUP_CAPTIONS_ON_ARCHIVE, label: "Cleanup captions on archive" }
+];
+
+/**
+ * Best-guess quality label of an archive, taken from the first available
+ * download format (same approximation the old Archive accordion used). Written
+ * without Array.prototype.at for IE11 safety.
+ */
+function getQualityLabel(info?: { file_formats?: Record<string, { quality_label?: string }> }): string {
+    var formats = (info && info.file_formats) ? info.file_formats : {};
+    var keys = Object.keys(formats);
+    if (keys.length === 0) return "???";
+    var first = formats[keys[0]];
+    return (first && first.quality_label) ? first.quality_label : "???";
+}
 
 /** Imperative handle exposed to the parent so it can drive show/hide from the
  * player-wide mouse handlers (instant hide on leaving the player, re-arm the
@@ -76,6 +134,15 @@ interface SMControlsProps {
     activeTrack: string | null;
     onSelectTrack: (srclang: string | null) => void;
     onRequestTracks: () => void;
+    // page actions (lifted from ClipTool / Archive)
+    v_id: string;
+    info?: ArchiveInfo;
+    onScreenshot: () => void;
+    onCopyCue: (ctx?: number) => void;
+    onTranslateCue: (ctx?: number) => void;
+    onSummarize: () => void;
+    onOpenYT: () => void;
+    onArchive: (quality?: string, overwrite?: boolean, captions?: boolean, video?: boolean) => void;
 }
 
 var IDLE_MS = 2000;
@@ -86,7 +153,10 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
     var [hoverSec, setHoverSec] = useState<number | null>(null);
     var [scrubbing, setScrubbing] = useState(false);
     var [volumeOpen, setVolumeOpen] = useState(false);
-    var [menu, setMenu] = useState<string>("main"); // main | speed | quality | pending
+    var [menu, setMenu] = useState<string>("main"); // main | speed | quality | lang | pending | actions | captions | archiveActions | archive | setPlayer | setArchive | flags
+    // Bumped after a raw localStorage write so the open settings/flags menu
+    // repaints with the new ON/OFF state (localStorage isn't reactive).
+    var [tickN, setTickN] = useState(0);
 
     // Refs mirroring props/state so the global mouse listeners (registered once)
     // always read current values without re-registering.
@@ -318,6 +388,7 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
         height: 36,
         padding: 0,
         border: 0,
+        borderRadius: 2,
         background: "transparent",
         color: FG,
         cursor: "pointer",
@@ -332,6 +403,64 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
         cursor: "pointer",
         whiteSpace: "nowrap"
     };
+
+    /** Whether the current video is archived (mirrors the old Archive accordion:
+     * archived_on is a string but is tested for keys). */
+    var isArchived = Object.keys((p.info && p.info.archived_on) ? p.info.archived_on : []).length !== 0;
+
+    /**
+     * A boolean-setting row with a sliding on/off toggle. Reads the raw
+     * localStorage value (the same contract useLocalStorage writes) and toggles
+     * it, then dispatches smstorage:<key> so live hooks update, and bumps tickN
+     * to repaint. div/span + absolute positioning only (SM parser + IE11 safe).
+     */
+    function toggleRow(key: string, label: string, reactKey?: string): JSX.Element {
+        void tickN; // dependency so the row re-renders after setTickN
+        var raw = typeof window !== "undefined" ? window.localStorage.getItem(key) : null;
+        var on = raw === "true";
+        return (
+            <div
+                key={reactKey || key}
+                style={{ ...menuItem, display: "table", width: "100%", boxSizing: "border-box" }}
+                onClick={function () {
+                    window.localStorage.setItem(key, on ? "false" : "true");
+                    notifyStorageKey(key);
+                    setTickN(tickN + 1);
+                }}
+            >
+                <span style={{ display: "table-cell", verticalAlign: "middle", paddingRight: 12 }}>{label}</span>
+                <span style={{ display: "table-cell", verticalAlign: "middle", textAlign: "right", width: 40 }}>
+                    {/* track */}
+                    <span
+                        style={{
+                            position: "relative",
+                            display: "inline-block",
+                            width: 32,
+                            height: 16,
+                            borderRadius: 2,
+                            verticalAlign: "middle",
+                            background: on ? SELECTION : STRIP_BG,
+                            transition: "background 120ms ease"
+                        }}
+                    >
+                        {/* knob */}
+                        <span
+                            style={{
+                                position: "absolute",
+                                top: 2,
+                                left: on ? 18 : 2,
+                                width: 12,
+                                height: 12,
+                                borderRadius: 2,
+                                background: FG,
+                                transition: "left 120ms ease"
+                            }}
+                        />
+                    </span>
+                </span>
+            </div>
+        );
+    }
 
     var tick = function (key: string, left: string, color: string, extra?: React.CSSProperties): JSX.Element {
         return (
@@ -668,9 +797,27 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
                         padding: "2px 10px",
                         whiteSpace: "nowrap",
                         textAlign: "right",
-                        width: 116
+                        width: 224
                     }}
                 >
+                    {/* archive floppy: colour/glyph reflects archived state at a glance.
+                        Opens a popover with the synopsis + archive actions. */}
+                    <button
+                        type="button"
+                        style={{ ...iconBtn, color: isArchived ? ON_COLOR : OFF_COLOR }}
+                        title={isArchived ? "Archived" : "Not archived"}
+                        aria-label="Archive"
+                        onClick={function () {
+                            if (p.settingsOpen && menu === "archive") {
+                                p.setSettingsOpen(false);
+                            } else {
+                                p.setSettingsOpen(true);
+                                setMenu("archive");
+                            }
+                        }}
+                    >
+                        {"\uD83D\uDCBE"}
+                    </button>
                     {/* extract: click = offset extract, hold = range extract.
                         Does NOT pause on press (that would stop the timeline);
                         pause + prompt happen on release via finishExtract(). */}
@@ -710,6 +857,23 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
                                 {p.extractOffsetSec}
                             </span>
                         </span>
+                    </button>
+                    {/* actions menu: screenshot, summarize, captions, archive actions */}
+                    <button
+                        type="button"
+                        style={iconBtn}
+                        title="Actions"
+                        aria-label="Actions"
+                        onClick={function () {
+                            if (p.settingsOpen && menu !== "lang") {
+                                p.setSettingsOpen(false);
+                            } else {
+                                p.setSettingsOpen(true);
+                                setMenu("actions");
+                            }
+                        }}
+                    >
+                        {"\u2630"}
                     </button>
                     <button
                         type="button"
@@ -765,7 +929,9 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
                         position: "absolute",
                         right: 8,
                         bottom: 50,
-                        minWidth: 170,
+                        minWidth: 190,
+                        maxHeight: 340,
+                        overflowY: "auto",
                         background: BAR_BG,
                         color: FG,
                         fontSize: 12,
@@ -789,6 +955,151 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
                             <div style={menuItem} onClick={function () { setMenu("pending"); }}>
                                 {"Pending Extracts (" + p.options.length + ") \u25B8"}
                             </div>
+                            <div style={menuItem} onClick={function () { setMenu("setPlayer"); }}>
+                                {"Player behaviour \u25B8"}
+                            </div>
+                            <div style={menuItem} onClick={function () { setMenu("setArchive"); }}>
+                                {"Archive behaviour \u25B8"}
+                            </div>
+                            <div style={menuItem} onClick={function () { setMenu("flags"); }}>
+                                {"Debug flags \u25B8"}
+                            </div>
+                        </div>
+                    ) : null}
+
+                    {menu === "actions" ? (
+                        <div>
+                            <div style={menuItem} onClick={function () { p.onScreenshot(); }}>
+                                {"\uD83D\uDDBC Screenshot"}
+                            </div>
+                            <div style={menuItem} onClick={function () { p.onSummarize(); }}>
+                                {"\uD83E\uDD16 Summarize with AI"}
+                            </div>
+                            <div style={menuItem} onClick={function () { p.onOpenYT(); }}>
+                                {"\uD83C\uDF0E Open in YouTube"}
+                            </div>
+                            <div style={menuItem} onClick={function () { setMenu("captions"); }}>
+                                {"Captions \u25B8"}
+                            </div>
+                            <div style={menuItem} onClick={function () { setMenu("archiveActions"); }}>
+                                {"Archive actions \u25B8"}
+                            </div>
+                        </div>
+                    ) : null}
+
+                    {menu === "captions" ? (
+                        <div>
+                            <div style={menuItem} onClick={function () { setMenu("actions"); }}>
+                                {"\u25C2 Captions"}
+                            </div>
+                            <div style={menuItem} onClick={function () { p.onCopyCue(0); }}>
+                                {"Copy cue"}
+                            </div>
+                            <div style={menuItem} onClick={function () { p.onCopyCue(1); }}>
+                                {"Copy around cue"}
+                            </div>
+                            <div style={menuItem} onClick={function () { p.onTranslateCue(0); }}>
+                                {"Translate cue"}
+                            </div>
+                            <div style={menuItem} onClick={function () { p.onTranslateCue(1); }}>
+                                {"Translate around cue"}
+                            </div>
+                        </div>
+                    ) : null}
+
+                    {menu === "archiveActions" ? (
+                        <div>
+                            <div style={menuItem} onClick={function () { setMenu("actions"); }}>
+                                {"\u25C2 Archive actions"}
+                            </div>
+                            {isArchived
+                                ? <div style={menuItem} onClick={function () { p.onArchive(undefined, true, true, false); }}>
+                                      Re-archive captions
+                                  </div>
+                                : <div style={menuItem} onClick={function () { p.onArchive(); }}>
+                                      Archive (best)
+                                  </div>}
+                            {!isArchived && p.info && p.info.file_formats && Object.keys(p.info.file_formats).length !== 0
+                                ? Object.keys(p.info.file_formats).map(function (itagMime) {
+                                      var f = (p.info as ArchiveInfo).file_formats[itagMime];
+                                      return (
+                                          <div
+                                              key={itagMime}
+                                              style={menuItem}
+                                              onClick={function () { p.onArchive(f.quality_label); }}
+                                          >
+                                              {(f.quality_label || "???") + " [" + f.itag + "]"}
+                                          </div>
+                                      );
+                                  })
+                                : null}
+                        </div>
+                    ) : null}
+
+                    {menu === "archive" ? (
+                        <div style={{ maxWidth: 260 }}>
+                            <div style={{ ...menuItem, cursor: "default", fontWeight: "bold", color: isArchived ? ON_COLOR : OFF_COLOR }}>
+                                {isArchived
+                                    ? "Archived [" + getQualityLabel(p.info) + "] [" +
+                                      new Date((p.info && p.info.archived_on) ? p.info.archived_on : "").toLocaleDateString() + "]"
+                                    : "Not archived"}
+                            </div>
+                            {p.info ? (
+                                <div style={{ padding: "4px 8px", fontSize: 11, whiteSpace: "normal", lineHeight: "15px" }}>
+                                    <div>{p.info.title}</div>
+                                    <div style={{ color: STRIP_BUFFER }}>{p.info.author_name} · {p.info.published}</div>
+                                </div>
+                            ) : null}
+                            {isArchived
+                                ? <div style={menuItem} onClick={function () { p.onArchive(undefined, true, true, false); }}>
+                                      Re-archive captions
+                                  </div>
+                                : <div style={menuItem} onClick={function () { p.onArchive(); }}>
+                                      Archive (best)
+                                  </div>}
+                        </div>
+                    ) : null}
+
+                    {menu === "setPlayer" ? (
+                        <div>
+                            <div style={menuItem} onClick={function () { setMenu("main"); }}>
+                                {"\u25C2 Player behaviour"}
+                            </div>
+                            {SETTINGS_PLAYER.map(function (sec) {
+                                return (
+                                    <div key={sec.group}>
+                                        <div style={{ padding: "8px 8px 2px", color: STRIP_BUFFER, fontWeight: "bold" }}>
+                                            {sec.group}
+                                        </div>
+                                        {sec.rows.map(function (r) {
+                                            return toggleRow(r.key, r.label, sec.group + "/" + r.label);
+                                        })}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    ) : null}
+
+                    {menu === "setArchive" ? (
+                        <div>
+                            <div style={menuItem} onClick={function () { setMenu("main"); }}>
+                                {"\u25C2 Archive behaviour"}
+                            </div>
+                            {SETTINGS_ARCHIVE.map(function (s) { return toggleRow(s.key, s.label); })}
+                        </div>
+                    ) : null}
+
+                    {menu === "flags" ? (
+                        <div>
+                            <div style={menuItem} onClick={function () { setMenu("main"); }}>
+                                {"\u25C2 Debug flags"}
+                            </div>
+                            {Object.keys(StorageKey).filter(function (k) {
+                                var v = window.localStorage.getItem((StorageKey as any)[k]);
+                                return v === "true" || v === "false";
+                            }).map(function (k) {
+                                return toggleRow((StorageKey as any)[k], k);
+                            })}
                         </div>
                     ) : null}
 
