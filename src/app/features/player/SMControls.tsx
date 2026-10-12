@@ -144,6 +144,7 @@ interface SMControlsProps {
     onSummarize: () => void;
     onOpenYT: () => void;
     onArchive: (quality?: string, overwrite?: boolean, captions?: boolean, video?: boolean) => void;
+    onToggleArchivePane: () => void;
 }
 
 var IDLE_MS = 2000;
@@ -998,7 +999,7 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
                     </button>
                     <button
                         type="button"
-                        style={{ ...iconBtn, fontSize: 13, fontWeight: p.activeTrack ? "bold" : "normal" }}
+                        style={{ ...iconBtn, fontSize: 13, fontWeight: p.activeTrack ? "bold" : "normal", position: "relative", top: 1 }}  
                         title="Captions"
                         aria-label="Captions"
                         onClick={function () {
@@ -1082,6 +1083,10 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
                             </div>
                             <div style={menuItem} onClick={function () { p.onOpenYT(); }}>
                                 {"\uD83C\uDF0E Open in YouTube"}
+                            </div>
+                            {/* test-only: appends the unstyled Archive accordion to the page end */}
+                            <div style={menuItem} onClick={function () { p.onToggleArchivePane(); p.setSettingsOpen(false); }}>
+                                {"\uD83D\uDCC1 Append accordion"}
                             </div>
                             <div style={menuItem} onClick={function () { setMenu("captions"); }}>
                                 {"Captions \u25B8"}

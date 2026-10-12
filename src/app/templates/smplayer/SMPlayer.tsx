@@ -6,6 +6,7 @@ import ReactPlayer from 'react-player/lazy';
 // import ExtractBoard from './features/clip/ExtractBoard.js'; 
 import ClipExtractor from '../../features/extractors/ClipExtractor';
 import CaptionsTracks from '../../features/language/CaptionsTracks';
+import HitchhikerInfo from '../../features/watch/HitchhikerInfo';
 import SMControls, { SMControlsHandle } from '../../features/player/SMControls';
 // import Counter from './features/counter/Counter.js';
 // import Subtitles from './features/language/Subtitles.js';
@@ -1569,25 +1570,10 @@ Description:\n${archiveInfo.description}
     </iframe>
     } */}
 
-    { !pseudoFullscreen && archiveInfo ?
-      <div className="archive-info col" style={{
-        paddingLeft: "0px",
-        paddingBottom: "0px",
-        paddingTop: "0px",
-        ...(isShortClip && {backgroundColor: "yellowgreen"})
-      }}>
-        <div className='row' style={{ border: "1px solid black", borderBottom: "0px", borderRight: "0px", borderTop: "0px"} }>
-          <div onClick={() => setArchivePaneOpen(!archivePaneOpen)} style={{borderRight: "1px solid black"}}>🔍︎</div>
-          <div className="archive-info-title" title={archiveInfo.title} onClick={() => handleTitleClicked()}>
-            {archiveInfo.title.substring(0, 44) + (archiveInfo.title.length > 46 ? ".." : "")}
-          </div>
-        </div>
+    { !pseudoFullscreen && !archiveInfo &&
+      <div className='row' style={{ height: '35px' }}>
+        <div className='col' style={{ marginTop: '5px' }}>Loading metadata...</div>
       </div>
-      :
-      !pseudoFullscreen &&
-    <div className='row' 
-      style={{height: '35px'}}
-      ><div className='col' style={{marginTop: '5px'}}>Loading metadata...</div></div>
     }
     { (url != "" && isMpdLoaded) ? 
       <div 
@@ -1636,6 +1622,11 @@ Description:\n${archiveInfo.description}
                   crossOrigin: "true",
                   autoPlay: false,
                   poster: "/iv/images/sm.gif",
+                  // display:block kills the inline descender gap (~4px line-box  
+                  // space below the video) so SMControls sits flush at the real  
+                  // frame bottom. width/height restore react-player's own sizing  
+                  // that this style object would otherwise overwrite. IE11-safe.  
+                  style: { display: "block", verticalAlign: "bottom", width: "100%", height: "100%" },  
                   streaming: {
                     manifestRequestTimeout: 20000,
                     abandonLoadTimeout: 20000,
@@ -1724,6 +1715,7 @@ Description:\n${archiveInfo.description}
           onSummarize={function () { summarizeWithAI(queryParameters.get("videoid")?.trim() ?? ""); }}
           onOpenYT={function () { openInYouTube(queryParameters.get("videoid")?.trim() ?? "", start); }}
           onArchive={handleArchive}
+          onToggleArchivePane={() => setArchivePaneOpen(!archivePaneOpen)}
         />
       </div>
       :
@@ -1732,6 +1724,7 @@ Description:\n${archiveInfo.description}
       </div>
       }
       <div style={{ display: pseudoFullscreen ? 'none' : 'block' }}>
+        {archiveInfo ? <HitchhikerInfo info={archiveInfo} /> : null}
         <ClipExtractor 
         resume={resume} 
         start={start} 
@@ -1759,13 +1752,8 @@ Description:\n${archiveInfo.description}
         {/* <Counter /> */}
         {/* <Subtitles /> */}
         {/* <ReactExtension /> */}
-        <InlinePane
-          paneKey="archive"
-          title="Archive"
-          expanded={archivePaneOpen}
-          onToggle={setArchivePaneOpen}
-        />
-        { archiveInfo?.captions?.caption_tracks &&
+        {/* InlinePane archive moved to the very end of the page — see below */}
+        {/* { archiveInfo?.captions?.caption_tracks &&
         archiveInfo.captions.caption_tracks.length > 0 ?
           <CaptionsTracks
             url={subtitleUrl}
@@ -1773,8 +1761,16 @@ Description:\n${archiveInfo.description}
             seek={seekVideo}
           />
           : null
-        }
+        } */}
       </div>
+      { !pseudoFullscreen && archivePaneOpen &&
+        <InlinePane
+          paneKey="archive"
+          title="Archive"
+          expanded={archivePaneOpen}
+          onToggle={setArchivePaneOpen}
+        />
+      }
     </div>
   );
 }
