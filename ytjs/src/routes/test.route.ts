@@ -1,10 +1,10 @@
 import { spawn } from "child_process";
 import { app, archive, cache, clientName, defaultLocalUrl, fullUrlForClient, getCacheWait, getYouTube, yti_version } from "../server";
 import { commandExists, getCommandOutput } from "../utils/lib";
-import { Format } from "youtubei.js/dist/src/parser/misc";
-import { FormatOptions } from "youtubei.js/dist/src/types";
-import { VideoInfo } from "youtubei.js/dist/src/parser/youtube";
-import { PlayerCaptionsTracklist } from "youtubei.js/dist/src/parser/nodes";
+import { Format } from "../utils/yt-types";
+import { FormatOptions } from "../utils/yt-types";
+import { VideoInfo } from "../utils/yt-types";
+import { PlayerCaptionsTracklist } from "../utils/yt-types";
 import { Router } from "express";
 
 const router = Router();

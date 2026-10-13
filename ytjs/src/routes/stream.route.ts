@@ -1,10 +1,10 @@
-import { VideoInfo } from "youtubei.js/dist/src/parser/youtube";
+import { VideoInfo } from "../utils/yt-types";
 import { app, archive, archiveContainer, cache, fetchTransformedVTT, fullUrlForClient, useOnline, yti_version } from "../server";
 import { YT_VTT_MAX_TIMESTAMP } from "../utils/constants";
 import { JSDOM } from "jsdom";
 import { getLocalVideoInfo } from "../utils/localvideo";
-import { Format } from "youtubei.js/dist/src/parser/misc";
-import { FormatOptions } from "youtubei.js/dist/src/types";
+import { Format } from "../utils/yt-types";
+import { FormatOptions } from "../utils/yt-types";
 import { latestCacheConstructor } from "../utils/archive";
 import { Router } from "express";
 

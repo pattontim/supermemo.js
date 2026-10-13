@@ -9,7 +9,7 @@ import {
   VideoStream,
   CaptionStream,
 } from "./video-download.service";
-import { Format } from "youtubei.js/dist/src/parser/misc";
+import { Format } from "../utils/yt-types";
 
 /**
  * FFmpeg-based video download service

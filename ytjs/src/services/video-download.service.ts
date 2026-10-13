@@ -1,5 +1,5 @@
 import { Readable } from "stream";
-import { Format } from "youtubei.js/dist/src/parser/misc";
+import { Format } from "../utils/yt-types";
 
 /**
  * Represents a downloadable video stream from various sources

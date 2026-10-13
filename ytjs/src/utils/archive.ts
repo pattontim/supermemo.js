@@ -1,6 +1,6 @@
-import { Format } from 'youtubei.js/dist/src/parser/misc';
-import { PlayerCaptionsTracklist } from 'youtubei.js/dist/src/parser/nodes';
-import { VideoInfo } from 'youtubei.js/dist/src/parser/youtube';
+import { Format } from './yt-types';
+import { PlayerCaptionsTracklist } from './yt-types';
+import { VideoInfo } from './yt-types';
 import { deepCopy } from './lib';
 
 export class ArchiveInfoV1 {

@@ -10,11 +10,11 @@
  */
 import Innertube, { ClientType, Player, UniversalCache } from "youtubei.js";
 import { Response } from "node-fetch";
-import { generateContentBoundPoToken } from "./poToken";
+import { generateContentBoundPoToken, getWatchHTMLPage } from "./poToken";
 import { cacheDir } from "./constants";
-import { Format } from "youtubei.js/dist/src/parser/misc";
+import { Format } from "./yt-types";
 import { defaultLocalUrl } from "../server";
-import { Utils } from "youtubei.js";
+import { Utils, Constants } from "youtubei.js";
 
 export type FormatWithURL = Format & { freeTubeUrl: string; };
 
@@ -154,9 +154,12 @@ export async function getLocalVideoInfo(id: string) {
 	//   if (process.env.IS_ELECTRON) {
 	try {
 		console.time("content bound poToken")
+		const { ytConfig, initialAttestationData } = await getWatchHTMLPage(id);
 		contentPoToken = await generateContentBoundPoToken(
 			id,
-			webInnertube.session.context
+			webInnertube.session.context,
+			initialAttestationData,
+			ytConfig
 		);
 		console.timeEnd("content bound poToken")
 		console.log("PoToken is valid ", contentPoToken != undefined);
@@ -298,6 +301,13 @@ export async function getLocalVideoInfo(id: string) {
 			console.timeEnd("decipherFormats adaptive_formats")
 		}
 
+		if (info.streaming_data.server_abr_streaming_url) {
+			info.streaming_data.server_abr_streaming_url =
+				await webInnertube.session.player!.decipher(
+					info.streaming_data.server_abr_streaming_url
+				);
+		}
+
 		if (info.streaming_data.dash_manifest_url) {
 			console.log("Dash URL found");
 			let url = info.streaming_data.dash_manifest_url;
@@ -322,7 +332,15 @@ export async function getLocalVideoInfo(id: string) {
 
 			url.searchParams.set("potc", "1");
 			url.searchParams.set("pot", contentPoToken!);
-			url.searchParams.set("c", clientName);
+			// YouTube's `c` caption param expects a NUMERIC client id, not the name
+			url.searchParams.set(
+				"c",
+				String(
+					Constants.CLIENT_NAME_IDS[
+						clientName as keyof typeof Constants.CLIENT_NAME_IDS
+					] ?? clientName
+				)
+			);
 
 			// Remove &xosf=1 as it adds `position:63% line:0%` to the subtitle lines
 			// placing them in the top right corner

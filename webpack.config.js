@@ -18,10 +18,10 @@ const webpack = require('webpack');
  * - WebView2 build: targets modern Chromium with minimal polyfills
  * 
  * Usage:
- * npm run build                    # IE11 build
- * NODE_ENV=production npm run build # IE11 production
- * TARGET=webview2 npm run build     # WebView2 build
- * TARGET=webview2 NODE_ENV=production npm run build # WebView2 production
+ * pnpm run build                    # IE11 build
+ * NODE_ENV=production pnpm run build # IE11 production
+ * TARGET=webview2 pnpm run build     # WebView2 build
+ * TARGET=webview2 NODE_ENV=production pnpm run build # WebView2 production
  */
 
 const buildTarget = process.env.TARGET || 'ie11';

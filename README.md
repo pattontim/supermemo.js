@@ -84,7 +84,7 @@ SM20 is currently not supported until I take a deeper look (extracts are not cre
 
 ## Building the react app
 
-Run `npm run build` in the root folder
+Run `pnpm run build` in the root folder
 
 ## How it works
 

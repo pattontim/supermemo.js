@@ -1,0 +1,6 @@
+# Makes ytjs its own pnpm project so `pnpm install` (run inside ytjs/) installs
+# ytjs's dependencies. Without this, pnpm walks up, finds the repo-root
+# pnpm-workspace.yaml, and treats ytjs as part of the root workspace — ignoring
+# ytjs/package.json entirely ("Already up to date").
+allowBuilds:
+  core-js: false

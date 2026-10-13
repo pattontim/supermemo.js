@@ -9,7 +9,9 @@
  * https://github.com/FreeTubeApp/FreeTube#license
  */
 
-import { BG, buildURL, GOOG_API_KEY } from "bgutils-js";
+import { BotGuardClient } from "bgutils-js/botguard";
+import { WebPoMinter } from "bgutils-js/webpo";
+import { buildURL, getHeaders, parseLooseJSON } from "bgutils-js/utils";
 import { Session } from "youtubei.js";
 
 import { JSDOM } from "jsdom";
@@ -162,9 +164,54 @@ export async function setupBotGuardGlobals() {
 	}
 }
 
+/**
+ * Scrapes the watch page for the data BotGuard needs: the ytcfg (which holds
+ * the EVENT_ID the interpreter reads) and the initial attestation challenge
+ * (`window.ytAtN(...)`). This mirrors FreeTube's getHTMLPage and produces a
+ * properly attested token, unlike a bare att/get call.
+ */
+export async function getWatchHTMLPage(videoId: string): Promise<{
+	ytConfig: any;
+	initialAttestationData: any;
+}> {
+	const htmlResponse = await fetch(
+		`https://www.youtube.com/watch?v=${videoId}&bpctr=9999999999&has_verified=1`,
+		{ headers: { "Accept-Language": "en-US" } }
+	);
+	const htmlPage = await htmlResponse.text();
+
+	const ytConfigStr = htmlPage.match(/ytcfg\.set\(({.+?})\);/s)?.[1];
+	if (!ytConfigStr) {
+		throw new Error("Could not find ytcfg in the watch HTML page");
+	}
+	const ytConfig = JSON.parse(ytConfigStr);
+
+	const initialAttestationDataMatch = htmlPage.match(
+		/window\.ytAtN\(\s*({[\s\S]*?})\s*\)/
+	);
+	if (!initialAttestationDataMatch) {
+		throw new Error("Could not find challenge in the watch HTML page");
+	}
+
+	let initialAttestationData;
+	try {
+		initialAttestationData = parseLooseJSON(initialAttestationDataMatch[1]);
+	} catch (e) {
+		console.error(
+			"Failed to parse watch page initial attestation data",
+			initialAttestationDataMatch[1]
+		);
+		throw e;
+	}
+
+	return { ytConfig, initialAttestationData };
+}
+
 export async function generateContentBoundPoToken(
   videoId: string,
-  context: Session["context"]
+  context: Session["context"],
+  initialAttestationData: any,
+  ytConfig: any
 ) {
   const requestKey = "O43z0dpjhgX20SCx4KAo";
 //   const visitorData = context.client.visitorData;
@@ -173,41 +220,52 @@ export async function generateContentBoundPoToken(
 //     throw new Error("Failed to get visitor data");
 //   }
 
-  // Get BotGuard challenge
-  const challengeResponse = await fetch(
-    "https://www.youtube.com/youtubei/v1/att/get?prettyPrint=false&alt=json",
-    {
-      method: "POST",
-      headers: {
-        Accept: "*/*",
-        "Content-Type": "application/json",
-        "X-Goog-Visitor-Id": context.client.visitorData!,
-        "X-Youtube-Client-Version": context.client.clientVersion,
-        "X-Youtube-Client-Name": "1",
-      },
-      body: JSON.stringify({
-        engagementType: "ENGAGEMENT_TYPE_UNBOUND",
-        context,
-      }),
-    }
-  );
+  // Prefer the challenge scraped from the watch page; fall back to att/get
+  let challengeData = initialAttestationData?.R;
 
-  if (!challengeResponse.ok) {
-    // throw new Error(`Request failed with status ${challengeResponse.status}`);
-	throw new Error(`Request to ${challengeResponse.url} failed with status ${challengeResponse.status}\n${await challengeResponse.text()}`)
-  }
-
-  const challengeData = await challengeResponse.json();
-
-  console.log("BG req status: ", JSON.stringify(challengeData, null, '\t'))
-
-  if (!challengeData.bgChallenge) {
-    throw new Error("Failed to get BotGuard challenge");
+  if (!challengeData?.bgChallenge) {
+    throw new Error("Failed to get BotGuard challenge from watch page");
   }
 
   let interpreterUrl =
     challengeData.bgChallenge.interpreterUrl
-      .privateDoNotAccessOrElseTrustedResourceUrlWrappedValue;
+      ?.privateDoNotAccessOrElseTrustedResourceUrlWrappedValue;
+
+  if (!interpreterUrl) {
+    // Get BotGuard challenge via att/get, passing the eacrToken scraped from the page
+    const challengeResponse = await fetch(
+      "https://www.youtube.com/youtubei/v1/att/get?prettyPrint=false&alt=json",
+      {
+        method: "POST",
+        headers: {
+          Accept: "*/*",
+          "Content-Type": "application/json",
+          "X-Goog-Visitor-Id": context.client.visitorData!,
+          "X-Youtube-Client-Version": context.client.clientVersion,
+          "X-Youtube-Client-Name": "1",
+        },
+        body: JSON.stringify({
+          engagementType: "ENGAGEMENT_TYPE_UNBOUND",
+          eacrToken: initialAttestationData.T,
+          context,
+        }),
+      }
+    );
+
+    if (!challengeResponse.ok) {
+      throw new Error(`Request to ${challengeResponse.url} failed with status ${challengeResponse.status}\n${await challengeResponse.text()}`)
+    }
+
+    challengeData = await challengeResponse.json();
+
+    if (!challengeData.bgChallenge) {
+      throw new Error("Failed to get BotGuard challenge");
+    }
+
+    interpreterUrl =
+      challengeData.bgChallenge.interpreterUrl
+        .privateDoNotAccessOrElseTrustedResourceUrlWrappedValue;
+  }
 
   if (interpreterUrl.startsWith("//")) {
     interpreterUrl = `https:${interpreterUrl}`;
@@ -217,16 +275,18 @@ export async function generateContentBoundPoToken(
   const interpreterJavascript = await bgScriptResponse.text();
 
   if (interpreterJavascript) {
+    // BotGuard reads the EVENT_ID field off window.yt.config_
+    (globalThis as any).window.yt = { config_: ytConfig };
     // eslint-disable-next-line no-new-func
     new Function(interpreterJavascript)();
   } else {
     throw new Error("Could not load VM.");
   }
 
-  const botGuard = await BG.BotGuardClient.create({
+  const botGuard = await BotGuardClient.create({
     program: challengeData.bgChallenge.program,
     globalName: challengeData.bgChallenge.globalName,
-    globalObj: globalThis,
+    globalObject: globalThis,
   });
 
   const webPoSignalOutput: any[] = [];
@@ -237,23 +297,17 @@ export async function generateContentBoundPoToken(
 
   const integrityTokenResponse = await fetch(buildURL("GenerateIT", true), {
     method: "POST",
-    headers: {
-      "content-type": "application/json+protobuf",
-      "x-goog-api-key": GOOG_API_KEY,
-      "x-user-agent": "grpc-web-javascript/0.1",
-    },
+    headers: getHeaders(),
     body: JSON.stringify([requestKey, botGuardResponse]),
   });
 
   const response = await integrityTokenResponse.json();
 
-  console.log("IT response: ", JSON.stringify(response, null, '\t'))
-
   if (typeof response[0] !== "string") {
     throw new Error("Could not get integrity token");
   }
 
-  const integrityTokenBasedMinter = await BG.WebPoMinter.create(
+  const integrityTokenBasedMinter = await WebPoMinter.create(
     { integrityToken: response[0] },
     webPoSignalOutput
   );

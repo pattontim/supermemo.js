@@ -2,12 +2,12 @@ import { readFileSync, existsSync, renameSync, createWriteStream, writeFileSync,
 import path from "path";
 import { Readable } from "stream";
 import { ReadableStream as WebReadableStream } from "stream/web";
-import { PlayerCaptionsTracklist } from "youtubei.js/dist/src/parser/nodes";
+import { PlayerCaptionsTracklist } from "../utils/yt-types";
 import { archive, archiveContainer, archiveDir, defaultLocalUrl, fetchWait, fullUrl, fullUrlForClient, getCacheWait, yti_version } from "../server";
 import { ArchiveInfo, ArchiveInfoLatest, CacheInfoV3, latestArchiveConstructor, newArchiveFromJSON } from "../utils/archive";
 import { CaptionTrack } from "../../../src/app/utils/types";
-import { Format } from "youtubei.js/dist/src/parser/misc";
-import { FormatOptions } from "youtubei.js/dist/src/types";
+import { Format } from "../utils/yt-types";
+import { FormatOptions } from "../utils/yt-types";
 import { getLocalVideoInfo } from "../utils/localvideo";
 import { Utils } from "youtubei.js";
 import { Router } from "express";

@@ -9,12 +9,12 @@
     "build": "cross-env NODE_ENV=production webpack",
     "build:ie11": "cross-env NODE_ENV=production TARGET=ie11 webpack",
     "build:webview2": "cross-env NODE_ENV=production TARGET=webview2 webpack",
-    "build:both": "npm run build:ie11 && npm run build:webview2",
+    "build:both": "pnpm run build:ie11 && pnpm run build:webview2",
     "watch:ie11": "cross-env TARGET=ie11 webpack --watch",
     "watch:webview2": "cross-env TARGET=webview2 webpack --watch",
     "build-dev": "webpack",
-    "ytjs": "cd ytjs && npm run start",
-    "ytjs-offline": "cd ytjs && npm run start -- --offline"
+    "ytjs": "cd ytjs && pnpm run start",
+    "ytjs-offline": "cd ytjs && pnpm run start -- --offline"
   },
   "author": "Tim Patton",
   "license": "GNU GPLV3",

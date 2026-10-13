@@ -9,7 +9,7 @@ import {
   VideoStream,
   CaptionStream,
 } from "./video-download.service";
-import { Format } from "youtubei.js/dist/src/parser/misc";
+import { Format } from "../utils/yt-types";
 
 /**
  * IE11 compatible itag mappings for video and audio

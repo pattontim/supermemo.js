@@ -24,9 +24,9 @@ import {
 	latestCacheConstructor,
 	newArchiveFromJSON,
 } from "./utils/archive";
-import { Format } from "youtubei.js/dist/src/parser/misc";
-import { FormatOptions } from "youtubei.js/dist/src/types/FormatUtils";
-import { VideoInfo } from "youtubei.js/dist/src/parser/youtube";
+import { Format } from "./utils/yt-types";
+import { FormatOptions } from "./utils/yt-types";
+import { VideoInfo } from "./utils/yt-types";
 import util from "util";
 import Innertube, {
 	ClientType,
@@ -35,7 +35,7 @@ import Innertube, {
 	UniversalCache,
 } from "youtubei.js";
 import { Utils } from "youtubei.js";
-import { InnerTubeClient } from "youtubei.js/dist/src/types";
+import { InnerTubeClient } from "./utils/yt-types";
 import { Types } from "youtubei.js/web";
 import { setupBotGuardGlobals } from "./utils/poToken";
 import { cacheDir } from "./utils/constants";

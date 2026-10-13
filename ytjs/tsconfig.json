@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "target": "esnext",
-    "module": "commonjs",
+    "module": "nodenext",
     "outDir": "dist",
     "strict": true,
     "esModuleInterop": true,
@@ -13,7 +13,7 @@
     "importHelpers": true,
     "forceConsistentCasingInFileNames": true,
     "tsBuildInfoFile": "./.tsbuildinfo",
-    "moduleResolution": "node",
+    "moduleResolution": "nodenext",
     "allowSyntheticDefaultImports": true
   },
   "include": ["src"]

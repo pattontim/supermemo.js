@@ -26,7 +26,7 @@ const homeBundle = path.join(bundleDir, 'home.bundle.js');
 
 if (!fs.existsSync(smplayerBundle)) {
   console.error(`Error: Bundle not found at ${smplayerBundle}`);
-  console.error(`Make sure to build the project first: TARGET=${target} npm run build`);
+  console.error(`Make sure to build the project first: TARGET=${target} pnpm run build`);
   process.exit(1);
 }
 
