@@ -15,8 +15,71 @@ import { cacheDir } from "./constants";
 import { Format } from "./yt-types";
 import { defaultLocalUrl } from "../server";
 import { Utils, Constants } from "youtubei.js";
+import { SabrInputFormat } from "../sabr/sabr-stream";
 
 export type FormatWithURL = Format & { freeTubeUrl: string; };
+
+/**
+ * Everything the SABR session needs, captured while we already have the player
+ * response in hand (avoids a second getInfo round-trip). Keyed by videoId so
+ * the SABR route can build a session without re-running getLocalVideoInfo.
+ */
+export interface SabrInputs {
+	sabrUrl: string;
+	ustreamerConfig: Buffer;
+	formats: SabrInputFormat[];
+	poToken: Buffer;
+	clientName: number;
+	clientVersion: string;
+	osName: string;
+	osVersion: string;
+	acceptLanguage?: string;
+	acceptRegion?: string;
+}
+
+const sabrInputs = new Map<string, SabrInputs>();
+
+function base64ToBuffer(b64: string): Buffer {
+	return Buffer.from(b64.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+}
+
+/**
+ * Port of TubeReplacer's generateColdStartTokenWithContent
+ * (challengesolver-potokens.m), itself a port of BgUtils's WebPoMinter cold
+ * start. A locally-built, obfuscated packet that can stand in for a real PO
+ * token for the first ~1-2 MB (BatsUtils StreamProtectionStatus docs: status 2).
+ * Used to discriminate whether a JSDOM-minted BotGuard token is the problem.
+ */
+function generateColdStartToken(contentBinding: string, clientState = 1): Buffer {
+	const content = Buffer.from(contentBinding, "utf-8");
+	const timestamp = Math.floor(Date.now() / 1000);
+	const keys = [Math.floor(Math.random() * 256), Math.floor(Math.random() * 256)];
+	const header = Buffer.from([
+		keys[0],
+		keys[1],
+		0,
+		clientState,
+		(timestamp >>> 24) & 0xff,
+		(timestamp >>> 16) & 0xff,
+		(timestamp >>> 8) & 0xff,
+		timestamp & 0xff,
+	]);
+	const packet = Buffer.alloc(2 + header.length + content.length);
+	packet[0] = 34;
+	packet[1] = header.length + content.length;
+	header.copy(packet, 2);
+	content.copy(packet, 2 + header.length);
+	const keyLength = 2;
+	for (let i = keyLength + 2; i < packet.length; i++) {
+		packet[i] ^= packet[2 + (i % keyLength)];
+	}
+	return packet;
+}
+
+/** Cached SABR inputs, or undefined if getLocalVideoInfo hasn't seen this video. */
+export function getSabrInputs(videoId: string): SabrInputs | undefined {
+	return sabrInputs.get(videoId);
+}
 
 /**
  * @param {Misc.Format[]} formats
@@ -178,12 +241,18 @@ export async function getLocalVideoInfo(id: string) {
 	console.log("Got info for video ", id);
 
 	// #region temporary workaround for SABR-only responses
-	// MWEB doesn't have an audio track selector so it picks the audio track on the server based on the request language.
+	// MWEB doesn't have an audio track selector so it picks the audio track on
+	// the server based on the request language.
 	const originalAudioTrackFormat = info.streaming_data?.adaptive_formats.find(
 		(format) => {
 			return format.has_audio && format.is_original && format.language;
 		}
 	);
+
+	// Tracks which player response the current `info.streaming_data` actually
+	// came from, so the SABR ustreamer config stays consistent with the
+	// server_abr_streaming_url (mismatched config => SABR_ERROR malformed_config).
+	let activePlayerConfig = info.player_config;
 
 	if (originalAudioTrackFormat) {
 		// @ts-expect-error not an issue
@@ -191,20 +260,33 @@ export async function getLocalVideoInfo(id: string) {
 			originalAudioTrackFormat.language;
 	}
 
-	console.time("webInnertube.getBasicInfo")
-	const mwebInfo = await webInnertube.getBasicInfo(id, {
-		client: "MWEB",
-		po_token: contentPoToken!,
-	});
-	console.timeEnd("webInnertube.getBasicInfo")
-	console.log("Got MWEB info for video ", id);
+	// EXPERIMENT: YTJS_SABR_WEB=1 keeps the WEB session/streaming_data/config
+	// (FreeTube's exact proven arrangement) instead of replacing it with MWEB.
+	// The WEB /next parse crash doesn't matter here: getInfo/getBasicInfo go via
+	// the watch endpoint, so /next parsing isn't on this path.
+	if (process.env.YTJS_SABR_WEB !== "1") {
+		console.time("webInnertube.getBasicInfo")
+		const mwebInfo = await webInnertube.getBasicInfo(id, {
+			client: "MWEB",
+			po_token: contentPoToken!,
+		});
+		console.timeEnd("webInnertube.getBasicInfo")
+		console.log("Got MWEB info for video ", id);
 
-	if (mwebInfo.playability_status!.status === "OK" && mwebInfo.streaming_data) {
-		console.log("MWEB playability OK, using its streaming data for video ", id);
-		info.playability_status = mwebInfo.playability_status;
-		info.streaming_data = mwebInfo.streaming_data;
+		if (mwebInfo.playability_status!.status === "OK" && mwebInfo.streaming_data) {
+			console.log("MWEB playability OK, using its streaming data for video ", id);
+			info.playability_status = mwebInfo.playability_status;
+			info.streaming_data = mwebInfo.streaming_data;
+			activePlayerConfig = mwebInfo.player_config ?? activePlayerConfig;
+			console.log(
+				`[sabr] player_config presence: web=${!!info.player_config} mweb=${!!mwebInfo.player_config}` +
+				` active=${activePlayerConfig === mwebInfo.player_config ? "mweb" : "web"}`
+			);
 
-		clientName = "MWEB";
+			clientName = "MWEB";
+		}
+	} else {
+		console.log("[sabr] YTJS_SABR_WEB=1 — keeping WEB streaming data/config");
 	}
 
 	// #endregion temporary workaround for SABR-only responses
@@ -306,6 +388,68 @@ export async function getLocalVideoInfo(id: string) {
 				await webInnertube.session.player!.decipher(
 					info.streaming_data.server_abr_streaming_url
 				);
+
+			// Capture the SABR session inputs while the player response is here.
+			// Use the config from whichever response supplied streaming_data
+			// (MWEB), so the ustreamer config matches server_abr_streaming_url.
+			const ustreamerConfig =
+				activePlayerConfig?.media_common_config
+					?.media_ustreamer_request_config?.video_playback_ustreamer_config;
+			const numericClientId = Number(
+				Constants.CLIENT_NAME_IDS[
+					clientName as keyof typeof Constants.CLIENT_NAME_IDS
+				] ?? 0
+			);
+
+			if (ustreamerConfig && contentPoToken) {
+				const formats: SabrInputFormat[] = info.streaming_data.adaptive_formats
+					.filter((f) => {
+						const mt: string = f.mime_type ?? "";
+						// match TubeReplacer's filter: skip VP9 / AV1 / Opus
+						return !mt.includes("vp9") && !mt.includes("av01") && !mt.includes("opus");
+					})
+					.map((f) => ({
+						itag: f.itag,
+						xtags: f.xtags,
+						mimeType: f.mime_type,
+						// FormatId.last_modified is a uint64 of seconds since epoch
+						lastModified: f.last_modified
+							? String(Math.floor(new Date(f.last_modified).getTime() / 1000))
+							: "0",
+						isAudio: !!(f.has_audio && !f.has_video),
+					}));
+
+				// TubeReplacer's `webMobileClient` tuple is client_name=2 with
+				// osName=iOS/osVersion=18 (the Android/11 variant is commented out
+				// upstream). The client version is MWEB's exact string.
+				const isMweb = numericClientId === 2;
+				const poTokenBuffer =
+					process.env.YTJS_SABR_COLDSTART === "1"
+						? generateColdStartToken(id)
+						: base64ToBuffer(contentPoToken);
+
+				sabrInputs.set(id, {
+					sabrUrl: info.streaming_data.server_abr_streaming_url,
+					ustreamerConfig: base64ToBuffer(ustreamerConfig),
+					poToken: poTokenBuffer,
+					formats,
+					clientName: numericClientId,
+					clientVersion: isMweb
+						? Constants.CLIENTS.MWEB.VERSION
+						: Constants.CLIENTS.WEB.VERSION,
+					osName: isMweb ? "iOS" : "",
+					osVersion: isMweb ? "18" : "",
+					acceptLanguage: webInnertube.session.context.client.hl ?? "en",
+					acceptRegion: webInnertube.session.context.client.gl ?? "US",
+				});
+				console.log(
+					`[sabr] captured inputs for ${id}: ${formats.length} formats, client=${numericClientId}` +
+					` os=${isMweb ? "iOS/18" : ""} poToken=${poTokenBuffer.length}b` +
+					` coldstart=${process.env.YTJS_SABR_COLDSTART === "1"}`
+				);
+			} else {
+				console.log("[sabr] no ustreamer config or poToken in player response");
+			}
 		}
 
 		if (info.streaming_data.dash_manifest_url) {
@@ -354,5 +498,17 @@ export async function getLocalVideoInfo(id: string) {
 	}
 
 	return info;
+}
+
+/**
+ * SABR inputs for a video, running getLocalVideoInfo first if they haven't been
+ * captured yet. Mirrors the archive/stream routes' "fetch once, cache in memory"
+ * pattern.
+ */
+export async function getOrCreateSabrInputs(videoId: string): Promise<SabrInputs | undefined> {
+	const cached = sabrInputs.get(videoId);
+	if (cached) return cached;
+	await getLocalVideoInfo(videoId);
+	return sabrInputs.get(videoId);
 }
 

@@ -401,6 +401,15 @@ router.get("/streamUrl/:v_id", async (req, res) => {
 			return res.status(500).send("Internal Server Error");
 		}
 	} else {
+		// SABR relay path (opt-in). Serves the same media over a DASH manifest
+		// sourced from the watch-page session, avoiding the throttled plain-URL
+		// DASH path. Gate with ?sabr=1 or YTJS_STREAM_SABR=1 while validating.
+		if (req.query.sabr === "1" || process.env.YTJS_STREAM_SABR === "1") {
+			const url = new URL(`http://${fullUrlForClient}/sabr/${v_id}/master.mpd`);
+			const responseUrl = url.href + "#" + start + "," + stop;
+			console.log(`[8/8] Sending SABR DASH response: ${responseUrl}`);
+			return res.send(responseUrl);
+		}
 		console.log(`[7/8] No archive formats, falling back to MPD`);
 		const url = new URL(`http://${fullUrlForClient}/mpd/${v_id}.mpd`);
 		url.searchParams.set("target", target as string);

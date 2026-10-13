@@ -406,7 +406,7 @@ router.get("/archive/:v_id", async (req, res) => {
 						for await (const chunk of Utils.streamToIterable(audioStream)) {
 							if (!file.write(chunk)) {
 								console.log("waiting for drain...");
-							await new Promise(res => file.once('drain', res));
+							await new Promise<void>(res => file.once('drain', () => res()));
 							}
 						}
 
@@ -426,7 +426,7 @@ router.get("/archive/:v_id", async (req, res) => {
 
 						for await (const chunk of Utils.streamToIterable(videoStream)) {
 							if (!file.write(chunk)) {
-							await new Promise(res => file.once('drain', res));
+							await new Promise<void>(res => file.once('drain', () => res()));
 							}
 						}
 

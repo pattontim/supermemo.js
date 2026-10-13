@@ -45,6 +45,7 @@ import rpcRoutes from "./routes/rpc.route";
 import streamRoutes from "./routes/stream.route";
 import templateRoutes from "./routes/template.route";
 import testRoutes from "./routes/test.route";
+import sabrRoutes from "./routes/sabr.route";
 import { FFmpegService } from "./services/ffmpeg.service";
 import { YtdlpService } from "./services/ytdlp.service";
 
@@ -383,6 +384,7 @@ app.use(rpcRoutes);
 app.use(streamRoutes);
 app.use(templateRoutes);
 app.use(testRoutes);
+app.use(sabrRoutes);
 
 async function callRejectAfter(call: Promise<unknown>, timeMs: number) {
 	return Promise.race([
