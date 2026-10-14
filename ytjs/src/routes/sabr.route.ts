@@ -365,10 +365,21 @@ function representationXml(fmt: SabrInputFormat | undefined, media: SabrMedia, k
 	const body = segs
 		.map((s) => `<SegmentURL media="seg-${kind}-${s}.m4s"/>`)
 		.join("");
+	// SegmentList without a SegmentTimeline gives dash.js no duration
+	// information, so it won't build a timeline or request media segments.
+	// Emit a SegmentTimeline (timescale=1000, ms) built from the SABR
+	// MediaHeader durations.
+	const timeline =
+		`<SegmentTimeline>` +
+		segs
+			.map((s) => `<S d="${Math.round(segmentDurationMs(media, s))}"/>`)
+			.join("") +
+		`</SegmentTimeline>`;
 	return (
 		`<Representation ${attrs.join(" ")}>` +
 		`<SegmentList timescale="1000">` +
 		`<Initialization sourceURL="init-${kind}.m4s"/>` +
+		timeline +
 		body +
 		`</SegmentList>` +
 		`</Representation>`

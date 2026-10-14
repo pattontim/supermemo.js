@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<!-- Bare DASH player smoke-test page. Loads the dashplayer bundle for the
+     detected target (ie11 / webview2), which renders a plain ReactPlayer for
+     the MPD given in ?url=. See src/app/templates/dashplayer/index.tsx. -->
+<html>
+  <head>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>DASH Player Test</title>
+  </head>
+  <body style="margin:0">
+    <div id="root"></div>
+
+    <script>
+      // Dual-Target Bundle Loader (mirrors smplayer.html)
+      (function() {
+        let target = "ie11";
+
+        if (window.MSInputMethodContext && document.documentMode) {
+          target = 'ie11';
+          console.log('[Loader] IE11 detected');
+        } else if (window.chrome && window.chrome.webview) {
+          target = 'webview2';
+          console.log('[Loader] WebView2 detected');
+        } else if (navigator.userAgent.indexOf('Trident') > -1) {
+          target = 'ie11';
+        } else {
+          // Modern browser (dev / localhost direct test)
+          target = 'webview2';
+          console.log('[Loader] Modern browser detected, using webview2 bundle');
+        }
+
+        window.BUILD_TARGET = target;
+        window.BUNDLE_MODE = 'http';
+
+        const bundleUrl = '/' + target + '/dashplayer.bundle.js';
+        console.log('[Loader] Loading bundle:', bundleUrl);
+        const script = document.createElement('script');
+        script.src = bundleUrl;
+        script.type = 'text/javascript';
+        script.async = true;
+        script.onerror = function() {
+          console.error('[Loader] Error loading bundle:', bundleUrl);
+          document.getElementById('root').innerHTML =
+            '<div style="padding:20px;font-family:monospace;color:red">' +
+            'Failed to load bundle: ' + bundleUrl + '</div>';
+        };
+        document.body.appendChild(script);
+      })();
+    </script>
+  </body>
+</html>

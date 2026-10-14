@@ -36,8 +36,25 @@ function getBundleTarget(userAgent: string): 'webview2' | 'ie11' | 'default' {
 	return 'default';
 }
 
-router.get("/templateUrl/:id", async (req, res) => {
-	const id = req.params.id;
+/**
+ * Bare DASH player test endpoint. Redirects to the standalone dashplayer.html
+ * page (served from dist/templates), preserving any ?url=<mpd> param. Handy for
+ * smoke-testing manifests in a modern browser (localhost) and IE11 (10.0.2.2):
+ *   /dash?url=https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps_640x360_800k.mpd
+ *   /dash?url=http://<host>:3000/sabr/<videoId>/master.mpd
+ */
+router.get("/dash", async (req, res) => {
+	const userAgent = req.headers['user-agent'] || '';
+	const bundleTarget = getBundleTarget(userAgent);
+	console.log(`[Templates] Bare dash player, target: ${bundleTarget}`);
+
+	const url = req.query.url
+		? `?url=${encodeURIComponent(String(req.query.url))}`
+		: '';
+	res.redirect(`/templates/dashplayer.html${url}`);
+});
+
+router.get("/templateUrl/:id", async (req, res) => {	const id = req.params.id;
 	const userAgent = req.headers['user-agent'] || '';
 	const bundleTarget = getBundleTarget(userAgent);
 	

@@ -32,6 +32,7 @@ const baseConfig = {
     smplayer: './src/app/templates/smplayer/index.tsx',
     home: './src/app/templates/home/index.tsx',
     archive: './src/app/templates/archive/index.tsx',
+    dashplayer: './src/app/templates/dashplayer/index.tsx',
   },
   mode: mode,
   module: {
