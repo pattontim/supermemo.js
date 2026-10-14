@@ -25,6 +25,7 @@ import {
 	bytesField, stringField,
 } from "./proto";
 import { parseInitSegment } from "./mp4";
+import { censusLog } from "../utils/bgCensus";
 
 export interface SabrInputFormat {
 	itag: number;
@@ -117,6 +118,27 @@ export class SabrMedia {
 	availableSegments(): number[] {
 		return [...this.segments.keys()].sort((a, b) => a - b);
 	}
+
+	/**
+	 * End (ms) of the contiguous buffered range starting at seq 1, mirroring
+	 * googlevideo's TrackCollection.buffered. Returns undefined if the first
+	 * segment is missing or untimed. This is the value a real player reports as
+	 * player_time_ms (the server doles out segments relative to it).
+	 */
+	bufferedEndMs(): number | undefined {
+		const seqs = this.availableSegments();
+		if (!seqs.length || seqs[0] !== 1) return undefined;
+		let end: number | undefined;
+		for (const s of seqs) {
+			const seg = this.segments.get(s)!;
+			if (seg.startMs === undefined || seg.durationMs === undefined) return end;
+			const segEnd = seg.startMs + seg.durationMs;
+			if (end === undefined) end = segEnd;
+			else if (seg.startMs <= end + 1) end = Math.max(end, segEnd);
+			else break; // gap — the contiguous range ends here
+		}
+		return end;
+	}
 }
 
 export class SabrStream {
@@ -140,7 +162,12 @@ export class SabrStream {
 	private requesting = false;
 	private pumping = false;
 	private tokenMintedAt = Date.now();
-	private static readonly TOKEN_REFRESH_MS = 45_000;
+	// The integrity token TTL is 12h (GenerateIT returns ttl=43200), so a
+	// content-bound PO token does NOT expire in ~60s. Swapping the token
+	// mid-stream makes the server reject the new one (StreamProtectionStatus 3),
+	// so refresh is disabled by default; set YTJS_SABR_TOKEN_REFRESH_MS to
+	// re-enable it for experiments.
+	private static readonly TOKEN_REFRESH_MS = Number(process.env.YTJS_SABR_TOKEN_REFRESH_MS ?? 0);
 
 	constructor(
 		public sabrUrl: string,
@@ -156,6 +183,7 @@ export class SabrStream {
 
 	private async maybeRefreshToken() {
 		if (!this.tokenMinter) return;
+		if (SabrStream.TOKEN_REFRESH_MS <= 0) return;
 		if (Date.now() - this.tokenMintedAt < SabrStream.TOKEN_REFRESH_MS) return;
 		const minted = await this.tokenMinter();
 		if (minted?.poToken?.length) {
@@ -181,6 +209,12 @@ export class SabrStream {
 		this.lastPlayerTimeMs = playerTimeMs;
 		console.log(`[sabr] nudge playerTimeMs=${Math.round(playerTimeMs)} wall=${Date.now() - this.playbackStartAt}ms`);
 		if (!this.requesting && !this.dead) void this.pumpOnce(playerTimeMs);
+	}
+
+	/** Milliseconds since the session started — the value a real player reports
+	 *  for elapsed_wall_time_ms / time_since_last_seek / time_since_last_action. */
+	elapsedWallMs(): number {
+		return Date.now() - this.playbackStartAt;
 	}
 
 	private async pumpLoop() {
@@ -257,8 +291,30 @@ export class SabrStream {
 				method: "POST",
 				headers: {
 					"content-type": "application/x-protobuf",
-					"accept": "application/vnd.yt-ump",
-					"accept-encoding": "identity",
+					// Match the real WEB player's cross-site POST headers exactly
+					// (captured from a live Chromium SABR request). A missing
+					// Origin/Referer on a cross-site POST is a strong bot signal.
+					"accept": "*/*",
+					"accept-encoding": "gzip, deflate, br, zstd",
+					"accept-language": "en-US,en;q=0.9",
+					"origin": "https://www.youtube.com",
+					"referer": "https://www.youtube.com/",
+					"priority": "u=1, i",
+					"sec-fetch-dest": "empty",
+					"sec-fetch-mode": "cors",
+					"sec-fetch-site": "cross-site",
+					"sec-fetch-storage-access": "none",
+					"sec-ch-ua": '"Chromium";v="155", "Not(A:Brand";v="24"',
+					"sec-ch-ua-mobile": "?0",
+					"sec-ch-ua-platform": '"Linux"',
+					"sec-ch-ua-arch": '"x86"',
+					"sec-ch-ua-bitness": '"64"',
+					"sec-ch-ua-model": '""',
+					"sec-ch-ua-platform-version": '""',
+					"sec-ch-ua-full-version": '"155.0.8059.39"',
+					"sec-ch-ua-full-version-list": '"Chromium";v="155.0.8059.39", "Not(A:Brand";v="24.0.0.0"',
+					"sec-ch-ua-form-factors": '"Desktop"',
+					"sec-ch-ua-wow64": "?0",
 				},
 				body: new Uint8Array(this.buildRequestBody(currentStreamTimeMs)),
 			});
@@ -294,6 +350,47 @@ export class SabrStream {
 
 	// --- request building (TRSabrStream.buildRequestBody) ---
 
+	/**
+	 * MediaCapabilities (client_abr_state field 38). Captured from a live WEB
+	 * player: video codec capabilities (codec 8/4/2 with resolution/bitrate) and
+	 * audio codecs (1=Opus, 3=AAC), plus an HDR bitmask. Omitting it entirely is
+	 * a wire difference from a real client.
+	 */
+	private buildMediaCapabilities(): Buffer {
+		const videoCaps = [
+			{ codec: 8, maxBitrate: 3250113 },
+			{ codec: 4, maxBitrate: 3038632 },
+			{ codec: 2, maxBitrate: 4349126 },
+		].map((c) =>
+			Buffer.concat([
+				int32Field(1, c.codec),
+				int32Field(2, 1),
+				int32Field(3, 1080),
+				int32Field(4, 1920),
+				int32Field(11, 24),
+				int32Field(12, c.maxBitrate),
+				boolField(15, false),
+			])
+		);
+		const audioCaps = [
+			{ codec: 1, channels: 2 },
+			{ codec: 3, channels: 2 },
+		].map((c) =>
+			Buffer.concat([
+				int32Field(1, c.codec),
+				int32Field(2, c.channels),
+				int32Field(6, 0),
+			])
+		);
+		const ladder = Buffer.concat([int32Field(1, 249), int32Field(1, 350)]);
+		return Buffer.concat([
+			...videoCaps.map((v) => bytesField(1, v)),
+			...audioCaps.map((a) => bytesField(2, a)),
+			bytesField(4, ladder),
+			int32Field(5, 3),
+		]);
+	}
+
 	private encodeFormatId(f: SabrInputFormat): Buffer {
 		const parts: Buffer[] = [int32Field(1, f.itag)];
 		const lmt = f.lastModified ? BigInt(f.lastModified) : 0n;
@@ -303,12 +400,20 @@ export class SabrStream {
 	}
 
 	private buildStreamerContext(): Buffer {
+		// Match the real WEB player's ClientInfo wire shape (captured live):
+		// field 1 = locale "en_US" (the current player sends it here, though the
+		// TubeReplacer/FreeTube proto doesn't declare it), fields 16/17/18 =
+		// client name/version/osName, and field 19 (os_version) is OMITTED when
+		// empty — we used to send a zero-length field 19, a wire difference.
 		const clientInfoParts: Buffer[] = [
+			stringField(1, "en_US"),
 			int32Field(16, this.clientInfo.clientName),
 			stringField(17, this.clientInfo.clientVersion),
 			stringField(18, this.clientInfo.osName),
-			stringField(19, this.clientInfo.osVersion),
 		];
+		if (this.clientInfo.osVersion) {
+			clientInfoParts.push(stringField(19, this.clientInfo.osVersion));
+		}
 		if (this.clientInfo.acceptLanguage) {
 			clientInfoParts.push(stringField(21, this.clientInfo.acceptLanguage));
 		}
@@ -355,41 +460,78 @@ export class SabrStream {
 	}
 
 	/**
-	 * googlevideo-style BufferedRange for one track: report the LAST received
-	 * segment (raw 1-based sequenceNumber). Behind YTJS_SABR_BUFFERED_RANGES=1 as
-	 * a fallback for when player_time_ms alone doesn't advance the window.
+	 * googlevideo-style BufferedRange for one track: the full contiguous range
+	 * from seq 1 (real start/duration ms, start+end segment indexes, and a
+	 * time_range ticks submessage). The previous version reported
+	 * start_time_ms=0 with start==end==lastSeq — a one-segment range at t=0,
+	 * which is worse than sending nothing. Default-on; set
+	 * YTJS_SABR_BUFFERED_RANGES=0 to disable.
 	 */
 	private encodeBufferedRange(fmt: SabrInputFormat | undefined, media: SabrMedia): Buffer | undefined {
 		if (!fmt) return undefined;
 		const seqs = media.availableSegments();
-		if (seqs.length === 0) return undefined;
-		const lastSeq = seqs[seqs.length - 1];
-		const last = media.segments.get(lastSeq);
-		const dur = last?.durationMs ?? media.segmentDurationMs ?? 5000;
+		if (!seqs.length || seqs[0] !== 1) return undefined;
+		let startMs: number | undefined;
+		let endMs = 0;
+		let endSeq = seqs[0];
+		for (const s of seqs) {
+			const seg = media.segments.get(s)!;
+			if (seg.startMs === undefined || seg.durationMs === undefined) break;
+			if (startMs === undefined) startMs = seg.startMs;
+			if (seg.startMs > endMs + 1) break; // gap
+			endMs = Math.max(endMs, seg.startMs + seg.durationMs);
+			endSeq = s;
+		}
+		if (startMs === undefined) return undefined;
+		const dur = Math.round(endMs - startMs);
+		// time_range (field 6): ticks at timescale 1000 == ms (googlevideo shape)
+		const timeRange = Buffer.concat([
+			int64Field(1, Math.round(startMs)),
+			int64Field(2, dur),
+			int32Field(3, 1000),
+		]);
 		return Buffer.concat([
 			bytesField(1, this.encodeFormatId(fmt)),
-			int64Field(2, 0), // start_time_ms
+			int64Field(2, Math.round(startMs)), // start_time_ms
 			int64Field(3, dur), // duration_ms
-			int32Field(4, lastSeq), // start_segment_index (raw seq)
-			int32Field(5, lastSeq), // end_segment_index
+			int32Field(4, seqs[0]), // start_segment_index
+			int32Field(5, endSeq), // end_segment_index
+			bytesField(6, timeRange),
 		]);
 	}
 
 	private buildClientAbrState(currentStreamTimeMs: number): Buffer {
+		// A real player reports the same elapsed wall time for all three of
+		// these; googlevideo does the same, and it's what makes the server's
+		// nextRequestPolicy targetReadaheadMs grow so it keeps sending.
+		const elapsed = this.elapsedWallMs();
 		const parts: Buffer[] = [
 			int32Field(18, 1280), // client_viewport_width
 			int32Field(19, 720), // client_viewport_height
+			int32Field(21, 0), // sticky_resolution
 			boolField(22, false), // client_viewport_is_flexible
 			int64Field(23, this.bandwidthEstimate), // bandwidth_estimate
 			int64Field(28, currentStreamTimeMs), // player_time_ms
+			int64Field(29, elapsed), // time_since_last_seek
 			int32Field(34, 1), // visibility
 			fixed32Field(35, 1.0), // playback_rate
-			int64Field(36, Date.now() - this.playbackStartAt), // elapsed_wall_time_ms
-			int32Field(40, 0), // enabled_track_types_bitfield
+			int64Field(36, elapsed), // elapsed_wall_time_ms
+			bytesField(38, this.buildMediaCapabilities()), // media_capabilities
+			int64Field(39, elapsed), // time_since_last_action_ms
+			// enabled_track_types_bitfield: a real WEB client sends 3 (video|audio
+			// enabled). Sending 0 tells the server no track is enabled, which is a
+			// plausible reason it stops doling out media after the initial window.
+			int32Field(40, 3), // enabled_track_types_bitfield (video|audio)
 			int64Field(44, 0), // player_state
 			boolField(46, true), // drc_enabled (stable volume)
+			int64Field(57, 73), // field57 (observed)
 			boolField(58, false), // prefer_vp9
+			int32Field(59, 1080), // av1_quality_threshold
+			int64Field(68, 0), // sabr_force_max_network_interruption_duration_ms
+			int32Field(71, 1), // field71 (observed)
 			boolField(76, false), // enable_voice_boost
+			boolField(80, true), // field80 (observed)
+			boolField(85, true), // field85 (observed)
 		];
 		return Buffer.concat(parts);
 	}
@@ -411,9 +553,10 @@ export class SabrStream {
 			parts.push(bytesField(2, audioId));
 		}
 		parts.push(bytesField(5, this.ustreamerConfig));
-		// buffered_ranges (field 3): opt-in fallback for when player_time_ms
-		// alone doesn't advance the window (dash.js asks for seqs ahead of what
-		// the pump has delivered). Off by default.
+		// buffered_ranges (field 3): report the real contiguous buffered range so
+		// the server can advance the window without trusting player_time_ms
+		// alone. NOTE: measured to REGRESS (status-3 count 13 vs 7 with it off),
+		// so it stays opt-in via YTJS_SABR_BUFFERED_RANGES=1.
 		if (process.env.YTJS_SABR_BUFFERED_RANGES === "1") {
 			const vr = this.encodeBufferedRange(videoFormat, this.video);
 			const ar = this.encodeBufferedRange(audioFormat, this.audio);
@@ -423,7 +566,11 @@ export class SabrStream {
 		if (videoId) parts.push(bytesField(17, videoId)); // preferred_video_format_ids
 		if (audioId) parts.push(bytesField(16, audioId)); // preferred_audio_format_ids
 		parts.push(bytesField(19, this.buildStreamerContext()));
-		return Buffer.concat(parts);
+		const body = Buffer.concat(parts);
+		if (process.env.BG_CENSUS === "1") {
+			censusLog({ type: "abr-request", rn: this.requestNumber, bytes: body.length, hex: body.toString("hex") });
+		}
+		return body;
 	}
 
 	// --- response part handling (TRSabrStream+PartHandler) ---
@@ -582,15 +729,51 @@ export class SabrStream {
 
 	private readMediaHeader(data: Buffer) {
 		const f = decodeFields(data);
-		const startMs = getVarint(f, 11);
-		const durationMs = getVarint(f, 12);
+		const startMsRaw = getVarint(f, 11);
+		const durationMsRaw = getVarint(f, 12);
+		// time_range (field 15): TimeRange{start_ticks=1, duration_ticks=2,
+		// timescale=3}. Some headers carry timing ONLY here — googlevideo's
+		// mediaTimeUtils falls back to ticks->ms (floor for start, ceil for
+		// duration). Without this fallback startMs/durationMs are undefined and
+		// the playhead collapses to ~0, so the server stops advancing the window.
+		const tr = getBytes(f, 15);
+		let startTicks: bigint | undefined;
+		let durationTicks: bigint | undefined;
+		let timescale: bigint | undefined;
+		if (tr) {
+			const tf = decodeFields(tr);
+			startTicks = getVarint(tf, 1);
+			durationTicks = getVarint(tf, 2);
+			timescale = getVarint(tf, 3);
+		}
+		const scale = timescale !== undefined && timescale > 0n ? Number(timescale) : 0;
+		const startMs =
+			startMsRaw !== undefined && startMsRaw > 0n
+				? Number(startMsRaw)
+				: startTicks !== undefined && scale > 0
+					? Math.floor((Number(startTicks) / scale) * 1000)
+					: startMsRaw !== undefined
+						? 0
+						: undefined;
+		const durationMs =
+			durationMsRaw !== undefined && durationMsRaw > 0n
+				? Number(durationMsRaw)
+				: durationTicks !== undefined && scale > 0
+					? Math.ceil((Number(durationTicks) / scale) * 1000)
+					: undefined;
+		if (process.env.BG_CENSUS === "1") {
+			console.log(
+				`[sabr] mediaheader seq=${Number(getVarint(f, 9) ?? 0)} raw11=${startMsRaw} raw12=${durationMsRaw} ` +
+				`tr=${tr?.toString("hex") ?? "-"} -> start=${startMs} dur=${durationMs}`
+			);
+		}
 		return {
 			headerId: Number(getVarint(f, 1) ?? 0),
 			itag: Number(getVarint(f, 3) ?? 0),
 			isInitSeg: (getVarint(f, 8) ?? 0n) !== 0n,
 			sequenceNumber: Number(getVarint(f, 9) ?? 0),
-			startMs: startMs !== undefined ? Number(startMs) : undefined,
-			durationMs: durationMs !== undefined ? Number(durationMs) : undefined,
+			startMs,
+			durationMs,
 		};
 	}
 }

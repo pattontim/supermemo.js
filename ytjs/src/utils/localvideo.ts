@@ -11,6 +11,7 @@
 import Innertube, { ClientType, Player, UniversalCache } from "youtubei.js";
 import { Response } from "node-fetch";
 import { generateContentBoundPoToken, getWatchHTMLPage } from "./poToken";
+import { censusLog } from "./bgCensus";
 import { cacheDir } from "./constants";
 import { Format } from "./yt-types";
 import { defaultLocalUrl } from "../server";
@@ -18,6 +19,33 @@ import { Utils, Constants } from "youtubei.js";
 import { SabrInputFormat } from "../sabr/sabr-stream";
 
 export type FormatWithURL = Format & { freeTubeUrl: string; };
+
+/**
+ * A single long-lived Innertube session used for ALL poToken mints. The token
+ * is bound to the session's visitor identity, and the SABR URL is bound to the
+ * same visitor — so the initial mint and every refresh MUST reuse one session.
+ * `createInnertube` sets `enable_session_cache: false`, so each call would
+ * otherwise mint under a brand-new visitor, and the server would reject the
+ * refreshed token (StreamProtectionStatus 3) even though the first one worked.
+ */
+let mintSession: Awaited<ReturnType<typeof createInnertube>> | undefined;
+
+async function getMintSession() {
+	if (!mintSession) {
+		mintSession = await createInnertube({ withPlayer: true, generateSessionLocally: false });
+	}
+	return mintSession;
+}
+
+/**
+ * The visitor identity of the shared mint session. The SABR URL must be fetched
+ * under this same visitor so the URL and the PO token agree (see
+ * getWatchPageSabrInputs).
+ */
+export async function getMintVisitor(): Promise<string | undefined> {
+	const session = await getMintSession();
+	return session.session.context.client.visitorData;
+}
 
 /**
  * Mint a real content-bound PO token for a video, reusing the watch-page scrape
@@ -33,8 +61,13 @@ export async function mintContentPoToken(
 	videoId: string,
 ): Promise<{ poToken: Buffer; visitorData?: string } | undefined> {
 	try {
-		const webInnertube = await createInnertube({ withPlayer: true, generateSessionLocally: false });
-		const { ytConfig, initialAttestationData } = await getWatchHTMLPage(videoId);
+		const webInnertube = await getMintSession();
+		// Scrape the watch page with the SAME visitor identity the token will be
+		// minted under, so the challenge and the mint agree on one visitor (see
+		// getWatchHTMLPage). Without this the page gets a fresh anonymous visitor
+		// and the SABR StreamerContext declares a different one → status 3.
+		const sessionVisitor = webInnertube.session.context.client.visitorData;
+		const { ytConfig, initialAttestationData } = await getWatchHTMLPage(videoId, sessionVisitor);
 		const token = await generateContentBoundPoToken(
 			videoId,
 			webInnertube.session.context,
@@ -42,9 +75,23 @@ export async function mintContentPoToken(
 			ytConfig,
 		);
 		if (!token) return undefined;
-		const visitorData =
-			webInnertube.session.context.client.visitorData ??
-			ytConfig?.INNERTUBE_CONTEXT?.client?.visitorData;
+		const ytConfigVisitor = ytConfig?.INNERTUBE_CONTEXT?.client?.visitorData;
+		const visitorData = sessionVisitor ?? ytConfigVisitor;
+		if (process.env.BG_CENSUS === "1") {
+			censusLog({
+				visitor: {
+					videoId,
+					sessionVisitor,
+					ytConfigVisitor,
+					chosen: visitorData,
+					match: sessionVisitor === ytConfigVisitor,
+					clientName: webInnertube.session.context.client.clientName,
+					clientVersion: webInnertube.session.context.client.clientVersion,
+					hl: webInnertube.session.context.client.hl,
+					gl: webInnertube.session.context.client.gl,
+				},
+			});
+		}
 		return { poToken: base64ToBuffer(token), visitorData };
 	} catch (e) {
 		console.error("[sabr] content-bound poToken mint failed", e);

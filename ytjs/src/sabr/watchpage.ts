@@ -62,6 +62,13 @@ export async function getWatchPageSabrInputs(
 	videoId: string
 ): Promise<WatchPageSabrInputs | null> {
 	const url = `https://www.youtube.com/watch?v=${videoId}&bpctr=9999999999&has_verified=1`;
+	// NOTE: sending the session visitor (as X-Goog-Visitor-Id or a
+	// VISITOR_INFO1_LIVE cookie) makes YouTube return a SABR URL the server
+	// rejects with sabr.malformed_config (X-Goog-Visitor-Id) or has no effect on
+	// the status-3 stall (cookie). The anonymous watch-page fetch yields a URL
+	// that streams fine, and the SABR URL's visitor does NOT need to match the
+	// PO token's visitor — only the token's own mint/refresh consistency matters
+	// (see mintContentPoToken's shared session).
 	const resp = await fetch(url, {
 		headers: {
 			"User-Agent": UA,

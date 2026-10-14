@@ -162,13 +162,12 @@ async function buildWatchPageStream(videoId: string): Promise<{
 	const minted = await mintContentPoToken(videoId);
 	const poToken = minted?.poToken ?? Buffer.alloc(0);
 
-	// The token is bound to the minting session's visitor identity; the SABR
-	// request must declare the SAME visitorData (StreamerContext.clientInfo
-	// field 22, where the real web client carries it) or the server rejects the
-	// token and cuts the stream.
+	// The token is bound to the minting session's visitor identity. The SABR
+	// request carries that identity via the poToken itself; StreamerContext
+	// ClientInfo.accept_region (field 22) is a *region*, not a visitor id, so it
+	// is deliberately left unset here (a real client leaves it unset too).
 	const clientInfo: SabrClientInfo = {
 		...WEB_CLIENT,
-		acceptRegion: minted?.visitorData ?? WEB_CLIENT.acceptRegion,
 	};
 
 	const stream = new SabrStream(
@@ -179,12 +178,9 @@ async function buildWatchPageStream(videoId: string): Promise<{
 		videoId,
 		clientInfo,
 		// Re-mint on the ~45s timer so the session survives past the ~60s token
-		// lifetime (StreamProtectionStatus 3). The token is bound to visitorData,
-		// so the SABR request's clientInfo is refreshed to match on each mint.
+		// lifetime (StreamProtectionStatus 3).
 		async () => {
-			const m = await mintContentPoToken(videoId);
-			if (m?.visitorData) clientInfo.acceptRegion = m.visitorData;
-			return m;
+			return await mintContentPoToken(videoId);
 		},
 	);
 	console.log(
@@ -297,14 +293,26 @@ async function waitForInit(stream: SabrStream, media: SabrMedia, timeoutMs = 450
 
 async function waitForSegment(stream: SabrStream, media: SabrMedia, seq: number, timeoutMs = 45000) {
 	if (seq > 0) {
-		// Tell the server where the playhead is so it advances the window
-		// instead of replaying from segment 1 (player_time_ms, field 28).
-		// TubeReplacer drives the window purely via player time; googlevideo
-		// documents the same ("abusing the player time field").
+		// player_time_ms (field 28) = end of the contiguous buffered range,
+		// matching googlevideo's seekTo(trackCollection.buffered). Fall back to
+		// the requested segment's nominal end, then wall clock (which keeps
+		// fields 28/36 consistent, as a real player reports). The old
+		// `(seq-1)*5000` fallback silently lied because SABR segment durations
+		// aren't uniform.
 		const prev = media.segments.get(seq - 1);
-		const t = prev?.startMs !== undefined && prev.durationMs !== undefined
-			? prev.startMs + prev.durationMs
-			: (seq - 1) * (media.segmentDurationMs ?? 5000);
+		const t =
+			media.bufferedEndMs() ??
+			(prev?.startMs !== undefined && prev.durationMs !== undefined
+				? prev.startMs + prev.durationMs
+				: media.segmentDurationMs !== undefined
+					? (seq - 1) * media.segmentDurationMs
+					: stream.elapsedWallMs());
+		if (process.env.BG_CENSUS === "1") {
+			console.log(
+				`[sabr] seg-${seq} nudge t=${Math.round(t)} bufferedEnd=${media.bufferedEndMs()} ` +
+				`prevStart=${prev?.startMs} prevDur=${prev?.durationMs} segDurMs=${media.segmentDurationMs}`
+			);
+		}
 		stream.nudge(t);
 	}
 	await Promise.race([
