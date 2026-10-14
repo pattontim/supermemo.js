@@ -53,19 +53,6 @@ export async function setupBotGuardGlobals() {
 	Object.assign(globalThis, {
 		window: dom.window,
 		document: dom.window.document,
-		// Electron equivalent: contextIsolation: true (isolated context)
-		// navigator: {
-		// 	userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-		// 		,
-		// 	appVersion:
-		// 		"5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-		// 	platform: "Win32",
-		// 	hardwareConcurrency: 4,
-		// 	deviceMemory: 8,
-		// 	languages: ["en-US", "en"],
-		// 	onLine: true,
-		// 	cookieEnabled: true,
-		// },
 		location: {
 			href: "https://www.youtube.com",
 			origin: "https://www.youtube.com",
@@ -80,10 +67,16 @@ export async function setupBotGuardGlobals() {
 			width: 1920,
 			height: 1080,
 			availWidth: 1920,
-			availHeight: 1050,
+			availHeight: 1040,
 			colorDepth: 24,
 			pixelDepth: 24,
+			orientation: { type: "landscape-primary", angle: 0 },
 		},
+		devicePixelRatio: 1,
+		innerWidth: 1920,
+		innerHeight: 969,
+		outerWidth: 1920,
+		outerHeight: 1080,
 		// Electron equivalent: backgroundThrottling: false + v8CacheOptions: 'none'
 		performance: {
 			now: () => Date.now(),
@@ -95,6 +88,7 @@ export async function setupBotGuardGlobals() {
 			getEntriesByType: (type: string) => [],
 			getEntriesByName: (name: string) => [],
 			getEntries: () => [],
+			memory: { jsHeapSizeLimit: 4294705152, totalJSHeapSize: 1e7, usedJSHeapSize: 1e7 },
 		},
 		// crypto: {
 		// 	// @ts-expect-error lol
@@ -102,6 +96,89 @@ export async function setupBotGuardGlobals() {
 		// 	randomUUID: () => crypto.randomUUID(),
 		// },
 	});
+
+	// A coherent, plausible desktop-Chrome fingerprint. Not copied from any
+	// specific host — the point is internal consistency (UA, platform, UA-CH
+	// brands, screen, hardware) so BotGuard's environment checks see a real
+	// browser rather than bare JSDOM defaults. navigator is getter-only on
+	// globalThis, so it must be (re)defined rather than assigned.
+	const fakeNavigator = {
+		userAgent:
+			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+		appVersion:
+			"5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+		appName: "Netscape",
+		appCodeName: "Mozilla",
+		product: "Gecko",
+		productSub: "20030107",
+		vendor: "Google Inc.",
+		vendorSub: "",
+		platform: "Win32",
+		language: "en-US",
+		languages: ["en-US", "en"],
+		hardwareConcurrency: 8,
+		deviceMemory: 8,
+		maxTouchPoints: 0,
+		cookieEnabled: true,
+		onLine: true,
+		doNotTrack: null,
+		pdfViewerEnabled: true,
+		webdriver: false,
+		plugins: { length: 5, item: () => null, namedItem: () => null, refresh: () => {} },
+		mimeTypes: { length: 2, item: () => null, namedItem: () => null },
+		userAgentData: {
+			brands: [
+				{ brand: "Not_A Brand", version: "24" },
+				{ brand: "Chromium", version: "131" },
+				{ brand: "Google Chrome", version: "131" },
+			],
+			mobile: false,
+			platform: "Windows",
+			getHighEntropyValues: async () => ({
+				architecture: "x86",
+				bitness: "64",
+				model: "",
+				platformVersion: "10.0.0",
+				uaFullVersion: "131.0.0.0",
+				fullVersionList: [
+					{ brand: "Not_A Brand", version: "24.0.0.0" },
+					{ brand: "Chromium", version: "131.0.0.0" },
+					{ brand: "Google Chrome", version: "131.0.0.0" },
+				],
+			}),
+		},
+		connection: { effectiveType: "4g", rtt: 50, downlink: 10, saveData: false },
+		permissions: { query: async () => ({ state: "prompt" }) },
+		mediaCapabilities: { decodingInfo: async () => ({ supported: true, smooth: true, powerEfficient: true }) },
+		mediaDevices: { enumerateDevices: async () => [] },
+		storage: { estimate: async () => ({ quota: 1e10, usage: 0 }) },
+		serviceWorker: {},
+		credentials: {},
+		clipboard: {},
+		wakeLock: {},
+		scheduling: {},
+		userActivation: { isActive: true, hasBeenActive: true },
+		keyboard: {},
+		locks: { request: async (_n: string, fn: any) => fn({}) },
+		usb: {},
+		hid: {},
+		serial: {},
+		xr: {},
+		gpu: {},
+		geolocation: {},
+		mediaSession: {},
+		presentation: {},
+		getBattery: async () => ({ charging: true, level: 1, chargingTime: 0, dischargingTime: Infinity }),
+		sendBeacon: () => true,
+		vibrate: () => true,
+		getGamepads: () => [],
+		requestMediaKeySystemAccess: async () => ({}),
+	};
+	try {
+		Object.defineProperty(globalThis, "navigator", { value: fakeNavigator, configurable: true, writable: true });
+	} catch {
+		Object.assign(globalThis, { navigator: fakeNavigator });
+	}
 
 	// @ts-expect-error r
 	globalThis.HTMLCanvasElement = createCanvas;
@@ -140,6 +217,68 @@ export async function setupBotGuardGlobals() {
 	globalThis.HTMLBodyElement = dom.window.HTMLBodyElement;
 	globalThis.HTMLDivElement = dom.window.HTMLDivElement;
 	globalThis.HTMLIFrameElement = dom.window.HTMLIFrameElement;
+
+	// Browser APIs BotGuard's environment probe expects to exist. Stubs are
+	// deliberately plausible (not copied from a specific host) so the collected
+	// signal set looks like a real desktop Chrome rather than bare JSDOM.
+	const g = globalThis as any;
+	g.chrome = { runtime: {}, loadTimes: () => ({}), csi: () => ({}), app: { isInstalled: false } };
+	g.WebGLRenderingContext = function WebGLRenderingContext() {};
+	g.WebGL2RenderingContext = function WebGL2RenderingContext() {};
+	g.AudioContext = function AudioContext() {
+		return { sampleRate: 48000, state: "suspended", destination: {}, createOscillator: () => ({ connect() {}, start() {}, stop() {}, frequency: { value: 0 } }), createGain: () => ({ connect() {}, gain: { value: 0 } }), createAnalyser: () => ({ connect() {}, getFloatFrequencyData() {} }), close: async () => {} };
+	};
+	g.OfflineAudioContext = g.AudioContext;
+	g.RTCPeerConnection = function RTCPeerConnection() { return { createDataChannel: () => ({}), createOffer: async () => ({}), close() {} }; };
+	g.RTCSessionDescription = function RTCSessionDescription() {};
+	g.RTCIceCandidate = function RTCIceCandidate() {};
+	g.Notification = function Notification() {};
+	g.Notification.permission = "default";
+	g.Notification.requestPermission = async () => "default";
+	g.requestIdleCallback = (cb: any) => setTimeout(() => cb({ didTimeout: false, timeRemaining: () => 50 }), 1);
+	g.cancelIdleCallback = (id: any) => clearTimeout(id);
+	g.IntersectionObserver = function IntersectionObserver() { return { observe() {}, unobserve() {}, disconnect() {}, takeRecords: () => [] }; };
+	g.ResizeObserver = function ResizeObserver() { return { observe() {}, unobserve() {}, disconnect() {} }; };
+	g.MutationObserver = dom.window.MutationObserver;
+	g.PerformanceObserver = function PerformanceObserver() { return { observe() {}, disconnect() {}, takeRecords: () => [] }; };
+	g.ReportingObserver = function ReportingObserver() { return { observe() {}, disconnect() {}, takeRecords: () => [] }; };
+	g.MediaSource = function MediaSource() {};
+	g.SourceBuffer = function SourceBuffer() {};
+	g.MediaRecorder = function MediaRecorder() {};
+	g.VideoPlaybackQuality = function VideoPlaybackQuality() {};
+	g.VideoDecoder = function VideoDecoder() {};
+	g.AudioDecoder = function AudioDecoder() {};
+	g.ImageDecoder = function ImageDecoder() {};
+	g.WebTransport = function WebTransport() {};
+	g.CompressionStream = function CompressionStream() {};
+	g.PaymentRequest = function PaymentRequest() {};
+	g.PublicKeyCredential = function PublicKeyCredential() {};
+	g.trustedTypes = { createPolicy: () => ({ createHTML: (s: string) => s, createScript: (s: string) => s, createScriptURL: (s: string) => s }) };
+	g.caches = { open: async () => ({}), match: async () => undefined, keys: async () => [] };
+	g.indexedDB = { open: () => ({ onsuccess: null, onerror: null, result: { createObjectStore: () => ({}), transaction: () => ({ objectStore: () => ({ get: () => ({}), put: () => ({}) }) }) } }) };
+	g.speechSynthesis = { getVoices: () => [], speak() {}, cancel() {} };
+	g.visualViewport = { width: 1920, height: 969, scale: 1, offsetLeft: 0, offsetTop: 0 };
+	g.cookieStore = { get: async () => null, getAll: async () => [] };
+	g.navigation = { currentEntry: { url: "https://www.youtube.com" }, entries: () => [] };
+	g.scheduler = { postTask: (cb: any) => Promise.resolve().then(cb), yield: async () => {} };
+	g.EyeDropper = function EyeDropper() {};
+	g.IdleDetector = function IdleDetector() {};
+	g.PressureObserver = function PressureObserver() { return { observe() {}, disconnect() {} }; };
+	g.launchQueue = { setConsumer() {} };
+	g.documentPictureInPicture = {};
+	g.fence = {};
+	g.sharedStorage = {};
+	g.getDigitalGoodsService = async () => ({});
+	g.getInterestGroupAd = () => null;
+	g.showOpenFilePicker = async () => [];
+	g.openDatabase = undefined;
+	g.ManagedMediaSource = undefined;
+	g.WebSocketStream = function WebSocketStream() {};
+	g.WebAssembly = WebAssembly;
+	g.TextEncoder = TextEncoder;
+	g.TextDecoder = TextDecoder;
+	g.atob = (str: string) => Buffer.from(str, "base64").toString("binary");
+	g.btoa = (str: string) => Buffer.from(str, "binary").toString("base64");
 
 	let lastTime = 0;
 	globalThis.requestAnimationFrame = (callback) => {

@@ -144,6 +144,7 @@ export async function getWatchPageSabrInputs(
 				height: f.height,
 				bandwidth: f.bitrate ?? f.averageBitrate,
 				audioSampleRate: f.audioSampleRate ? Number(f.audioSampleRate) : undefined,
+				approxDurationMs: f.approxDurationMs ? Number(f.approxDurationMs) : undefined,
 			};
 		});
 

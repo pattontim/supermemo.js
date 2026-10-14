@@ -16,13 +16,13 @@
 
 import { Router, Request, Response } from "express";
 import { SabrStream, SabrMedia, SabrClientInfo, SabrInputFormat } from "../sabr/sabr-stream";
-import { getOrCreateSabrInputs, createInnertube } from "../utils/localvideo";
+import { getOrCreateSabrInputs, createInnertube, mintContentPoToken } from "../utils/localvideo";
 import { getWatchPageSabrInputs } from "../sabr/watchpage";
 
 const router = Router();
 
 /** WEB ClientInfo — the watch page is a WEB-client render. */
-const WEB_CLIENT = {
+const WEB_CLIENT: SabrClientInfo = {
 	clientName: 1,
 	clientVersion: process.env.YTJS_SABR_CVER ?? "2.20261012.01.00",
 	osName: "X11",
@@ -156,19 +156,41 @@ async function buildWatchPageStream(videoId: string): Promise<{
 	const audioFormat = pickAudio ?? wp.formats.find((f) => f.isAudio);
 	const ordered = [videoFormat, audioFormat].filter(Boolean) as SabrInputFormat[];
 
-	// Empty token: StreamProtectionStatus 2 accepts it for the initial window and
-	// the watch-page session is otherwise self-sufficient.
+	// Real content-bound PO token so the session survives past the empty-token
+	// window (StreamProtectionStatus 3). Falls back to an empty token (which
+	// covers the first ~7MB) if minting fails.
+	const minted = await mintContentPoToken(videoId);
+	const poToken = minted?.poToken ?? Buffer.alloc(0);
+
+	// The token is bound to the minting session's visitor identity; the SABR
+	// request must declare the SAME visitorData (StreamerContext.clientInfo
+	// field 22, where the real web client carries it) or the server rejects the
+	// token and cuts the stream.
+	const clientInfo: SabrClientInfo = {
+		...WEB_CLIENT,
+		acceptRegion: minted?.visitorData ?? WEB_CLIENT.acceptRegion,
+	};
+
 	const stream = new SabrStream(
 		decipheredUrl,
 		wp.ustreamerConfig,
 		ordered,
-		Buffer.alloc(0),
+		poToken,
 		videoId,
-		WEB_CLIENT as SabrClientInfo,
+		clientInfo,
+		// Re-mint on the ~45s timer so the session survives past the ~60s token
+		// lifetime (StreamProtectionStatus 3). The token is bound to visitorData,
+		// so the SABR request's clientInfo is refreshed to match on each mint.
+		async () => {
+			const m = await mintContentPoToken(videoId);
+			if (m?.visitorData) clientInfo.acceptRegion = m.visitorData;
+			return m;
+		},
 	);
 	console.log(
 		`[sabr] session via watchpage for ${videoId}: video=${videoFormat?.itag} ` +
-		`(${videoFormat?.codecs}) audio=${audioFormat?.itag} (${audioFormat?.codecs})`
+		`(${videoFormat?.codecs}) audio=${audioFormat?.itag} (${audioFormat?.codecs}) ` +
+		`poToken=${poToken.length}b visitor=${minted?.visitorData ? "set" : "none"}`
 	);
 	return { stream, videoFormat, audioFormat };
 }
@@ -195,6 +217,12 @@ async function getSession(videoId: string): Promise<SabrStream> {
 	if (existing && !existing.stream.dead) {
 		existing.lastAccess = Date.now();
 		return existing.stream;
+	}
+	// A dead session is sticky and has no internal recovery; drop it so a retry
+	// (e.g. an SM reload) builds a fresh stream instead of a permanent 503.
+	if (existing?.stream.dead) {
+		console.warn(`[sabr] ${videoId}: dead session, reaping for a fresh one`);
+		sessions.delete(videoId);
 	}
 
 	// Preferred path: watch-page session. A freshly fetched watch-page URL is
@@ -268,10 +296,22 @@ async function waitForInit(stream: SabrStream, media: SabrMedia, timeoutMs = 450
 }
 
 async function waitForSegment(stream: SabrStream, media: SabrMedia, seq: number, timeoutMs = 45000) {
-	if (seq > 0) stream.nudge();
+	if (seq > 0) {
+		// Tell the server where the playhead is so it advances the window
+		// instead of replaying from segment 1 (player_time_ms, field 28).
+		// TubeReplacer drives the window purely via player time; googlevideo
+		// documents the same ("abusing the player time field").
+		const prev = media.segments.get(seq - 1);
+		const t = prev?.startMs !== undefined && prev.durationMs !== undefined
+			? prev.startMs + prev.durationMs
+			: (seq - 1) * (media.segmentDurationMs ?? 5000);
+		stream.nudge(t);
+	}
 	await Promise.race([
 		media.onSegment(seq),
-		new Promise((_, rej) => setTimeout(() => rej(new Error("segment timeout")), timeoutMs)),
+		// Fail fast so dash.js sees an HTTP error within its ~20s XHR timeout
+		// rather than hanging past it into a permanent stall.
+		new Promise((_, rej) => setTimeout(() => rej(new Error("segment timeout")), Math.min(timeoutMs, 15000))),
 	]);
 }
 
@@ -347,6 +387,38 @@ router.get("/sabr/:id/audio.m3u8", (req, res) => servePlaylist(req, res, "audio"
  * received its init segments (and, for short clips, the full segment list) so
  * the static manifest is complete before dash.js sees it.
  */
+/**
+ * Nominal per-segment duration used in the SegmentTemplate. SABR `duration_ms`
+ * values are not always uniform (the first few segments can differ), so we use
+ * the mean of what we've seen and clamp it to a sane range. This only drives
+ * the $Number$ -> presentation-time mapping for seeking; dash.js places decoded
+ * fragments by their own moof timestamps, so mild drift doesn't break playback.
+ */
+function nominalDurationMs(media: SabrMedia, kind: "video" | "audio"): number {
+	const seqs = media.availableSegments();
+	const durs = seqs.map((s) => segmentDurationMs(media, s)).filter((d) => d > 0);
+	if (durs.length === 0) return kind === "audio" ? 10000 : 5000;
+	// Median, not mean: early segments skew low, and the template should track
+	// the dominant keyframe bucket (~5s), not average the outliers in.
+	const sorted = [...durs].sort((a, b) => a - b);
+	const med = sorted[Math.floor(sorted.length / 2)];
+	return Math.max(1000, Math.min(15000, Math.round(med)));
+}
+
+/**
+ * DASH Representation for one SABR track.
+ *
+ * Uses a STATIC SegmentTemplate with a nominal `duration` (no SegmentTimeline).
+ * dash.js computes every $Number$ segment URL from `duration` up to the
+ * declared mediaPresentationDuration, so it fetches segments on demand as the
+ * player advances — which is what SABR needs. A static SegmentList only
+ * declares the segments we already hold, so dash.js stops after that window;
+ * and a dynamic SegmentTimeline anchors playback to wall-clock "now", which
+ * finds no segments in the media-ordered SABR window. Both were tested; only
+ * this shape plays.
+ *  - startNumber="1": $Number$=1 -> seg-<kind>-1.m4s (SABR seq is 1-based).
+ *  - availabilityTimeOffset="0": dash.js copies ATO verbatim (no defaulting).
+ */
 function representationXml(fmt: SabrInputFormat | undefined, media: SabrMedia, kind: "video" | "audio"): string {
 	const codecs = fmt?.codecs ?? (kind === "video" ? "avc1.4d401f" : "mp4a.40.2");
 	const bandwidth = fmt?.bandwidth ?? (kind === "video" ? 1000000 : 128000);
@@ -361,27 +433,12 @@ function representationXml(fmt: SabrInputFormat | undefined, media: SabrMedia, k
 	if (kind === "audio" && fmt?.audioSampleRate) {
 		attrs.push(`audioSamplingRate="${fmt.audioSampleRate}"`);
 	}
-	const segs = media.availableSegments();
-	const body = segs
-		.map((s) => `<SegmentURL media="seg-${kind}-${s}.m4s"/>`)
-		.join("");
-	// SegmentList without a SegmentTimeline gives dash.js no duration
-	// information, so it won't build a timeline or request media segments.
-	// Emit a SegmentTimeline (timescale=1000, ms) built from the SABR
-	// MediaHeader durations.
-	const timeline =
-		`<SegmentTimeline>` +
-		segs
-			.map((s) => `<S d="${Math.round(segmentDurationMs(media, s))}"/>`)
-			.join("") +
-		`</SegmentTimeline>`;
+	const duration = nominalDurationMs(media, kind);
 	return (
 		`<Representation ${attrs.join(" ")}>` +
-		`<SegmentList timescale="1000">` +
-		`<Initialization sourceURL="init-${kind}.m4s"/>` +
-		timeline +
-		body +
-		`</SegmentList>` +
+		`<SegmentTemplate timescale="1000" duration="${duration}" startNumber="1" ` +
+		`initialization="init-${kind}.m4s" media="seg-${kind}-$Number$.m4s" ` +
+		`availabilityTimeOffset="0"/>` +
 		`</Representation>`
 	);
 }
@@ -390,23 +447,31 @@ router.get("/sabr/:id/master.mpd", async (req, res) => {
 	try {
 		const stream = await getSession(req.params.id);
 		const session = sessions.get(req.params.id);
-		// Wait for both init segments so the manifest is valid on first fetch.
-		await Promise.race([
-			Promise.all([stream.video.onSegment(0), stream.audio.onSegment(0)]),
-			new Promise((_, rej) => setTimeout(() => rej(new Error("playback not ready")), 45000)),
-		]);
 
-		const durMs = Math.max(
+		// Only block on the very first fetch until init segments exist.
+		if (!stream.video.ready || !stream.audio.ready) {
+			await Promise.race([
+				Promise.all([stream.video.onSegment(0), stream.audio.onSegment(0)]),
+				new Promise((_, rej) => setTimeout(() => rej(new Error("playback not ready")), 45000)),
+			]);
+		}
+
+		// Full media duration (from the watch-page format) so the seekbar spans
+		// the whole video immediately, not just the buffered window.
+		const fullDurationMs =
+			session?.videoFormat?.approxDurationMs ?? session?.audioFormat?.approxDurationMs;
+		const bufferedMs = Math.max(
 			stream.video.availableSegments().reduce((s, n) => s + segmentDurationMs(stream.video, n), 0),
 			stream.audio.availableSegments().reduce((s, n) => s + segmentDurationMs(stream.audio, n), 0)
 		);
+		const durMs = fullDurationMs ?? bufferedMs;
 
 		const mpd =
 			`<?xml version="1.0" encoding="utf-8"?>` +
 			`<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" ` +
-			`mediaPresentationDuration="PT${(durMs / 1000).toFixed(3)}S" minBufferTime="PT2S" ` +
-			`profiles="urn:mpeg:dash:profile:isoff-on-demand:2011">` +
-			`<Period>` +
+			`profiles="urn:mpeg:dash:profile:isoff-on-demand:2011" minBufferTime="PT2S" ` +
+			`mediaPresentationDuration="PT${(durMs / 1000).toFixed(3)}S">` +
+			`<Period id="1">` +
 			`<AdaptationSet mimeType="video/mp4" segmentAlignment="true" startWithSAP="1">` +
 			representationXml(session?.videoFormat, stream.video, "video") +
 			`</AdaptationSet>` +
@@ -435,10 +500,11 @@ router.get("/sabr/:id/init-:kind.m4s", async (req, res) => {
 });
 
 router.get("/sabr/:id/seg-:kind-:n.m4s", async (req, res) => {
+	let stream: SabrStream | undefined;
 	try {
 		const kind = req.params.kind === "audio" ? "audio" : "video";
 		const seq = Number(req.params.n);
-		const stream = await getSession(req.params.id);
+		stream = await getSession(req.params.id);
 		const media = kind === "video" ? stream.video : stream.audio;
 		if (!media.ready) await waitForInit(stream, media);
 		await waitForSegment(stream, media, seq);
@@ -446,6 +512,11 @@ router.get("/sabr/:id/seg-:kind-:n.m4s", async (req, res) => {
 		if (!seg) return res.status(404).send("segment not found");
 		res.type("video/mp4").send(seg.data);
 	} catch (e) {
+		// Always 503 (retryable): a 410 makes dash.js treat the segment as
+		// permanently gone and abandon the representation. Log the distinction
+		// (dead = server cut us; slow = pump lagging) but let the player retry,
+		// which triggers getSession's reap+rebuild path.
+		console.warn(`[sabr] seg ${req.params.kind}-${req.params.n} unavailable (${stream?.dead ? "stream dead" : "slow pump"}): ${String(e)}`);
 		res.status(503).send(String(e));
 	}
 });

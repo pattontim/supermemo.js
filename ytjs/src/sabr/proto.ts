@@ -9,7 +9,16 @@
  */
 
 export function varint(value: number | bigint): Buffer {
-	let v = BigInt(value);
+	// Truncate non-integers: proto varints are integers, but callers sometimes
+	// pass computed values (e.g. ms from a tick/timescale division) that come
+	// out fractional — BigInt() would throw right there and abort the request.
+	let v: bigint;
+	if (typeof value === "number") {
+		if (!Number.isFinite(value)) return Buffer.from([0]);
+		v = BigInt(Math.trunc(value));
+	} else {
+		v = value;
+	}
 	if (v < 0n) v += 1n << 64n; // two's complement for sint64-ish inputs
 	const out: number[] = [];
 	do {
@@ -103,6 +112,24 @@ export function decodeFields(buf: Buffer): ProtoField[] {
 
 export function getVarint(fields: ProtoField[], n: number): bigint | undefined {
 	return fields.find((f) => f.field === n && f.wireType === 0)?.varint;
+}
+
+/** Decode a packed repeated int32/varint field (wireType 2), or unpacked (0). */
+export function getPackedVarints(fields: ProtoField[], n: number): number[] {
+	const out: number[] = [];
+	for (const f of fields.filter((x) => x.field === n && x.wireType === 2 && x.bytes)) {
+		const buf = f.bytes!;
+		let off = 0;
+		while (off < buf.length) {
+			const { value, next } = readVarint(buf, off);
+			out.push(Number(value));
+			off = next;
+		}
+	}
+	for (const f of fields.filter((x) => x.field === n && x.wireType === 0)) {
+		out.push(Number(f.varint));
+	}
+	return out;
 }
 
 export function getBytes(fields: ProtoField[], n: number): Buffer | undefined {

@@ -20,7 +20,7 @@
 
 import { parseUmp, UMP_PART_ID, UmpPart } from "./ump";
 import {
-	decodeFields, getBytes, getString, getVarint,
+	decodeFields, getBytes, getString, getVarint, getPackedVarints,
 	int32Field, int64Field, boolField, fixed32Field,
 	bytesField, stringField,
 } from "./proto";
@@ -38,6 +38,8 @@ export interface SabrInputFormat {
 	height?: number;
 	bandwidth?: number;
 	audioSampleRate?: number;
+	/** Full media duration in ms (from the watch-page adaptive format) */
+	approxDurationMs?: number;
 }
 
 export interface SabrClientInfo {
@@ -53,6 +55,8 @@ export interface SabrSegment {
 	data: Buffer;
 	/** segment duration in ms, from the SABR MediaHeader */
 	durationMs?: number;
+	/** segment start time in ms, from the SABR MediaHeader (field 11) */
+	startMs?: number;
 	/** decode time in media timescale ticks (from moof/tfdt, if present) */
 	baseDecodeTimeTicks?: number;
 	/** total sample duration in media timescale ticks (from moof/trun) */
@@ -122,6 +126,9 @@ export class SabrStream {
 	dead = false;
 	bandwidthEstimate = 5_000_000;
 	private playbackStartAt = Date.now();
+	/** Server-issued SABR contexts (part 57), echoed per the sending policy (59). */
+	private sabrContexts = new Map<number, { raw: Buffer; type: number; sendByDefault: boolean }>();
+	private activeSabrContextTypes = new Set<number>();
 
 	video = new SabrMedia();
 	audio = new SabrMedia();
@@ -132,6 +139,8 @@ export class SabrStream {
 
 	private requesting = false;
 	private pumping = false;
+	private tokenMintedAt = Date.now();
+	private static readonly TOKEN_REFRESH_MS = 45_000;
 
 	constructor(
 		public sabrUrl: string,
@@ -140,7 +149,21 @@ export class SabrStream {
 		private poToken: Buffer,
 		public videoId: string,
 		private clientInfo: SabrClientInfo,
+		/** Re-mint a content-bound PO token; the server cuts the stream (status
+		 * 3) once the ~60s token lifetime lapses. */
+		private tokenMinter?: () => Promise<{ poToken: Buffer; visitorData?: string } | undefined>,
 	) {}
+
+	private async maybeRefreshToken() {
+		if (!this.tokenMinter) return;
+		if (Date.now() - this.tokenMintedAt < SabrStream.TOKEN_REFRESH_MS) return;
+		const minted = await this.tokenMinter();
+		if (minted?.poToken?.length) {
+			this.poToken = minted.poToken;
+			this.tokenMintedAt = Date.now();
+			console.log(`[sabr] refreshed poToken (${this.poToken.length}b)`);
+		}
+	}
 
 	/** Start the background request pump. Safe to call more than once. */
 	start() {
@@ -156,6 +179,7 @@ export class SabrStream {
 	/** Ask the pump to fetch now (e.g. a segment request found nothing buffered). */
 	nudge(playerTimeMs = this.lastPlayerTimeMs) {
 		this.lastPlayerTimeMs = playerTimeMs;
+		console.log(`[sabr] nudge playerTimeMs=${Math.round(playerTimeMs)} wall=${Date.now() - this.playbackStartAt}ms`);
 		if (!this.requesting && !this.dead) void this.pumpOnce(playerTimeMs);
 	}
 
@@ -218,6 +242,7 @@ export class SabrStream {
 		if (this.requesting || this.dead) return;
 		this.requesting = true;
 		try {
+			await this.maybeRefreshToken();
 			const url = this.requestUrl();
 			this.requestNumber++;
 			if (this.requestNumber === 1) {
@@ -248,7 +273,8 @@ export class SabrStream {
 			const parts = parseUmp(body);
 			console.log(`[sabr] response ${res.status}, ${body.length} bytes, parts=[${parts.map((p) => `${p.type}:${p.data.length}`).join(",")}]`);
 			for (const part of parts) {
-				if (part.type === UMP_PART_ID.PLAYBACK_START_POLICY || part.type === UMP_PART_ID.RELOAD_PLAYER_RESPONSE || part.type === UMP_PART_ID.NEXT_REQUEST_POLICY || part.type === UMP_PART_ID.SABR_ERROR) {
+				const hexTypes: number[] = [UMP_PART_ID.PLAYBACK_START_POLICY, UMP_PART_ID.RELOAD_PLAYER_RESPONSE, UMP_PART_ID.NEXT_REQUEST_POLICY, UMP_PART_ID.SABR_ERROR, UMP_PART_ID.SABR_CONTEXT_UPDATE, UMP_PART_ID.SABR_CONTEXT_SENDING_POLICY];
+				if (hexTypes.includes(part.type)) {
 					console.log(`[sabr]   part ${part.type} hex=${part.data.toString("hex")}`);
 				}
 				this.handlePart(part);
@@ -257,6 +283,12 @@ export class SabrStream {
 			console.error("[sabr] pump error", e);
 		} finally {
 			this.requesting = false;
+			// A nudge that arrived while we were in-flight was persisted to
+			// lastPlayerTimeMs; honour it now instead of waiting for the next
+			// steady-state tick (up to ~750ms).
+			if (!this.dead && this.lastPlayerTimeMs !== currentStreamTimeMs) {
+				void this.pumpOnce(this.lastPlayerTimeMs);
+			}
 		}
 	}
 
@@ -293,6 +325,16 @@ export class SabrStream {
 		if (this.playbackCookie && this.playbackCookie.length > 0) {
 			ctx.push(bytesField(3, this.playbackCookie));
 		}
+		// StreamerContext.sabr_contexts (field 5) + unsent_sabr_contexts (field 6).
+		// Mirrors FreeTube's prepareSabrContexts: active types are echoed
+		// verbatim, known-but-inactive types go in unsent_sabr_contexts.
+		for (const c of this.sabrContexts.values()) {
+			if (this.activeSabrContextTypes.has(c.type)) {
+				ctx.push(bytesField(5, c.raw));
+			} else {
+				ctx.push(int32Field(6, c.type));
+			}
+		}
 		return Buffer.concat(ctx);
 	}
 
@@ -310,6 +352,27 @@ export class SabrStream {
 			this.formats.find((f) => f.isAudio && f.itag === this.audio.itag) ??
 			this.formats.find((f) => f.isAudio)
 		);
+	}
+
+	/**
+	 * googlevideo-style BufferedRange for one track: report the LAST received
+	 * segment (raw 1-based sequenceNumber). Behind YTJS_SABR_BUFFERED_RANGES=1 as
+	 * a fallback for when player_time_ms alone doesn't advance the window.
+	 */
+	private encodeBufferedRange(fmt: SabrInputFormat | undefined, media: SabrMedia): Buffer | undefined {
+		if (!fmt) return undefined;
+		const seqs = media.availableSegments();
+		if (seqs.length === 0) return undefined;
+		const lastSeq = seqs[seqs.length - 1];
+		const last = media.segments.get(lastSeq);
+		const dur = last?.durationMs ?? media.segmentDurationMs ?? 5000;
+		return Buffer.concat([
+			bytesField(1, this.encodeFormatId(fmt)),
+			int64Field(2, 0), // start_time_ms
+			int64Field(3, dur), // duration_ms
+			int32Field(4, lastSeq), // start_segment_index (raw seq)
+			int32Field(5, lastSeq), // end_segment_index
+		]);
 	}
 
 	private buildClientAbrState(currentStreamTimeMs: number): Buffer {
@@ -348,6 +411,15 @@ export class SabrStream {
 			parts.push(bytesField(2, audioId));
 		}
 		parts.push(bytesField(5, this.ustreamerConfig));
+		// buffered_ranges (field 3): opt-in fallback for when player_time_ms
+		// alone doesn't advance the window (dash.js asks for seqs ahead of what
+		// the pump has delivered). Off by default.
+		if (process.env.YTJS_SABR_BUFFERED_RANGES === "1") {
+			const vr = this.encodeBufferedRange(videoFormat, this.video);
+			const ar = this.encodeBufferedRange(audioFormat, this.audio);
+			if (vr) parts.push(bytesField(3, vr));
+			if (ar) parts.push(bytesField(3, ar));
+		}
 		if (videoId) parts.push(bytesField(17, videoId)); // preferred_video_format_ids
 		if (audioId) parts.push(bytesField(16, audioId)); // preferred_audio_format_ids
 		parts.push(bytesField(19, this.buildStreamerContext()));
@@ -362,8 +434,10 @@ export class SabrStream {
 	private handlePart(part: UmpPart) {
 		switch (part.type) {
 			case UMP_PART_ID.STREAM_PROTECTION_STATUS: {
-				const status = Number(getVarint(decodeFields(part.data), 1) ?? 0);
-				console.log(`[sabr] stream protection status: ${status}`);
+				const f = decodeFields(part.data);
+				const status = Number(getVarint(f, 1) ?? 0);
+				const maxRetries = getVarint(f, 2);
+				console.log(`[sabr] stream protection status: ${status}${maxRetries !== undefined ? ` maxRetries=${maxRetries}` : ""} (poToken=${this.poToken.length}b, age=${Math.round((Date.now() - this.tokenMintedAt) / 1000)}s)`);
 				if (status === 3) this.stop();
 				break;
 			}
@@ -402,10 +476,44 @@ export class SabrStream {
 				break;
 			}
 			case UMP_PART_ID.RELOAD_PLAYER_RESPONSE: {
-				// TubeReplacer has no handler for this part, so it's effectively a
-				// no-op there; treating it as fatal (as FreeTube does) is too
-				// aggressive. Log and carry on.
-				console.log("[sabr] RELOAD_PLAYER_RESPONSE part (ignored)");
+				// FreeTube treats this as a full session reload. Marking dead lets
+				// getSession's reap path build a fresh stream on the next request.
+				// (If this proves too aggressive, revert just this hunk — the reap
+				// path makes it safe either way.)
+				console.log("[sabr] RELOAD_PLAYER_RESPONSE — marking stream dead for rebuild");
+				this.stop();
+				break;
+			}
+			case UMP_PART_ID.SABR_CONTEXT_UPDATE: {
+				// SabrContextUpdate: type=1, scope=2, value=3, send_by_default=4,
+				// write_policy=5 (KEEP_EXISTING=2). Store the raw part verbatim so
+				// we echo it back byte-for-byte (no re-encode mismatches).
+				const f = decodeFields(part.data);
+				const type = getVarint(f, 1);
+				const value = getBytes(f, 3);
+				const sendByDefault = (getVarint(f, 4) ?? 0n) !== 0n;
+				const writePolicy = Number(getVarint(f, 5) ?? 0);
+				if (type !== undefined && value?.length) {
+					const t = Number(type);
+					if (writePolicy === 2 && this.sabrContexts.has(t)) break;
+					this.sabrContexts.set(t, { raw: Buffer.from(part.data), type: t, sendByDefault });
+					if (sendByDefault) this.activeSabrContextTypes.add(t);
+					console.log(`[sabr] SABR_CONTEXT_UPDATE type=${t} sendByDefault=${sendByDefault} writePolicy=${writePolicy}`);
+				}
+				break;
+			}
+			case UMP_PART_ID.SABR_CONTEXT_SENDING_POLICY: {
+				const f = decodeFields(part.data);
+				const start = getPackedVarints(f, 1);
+				const stop = getPackedVarints(f, 2);
+				const discard = getPackedVarints(f, 3);
+				for (const t of start) this.activeSabrContextTypes.add(t);
+				for (const t of stop) this.activeSabrContextTypes.delete(t);
+				for (const t of discard) {
+					this.sabrContexts.delete(t);
+					this.activeSabrContextTypes.delete(t);
+				}
+				console.log(`[sabr] SABR_CONTEXT_SENDING_POLICY start=${start} stop=${stop} discard=${discard}`);
 				break;
 			}
 			case UMP_PART_ID.MEDIA_HEADER: {
@@ -444,6 +552,7 @@ export class SabrStream {
 					media.addSegment(header.sequenceNumber, {
 						data,
 						durationMs: header.durationMs,
+						startMs: header.startMs,
 					});
 				}
 				this.progressCounter++;

@@ -20,6 +20,39 @@ import { SabrInputFormat } from "../sabr/sabr-stream";
 export type FormatWithURL = Format & { freeTubeUrl: string; };
 
 /**
+ * Mint a real content-bound PO token for a video, reusing the watch-page scrape
+ * path. This is what keeps a SABR session alive past the empty-token window
+ * (StreamProtectionStatus 3). Returns undefined if minting fails (caller then
+ * falls back to an empty/cold-start token).
+ *
+ * Also returns the visitorData of the minting session: the SABR StreamerContext
+ * must declare the SAME visitor identity the token was bound to, otherwise the
+ * server rejects the token and cuts the stream (status 3).
+ */
+export async function mintContentPoToken(
+	videoId: string,
+): Promise<{ poToken: Buffer; visitorData?: string } | undefined> {
+	try {
+		const webInnertube = await createInnertube({ withPlayer: true, generateSessionLocally: false });
+		const { ytConfig, initialAttestationData } = await getWatchHTMLPage(videoId);
+		const token = await generateContentBoundPoToken(
+			videoId,
+			webInnertube.session.context,
+			initialAttestationData,
+			ytConfig,
+		);
+		if (!token) return undefined;
+		const visitorData =
+			webInnertube.session.context.client.visitorData ??
+			ytConfig?.INNERTUBE_CONTEXT?.client?.visitorData;
+		return { poToken: base64ToBuffer(token), visitorData };
+	} catch (e) {
+		console.error("[sabr] content-bound poToken mint failed", e);
+		return undefined;
+	}
+}
+
+/**
  * Everything the SABR session needs, captured while we already have the player
  * response in hand (avoids a second getInfo round-trip). Keyed by videoId so
  * the SABR route can build a session without re-running getLocalVideoInfo.
