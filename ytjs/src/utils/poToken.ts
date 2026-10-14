@@ -15,7 +15,7 @@ import { buildURL, getHeaders, parseLooseJSON } from "bgutils-js/utils";
 import { Session } from "youtubei.js";
 
 import { JSDOM } from "jsdom";
-import { createCanvas, loadImage } from "@napi-rs/canvas";
+import { createCanvas, loadImage, ImageData } from "@napi-rs/canvas";
 
 import { Response } from "node-fetch";
 
@@ -27,7 +27,10 @@ export async function setupBotGuardGlobals() {
 		contentType: "text/html",
 		includeNodeLocations: true,
 		storageQuota: 10000000,
-		userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+		// NOTE: jsdom >=28 moved `userAgent` out of ConstructorOptions into
+		// ResourceLoader (resources: new ResourceLoader({ userAgent })). It is
+		// omitted here because navigator is fully replaced by fakeNavigator
+		// below and this instance loads no subresources.
 		// Electron equivalent: contextIsolation: true + sandbox: true
 	});
 
@@ -184,13 +187,84 @@ export async function setupBotGuardGlobals() {
 	globalThis.HTMLCanvasElement = createCanvas;
 	// @ts-expect-error r
 	globalThis.Image = loadImage;
-	// @ts-expect-error r
-	globalThis.OffscreenCanvas = createCanvas;
 
-	// Patch canvas prototype methods
-	const canvasProto = createCanvas.constructor.prototype;
-	Object.assign(globalThis.HTMLCanvasElement.prototype, canvasProto);
-	Object.assign(globalThis.OffscreenCanvas.prototype, canvasProto);
+	// @napi-rs/canvas has no OffscreenCanvas export, so build a shim that adds
+	// the OffscreenCanvas-only transferToImageBitmap(). NOTE: extending the
+	// typed `Canvas` class does not work — its constructor returns a
+	// CanvasElement instance, so subclass methods are dropped. A factory-style
+	// class that returns a real canvas with the extra method attached does.
+	class OffscreenCanvasShim {
+		constructor(width: number, height: number) {
+			const canvas: any = createCanvas(width, height);
+			canvas.transferToImageBitmap = () => {
+				const ctx = canvas.getContext("2d");
+				const img = new ImageData(canvas.width, canvas.height);
+				img.data.set(ctx.getImageData(0, 0, canvas.width, canvas.height).data);
+				return img;
+			};
+			return canvas;
+		}
+	}
+	// @ts-expect-error r
+	globalThis.OffscreenCanvas = OffscreenCanvasShim;
+
+	// NOTE: the previous "patch canvas prototype methods" block copied
+	// `createCanvas.constructor.prototype` (which is Function.prototype) onto
+	// the canvas prototypes — a no-op that only added apply/bind/call. Copying
+	// the real canvas prototype is not possible either: its napi getters throw
+	// "Failed to unwrap exclusive reference of CanvasElement" under
+	// Object.assign. The canvas instances already carry the full API, so no
+	// prototype patching is needed here.
+
+	// jsdom's own HTMLCanvasElement.getContext() is an unimplemented stub that
+	// logs "Not implemented: HTMLCanvasElement's getContext() method" and
+	// returns null. Since `document` points at dom.window.document, any
+	// document.createElement('canvas') yields a jsdom element — the globalThis
+	// swap above never reaches it. Delegate the jsdom realm's canvas methods to
+	// @napi-rs/canvas so BotGuard's canvas fingerprinting gets a real context.
+	// (jsdom can only auto-detect the `canvas` npm package, not @napi-rs/canvas,
+	// so prototype delegation is the pragmatic route.)
+	const ensureNapiCanvas = (el: any) => {
+		const w = el.width || 300;
+		const h = el.height || 150;
+		if (!el.__napi) {
+			el.__napi = createCanvas(w, h);
+		} else if (el.__napi.width !== w || el.__napi.height !== h) {
+			el.__napi.width = w;
+			el.__napi.height = h;
+		}
+		return el.__napi;
+	};
+
+	dom.window.HTMLCanvasElement.prototype.getContext = function (
+		this: any,
+		type: string,
+		...args: any[]
+	) {
+		return ensureNapiCanvas(this).getContext(type, ...args);
+	} as any;
+
+	// @napi-rs/canvas toDataURL expects a MIME type ("image/png"), not the
+	// short form ("png"), so pass the type through unchanged.
+	dom.window.HTMLCanvasElement.prototype.toDataURL = function (
+		this: any,
+		type = "image/png",
+		quality?: number
+	) {
+		return ensureNapiCanvas(this).toDataURL(type, quality);
+	} as any;
+
+	// jsdom does not define OffscreenCanvas on the window realm; patch it only
+	// if a future jsdom version adds one.
+	if ((dom.window as any).OffscreenCanvas) {
+		(dom.window as any).OffscreenCanvas.prototype.getContext = function (
+			this: any,
+			type: string,
+			...args: any[]
+		) {
+			return ensureNapiCanvas(this).getContext(type, ...args);
+		};
+	}
 
 	// Electron equivalent: disableBlinkFeatures + v8CacheOptions: 'none'
 	globalThis.WebAssembly = WebAssembly;
