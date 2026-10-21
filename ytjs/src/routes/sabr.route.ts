@@ -16,7 +16,7 @@
 
 import { Router, Request, Response } from "express";
 import { SabrStream, SabrMedia, SabrClientInfo, SabrInputFormat } from "../sabr/sabr-stream";
-import { getOrCreateSabrInputs, createInnertube, mintContentPoToken } from "../utils/localvideo";
+import { getOrCreateSabrInputs, createInnertube, mintContentPoToken, setSabrInputs, sabrInputsFromJson, SabrInputs } from "../utils/localvideo";
 import { getWatchPageSabrInputs } from "../sabr/watchpage";
 
 const router = Router();
@@ -59,7 +59,12 @@ router.get("/sabr-test-wp/:id", async (req, res) => {
 			sabrUrl,
 			wp.ustreamerConfig,
 			wp.formats,
-			Buffer.alloc(0), // empty token: isolate the URL/session variable
+			// Experiment hook: YTJS_SABR_INJECT_TOKEN_B64 (websafe base64) swaps
+			// in a browser-captured token; empty token otherwise (deliberate —
+			// token provenance was already refuted, only URL origin changes).
+			process.env.YTJS_SABR_INJECT_TOKEN_B64
+				? Buffer.from(process.env.YTJS_SABR_INJECT_TOKEN_B64.replace(/-/g, "+").replace(/_/g, "/"), "base64")
+				: Buffer.alloc(0),
 			id,
 			WEB_CLIENT as SabrClientInfo,
 		);
@@ -115,6 +120,108 @@ router.get("/sabr-dump/:id", async (req, res) => {
 	}
 });
 
+/**
+ * Inject a browser-captured SABR bundle (see ytjs/scripts/capture-sabr-bundle.mjs).
+ * Body shape matches the capture script's output. The bundle is stored in the
+ * sabrInputs map, so the next getSession/getOrCreateSabrInputs for this videoId
+ * uses it verbatim (no minting, no watch-page fetch).
+ */
+router.post("/sabr-inject/:id", (req, res) => {
+	try {
+		// No express.json() middleware is mounted globally, so parse the raw
+		// body ourselves (handles both buffered Buffer and string forms).
+		let rawBody = "";
+		const chunks: Buffer[] = [];
+		const parse = () => {
+			const bodyText = Buffer.concat(chunks).toString("utf-8");
+			const raw = JSON.parse(bodyText);
+			if (!raw?.sabrUrl || !raw?.ustreamerConfig) {
+				return res.status(400).json({ error: "sabrUrl and ustreamerConfig required" });
+			}
+			const inputs = sabrInputsFromJson(raw);
+			setSabrInputs(req.params.id, inputs);
+			console.log(
+				`[sabr] injected bundle for ${req.params.id}: url=${inputs.sabrUrl.length}b ` +
+				`poToken=${inputs.poToken.length}b formats=${inputs.formats.length} ` +
+				`headers=${Object.keys(inputs.headers ?? {}).length} cpn=${inputs.cpn ? "set" : "none"}`
+			);
+			res.json({ ok: true, videoId: req.params.id, poTokenBytes: inputs.poToken.length });
+		};
+		req.on("data", (c: Buffer) => chunks.push(c));
+		req.on("end", () => {
+			try { parse(); } catch (e) { res.status(400).json({ error: String(e) }); }
+		});
+		req.on("error", (e) => res.status(400).json({ error: String(e) }));
+	} catch (e) {
+		res.status(400).json({ error: String(e) });
+	}
+});
+
+/**
+ * Injected-bundle smoke test: builds a SabrStream purely from the injected
+ * bundle (real browser token + headers + cpn), pumps until the first segments
+ * arrive or timeout, and reports state. No minting, no watch-page fetch.
+ * The page-embedded serverAbrStreamingUrl carries an UNDECIPHERED `n` param
+ * (the browser deciphers it in JS before its first POST), so decipher it here
+ * exactly as the watchpage path does.
+ */
+router.get("/sabr-test-inject/:id", async (req, res) => {
+	const id = req.params.id;
+	try {
+		const inputs = await getOrCreateSabrInputs(id);
+		if (!inputs) return res.status(404).json({ error: "no inputs (inject first)" });
+		let sabrUrl = inputs.sabrUrl;
+		let deciphered = false;
+		try {
+			const innertube = await createInnertube({ withPlayer: true, generateSessionLocally: false });
+			const dec = await innertube.session.player!.decipher(inputs.sabrUrl);
+			if (dec) { sabrUrl = dec; deciphered = dec !== inputs.sabrUrl; }
+		} catch (e) {
+			console.error("[sabr] inject decipher failed", e);
+		}
+		const stream = new SabrStream(
+			sabrUrl,
+			inputs.ustreamerConfig,
+			inputs.formats,
+			inputs.poToken,
+			id,
+			{
+				clientName: inputs.clientName,
+				clientVersion: inputs.clientVersion,
+				osName: inputs.osName,
+				osVersion: inputs.osVersion,
+				acceptLanguage: inputs.acceptLanguage,
+				acceptRegion: inputs.acceptRegion,
+			},
+			undefined,
+			inputs.headers,
+			inputs.cpn,
+		);
+		stream.start();
+		try {
+			await Promise.race([
+				Promise.all([stream.video.onSegment(0), stream.audio.onSegment(0)]),
+				new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 40000)),
+			]);
+		} catch { /* report whatever state we reached */ }
+		stream.stop();
+		res.json({
+			source: "injected",
+			deciphered,
+			dead: stream.dead,
+			requestNumber: stream.requestNumber,
+			videoItag: stream.video.itag,
+			audioItag: stream.audio.itag,
+			videoReady: stream.video.ready,
+			audioReady: stream.audio.ready,
+			videoSegments: stream.video.availableSegments(),
+			audioSegments: stream.audio.availableSegments(),
+		});
+	} catch (e) {
+		res.status(500).send(String(e));
+	}
+});
+
 interface Session {
 	stream: SabrStream;
 	createdAt: number;
@@ -159,8 +266,20 @@ async function buildWatchPageStream(videoId: string): Promise<{
 	// Real content-bound PO token so the session survives past the empty-token
 	// window (StreamProtectionStatus 3). Falls back to an empty token (which
 	// covers the first ~7MB) if minting fails.
-	const minted = await mintContentPoToken(videoId);
-	const poToken = minted?.poToken ?? Buffer.alloc(0);
+	// Experiment hook: YTJS_SABR_INJECT_TOKEN_B64 (websafe base64) overrides
+	// minting with a browser-captured token — isolates token provenance from
+	// the URL/config pair.
+	let poToken: Buffer;
+	if (process.env.YTJS_SABR_INJECT_TOKEN_B64) {
+		poToken = Buffer.from(
+			process.env.YTJS_SABR_INJECT_TOKEN_B64.replace(/-/g, "+").replace(/_/g, "/"),
+			"base64",
+		);
+		console.log(`[sabr] using INJECTED browser token (${poToken.length}b) for watchpage session`);
+	} else {
+		const minted = await mintContentPoToken(videoId);
+		poToken = minted?.poToken ?? Buffer.alloc(0);
+	}
 
 	// The token is bound to the minting session's visitor identity. The SABR
 	// request carries that identity via the poToken itself; StreamerContext
@@ -186,7 +305,7 @@ async function buildWatchPageStream(videoId: string): Promise<{
 	console.log(
 		`[sabr] session via watchpage for ${videoId}: video=${videoFormat?.itag} ` +
 		`(${videoFormat?.codecs}) audio=${audioFormat?.itag} (${audioFormat?.codecs}) ` +
-		`poToken=${poToken.length}b visitor=${minted?.visitorData ? "set" : "none"}`
+		`poToken=${poToken.length}b`
 	);
 	return { stream, videoFormat, audioFormat };
 }
@@ -216,7 +335,18 @@ async function getSession(videoId: string): Promise<SabrStream> {
 	}
 	// A dead session is sticky and has no internal recovery; drop it so a retry
 	// (e.g. an SM reload) builds a fresh stream instead of a permanent 503.
+	// IMPORTANT: googlevideo allows ONE live SABR session per (visitor, video).
+	// A reaped session's server-side slot lingers for a while, so an immediate
+	// replacement gets StreamProtectionStatus 3 on its first pumps. Back off
+	// briefly before creating the replacement to let the old slot expire.
 	if (existing?.stream.dead) {
+		const deadAt = existing.stream.deadAt ?? Date.now();
+		const sinceDeath = Date.now() - deadAt;
+		const BACKOFF_MS = 5000;
+		if (sinceDeath < BACKOFF_MS) {
+			console.warn(`[sabr] ${videoId}: dead session ${sinceDeath}ms ago, backing off ${BACKOFF_MS - sinceDeath}ms before replacement`);
+			await new Promise((r) => setTimeout(r, BACKOFF_MS - sinceDeath));
+		}
 		console.warn(`[sabr] ${videoId}: dead session, reaping for a fresh one`);
 		sessions.delete(videoId);
 	}
@@ -269,6 +399,9 @@ async function getSession(videoId: string): Promise<SabrStream> {
 			inputs.poToken,
 			videoId,
 			clientInfo,
+			undefined,
+			inputs.headers,
+			inputs.cpn,
 		);
 	}
 

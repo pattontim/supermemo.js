@@ -9,6 +9,7 @@
  * https://github.com/FreeTubeApp/FreeTube#license
  */
 import Innertube, { ClientType, Player, UniversalCache } from "youtubei.js";
+import { readFileSync } from "node:fs";
 import { Response } from "node-fetch";
 import { generateContentBoundPoToken, getWatchHTMLPage } from "./poToken";
 import { censusLog } from "./bgCensus";
@@ -115,9 +116,68 @@ export interface SabrInputs {
 	osVersion: string;
 	acceptLanguage?: string;
 	acceptRegion?: string;
+	/** Extra HTTP headers captured from a real browser (cookies, UA, client hints). */
+	headers?: Record<string, string>;
+	/** The cpn the real player used (for byte-level replay experiments). */
+	cpn?: string;
+	/** Visitor identity the token was minted under. */
+	visitorData?: string;
 }
 
 const sabrInputs = new Map<string, SabrInputs>();
+
+/** Injection hook for browser-captured bundles (POST /sabr-inject/:id). */
+export function setSabrInputs(videoId: string, inputs: SabrInputs): void {
+	sabrInputs.set(videoId, inputs);
+}
+
+/**
+ * Load a browser-captured bundle from disk (YTJS_SABR_INJECT_FILE=/path/bundle.json).
+ * Shape matches the POST /sabr-inject/:id body. Returns undefined if unset/unreadable.
+ */
+export function loadInjectedSabrInputs(videoId: string): SabrInputs | undefined {
+	const file = process.env.YTJS_SABR_INJECT_FILE;
+	if (!file) return undefined;
+	try {
+		const raw = JSON.parse(readFileSync(file, "utf-8"));
+		if (raw.videoId && raw.videoId !== videoId) return undefined;
+		return sabrInputsFromJson(raw);
+	} catch (e) {
+		console.error(`[sabr] inject file ${file} unreadable`, e);
+		return undefined;
+	}
+}
+
+/** JSON -> SabrInputs (base64 fields decoded, formats normalized). */
+export function sabrInputsFromJson(raw: any): SabrInputs {
+	return {
+		sabrUrl: String(raw.sabrUrl),
+		ustreamerConfig: base64ToBuffer(raw.ustreamerConfig),
+		poToken: raw.poToken ? base64ToBuffer(raw.poToken) : Buffer.alloc(0),
+		formats: (raw.formats ?? []).map((f: any) => ({
+			itag: Number(f.itag),
+			xtags: f.xtags,
+			mimeType: String(f.mimeType),
+			lastModified: f.lastModified ? String(f.lastModified) : undefined,
+			isAudio: !!f.isAudio,
+			codecs: f.codecs,
+			width: f.width,
+			height: f.height,
+			bandwidth: f.bandwidth,
+			audioSampleRate: f.audioSampleRate,
+			approxDurationMs: f.approxDurationMs,
+		})),
+		clientName: Number(raw.clientName ?? 1),
+		clientVersion: String(raw.clientVersion ?? ""),
+		osName: String(raw.osName ?? ""),
+		osVersion: String(raw.osVersion ?? ""),
+		acceptLanguage: raw.acceptLanguage,
+		acceptRegion: raw.acceptRegion,
+		headers: raw.headers,
+		cpn: raw.cpn,
+		visitorData: raw.visitorData,
+	};
+}
 
 function base64ToBuffer(b64: string): Buffer {
 	return Buffer.from(b64.replace(/-/g, "+").replace(/_/g, "/"), "base64");
@@ -588,6 +648,13 @@ export async function getLocalVideoInfo(id: string) {
 export async function getOrCreateSabrInputs(videoId: string): Promise<SabrInputs | undefined> {
 	const cached = sabrInputs.get(videoId);
 	if (cached) return cached;
+	// Browser-captured bundle takes precedence over the API path.
+	const injected = loadInjectedSabrInputs(videoId);
+	if (injected) {
+		sabrInputs.set(videoId, injected);
+		console.log(`[sabr] using injected bundle for ${videoId} (YTJS_SABR_INJECT_FILE)`);
+		return injected;
+	}
 	await getLocalVideoInfo(videoId);
 	return sabrInputs.get(videoId);
 }

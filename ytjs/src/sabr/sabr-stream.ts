@@ -158,6 +158,8 @@ export class SabrStream {
 	progressCounter = 0;
 	/** Last player time we told the server about, for readahead. */
 	lastPlayerTimeMs = 0;
+	/** When stop() was called (for post-mortem backoff in the session map). */
+	deadAt?: number;
 
 	private requesting = false;
 	private pumping = false;
@@ -179,6 +181,11 @@ export class SabrStream {
 		/** Re-mint a content-bound PO token; the server cuts the stream (status
 		 * 3) once the ~60s token lifetime lapses. */
 		private tokenMinter?: () => Promise<{ poToken: Buffer; visitorData?: string } | undefined>,
+		/** Extra HTTP headers captured from a real browser (merged over the
+		 * hardcoded set; use "" to delete a default). */
+		public headerOverrides?: Record<string, string>,
+		/** Force a specific cpn (browser-captured replay experiments). */
+		public forcedCpn?: string,
 	) {}
 
 	private async maybeRefreshToken() {
@@ -202,6 +209,7 @@ export class SabrStream {
 
 	stop() {
 		this.dead = true;
+		this.deadAt = Date.now();
 	}
 
 	/** Ask the pump to fetch now (e.g. a segment request found nothing buffered). */
@@ -250,6 +258,10 @@ export class SabrStream {
 		]
 	).join("");
 
+	private cpnForRequest(): string {
+		return this.forcedCpn ?? this.cpn;
+	}
+
 	/**
 	 * SABR endpoint URL for a request number. Verified against a live YouTube
 	 * web-player capture: the request carries `sabr=1&rqh=1&...&c=WEB&cver=<v>`
@@ -260,7 +272,7 @@ export class SabrStream {
 		const url = new URL(this.sabrUrl);
 		url.searchParams.set("alr", "yes");
 		url.searchParams.set("rqh", "1");
-		url.searchParams.set("cpn", this.cpn);
+		url.searchParams.set("cpn", this.cpnForRequest());
 		url.searchParams.delete("cver");
 		url.searchParams.set("cver", this.clientVersionForUrl());
 		url.searchParams.set("rn", String(this.requestNumber));
@@ -269,6 +281,45 @@ export class SabrStream {
 
 	private clientVersionForUrl(): string {
 		return process.env.YTJS_SABR_CVER ?? this.clientInfo.clientVersion;
+	}
+
+	/**
+	 * Default WEB-player POST headers (captured from a live Chromium SABR
+	 * request), merged with any headerOverrides. An override value of ""
+	 * removes the default header.
+	 */
+	private buildRequestHeaders(): Record<string, string> {
+		const headers: Record<string, string> = {
+			"content-type": "application/x-protobuf",
+			// Match the real WEB player's cross-site POST headers exactly.
+			// A missing Origin/Referer on a cross-site POST is a strong bot signal.
+			"accept": "*/*",
+			"accept-encoding": "gzip, deflate, br, zstd",
+			"accept-language": "en-US,en;q=0.9",
+			"origin": "https://www.youtube.com",
+			"referer": "https://www.youtube.com/",
+			"priority": "u=1, i",
+			"sec-fetch-dest": "empty",
+			"sec-fetch-mode": "cors",
+			"sec-fetch-site": "cross-site",
+			"sec-fetch-storage-access": "none",
+			"sec-ch-ua": '"Chromium";v="155", "Not(A:Brand";v="24"',
+			"sec-ch-ua-mobile": "?0",
+			"sec-ch-ua-platform": '"Linux"',
+			"sec-ch-ua-arch": '"x86"',
+			"sec-ch-ua-bitness": '"64"',
+			"sec-ch-ua-model": '""',
+			"sec-ch-ua-platform-version": '""',
+			"sec-ch-ua-full-version": '"155.0.8059.39"',
+			"sec-ch-ua-full-version-list": '"Chromium";v="155.0.8059.39", "Not(A:Brand";v="24.0.0.0"',
+			"sec-ch-ua-form-factors": '"Desktop"',
+			"sec-ch-ua-wow64": "?0",
+		};
+		for (const [k, v] of Object.entries(this.headerOverrides ?? {})) {
+			if (v === "") delete headers[k.toLowerCase()];
+			else headers[k.toLowerCase()] = v;
+		}
+		return headers;
 	}
 
 	/** One SABR round-trip. */
@@ -289,33 +340,7 @@ export class SabrStream {
 			}
 			const res = await fetch(url, {
 				method: "POST",
-				headers: {
-					"content-type": "application/x-protobuf",
-					// Match the real WEB player's cross-site POST headers exactly
-					// (captured from a live Chromium SABR request). A missing
-					// Origin/Referer on a cross-site POST is a strong bot signal.
-					"accept": "*/*",
-					"accept-encoding": "gzip, deflate, br, zstd",
-					"accept-language": "en-US,en;q=0.9",
-					"origin": "https://www.youtube.com",
-					"referer": "https://www.youtube.com/",
-					"priority": "u=1, i",
-					"sec-fetch-dest": "empty",
-					"sec-fetch-mode": "cors",
-					"sec-fetch-site": "cross-site",
-					"sec-fetch-storage-access": "none",
-					"sec-ch-ua": '"Chromium";v="155", "Not(A:Brand";v="24"',
-					"sec-ch-ua-mobile": "?0",
-					"sec-ch-ua-platform": '"Linux"',
-					"sec-ch-ua-arch": '"x86"',
-					"sec-ch-ua-bitness": '"64"',
-					"sec-ch-ua-model": '""',
-					"sec-ch-ua-platform-version": '""',
-					"sec-ch-ua-full-version": '"155.0.8059.39"',
-					"sec-ch-ua-full-version-list": '"Chromium";v="155.0.8059.39", "Not(A:Brand";v="24.0.0.0"',
-					"sec-ch-ua-form-factors": '"Desktop"',
-					"sec-ch-ua-wow64": "?0",
-				},
+				headers: this.buildRequestHeaders(),
 				body: new Uint8Array(this.buildRequestBody(currentStreamTimeMs)),
 			});
 			if (!res.ok) {
@@ -395,7 +420,12 @@ export class SabrStream {
 		const parts: Buffer[] = [int32Field(1, f.itag)];
 		const lmt = f.lastModified ? BigInt(f.lastModified) : 0n;
 		parts.push(int64Field(2, lmt));
-		parts.push(stringField(3, f.xtags ?? ""));
+		// Only emit xtags when actually present — a zero-length string field
+		// is a wire difference from omitting the field entirely (the real
+		// player omits it; sabr.malformed_config candidate).
+		if (f.xtags) {
+			parts.push(stringField(3, f.xtags));
+		}
 		return Buffer.concat(parts);
 	}
 
@@ -506,6 +536,15 @@ export class SabrStream {
 		// nextRequestPolicy targetReadaheadMs grow so it keeps sending.
 		const elapsed = this.elapsedWallMs();
 		const parts: Buffer[] = [
+			// field 13: time_since_last_manual_format_selection_ms (int64).
+			// The live WEB capture showed 173636903198703 — epoch-µs magnitude,
+			// i.e. the "never manually selected" sentinel. Replay at the same
+			// magnitude, recomputed per request (it tracked wall time).
+			int64Field(13, BigInt(Date.now()) * 1000n),
+			// field 14: last_manual_direction (sint32, zigzag-encoded). The
+			// capture showed raw varint 2 = direction 1. Passing the raw
+			// captured varint is wire-identical to a proper sint32 encode.
+			int32Field(14, 2),
 			int32Field(18, 1280), // client_viewport_width
 			int32Field(19, 720), // client_viewport_height
 			int32Field(21, 0), // sticky_resolution
