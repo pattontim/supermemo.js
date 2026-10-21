@@ -1,20 +1,18 @@
 /*
- * BotGuard environment census + fingerprint probe (diagnostic only).
+ * BotGuard environment census + challenge/snapshot logging (diagnostic only).
  *
- * Everything here is inert unless BG_CENSUS=1. It exists to answer one
- * question: which environment signals does the BotGuard VM read, and how do
- * their values differ between this JSDOM realm and a real Chromium page?
+ * The read census, fingerprint probe and realm checks are inert unless
+ * BG_CENSUS=1. They are JSDOM-era tools: the mint now runs in a real Camoufox
+ * page, so the interesting environment is the browser's own — `fingerprintProbe`
+ * can be stringified into `page.evaluate("mw:...")` when a diff is needed.
  *
  * Output: JSONL at $BG_CENSUS_LOG (default /tmp/bg-census.jsonl).
  * The fingerprint probe source is also written to $BG_PROBE_OUT
- * (default /tmp/bg-probe-source.js) so it can be pasted into page.evaluate()
- * on the browser side for an apples-to-apples diff.
+ * (default /tmp/bg-probe-source.js).
  *
  * Env flags:
  *   BG_CENSUS=1        enable the read census + probe
  *   BG_CENSUS_CALLS=1  also log calls to a curated set of methods
- *   BG_CENSUS_DOM=1    also proxy document/window (noisier, riskier)
- *   BG_FORCE_REALM=1   make dom.window.navigator/screen return the fake globals
  *   BG_CENSUS_LOG=...  JSONL output path
  *   BG_PROBE_OUT=...   probe-source output path
  */
@@ -25,7 +23,6 @@ import { createHash } from "node:crypto";
 const LOG_PATH = process.env.BG_CENSUS_LOG ?? "/tmp/bg-census.jsonl";
 const PROBE_OUT = process.env.BG_PROBE_OUT ?? "/tmp/bg-probe-source.js";
 const CALLS = process.env.BG_CENSUS_CALLS === "1";
-const DOM = process.env.BG_CENSUS_DOM === "1";
 
 let logInitialized = false;
 
@@ -106,7 +103,7 @@ function wrapCall(fn: Function, key: string): Function {
 
 /**
  * Wrap an object so every property read is logged once. Uses the target as the
- * getter receiver so native getters (Node's `performance`, jsdom's `document`)
+ * getter receiver so native getters (Node's `performance`, a DOM `document`)
  * don't hit "Illegal invocation".
  */
 export function instrumentObject<T extends object>(obj: T, label: string): T {
@@ -150,169 +147,17 @@ export function instrumentObject<T extends object>(obj: T, label: string): T {
 	}
 }
 
-/** Install the read census on the globals the VM is most likely to probe. */
-export function installCensus(dom?: any): void {
-	const g = globalThis as any;
-	const targets: Array<[string, string]> = [
-		["navigator", "navigator"],
-		["screen", "screen"],
-		["performance", "performance"],
-		["location", "location"],
-		["chrome", "chrome"],
-	];
-	if (DOM) {
-		targets.push(["document", "document"], ["window", "window"]);
-	}
-	for (const [label, key] of targets) {
-		const obj = g[key];
-		if (obj && typeof obj === "object") {
-			try {
-				g[key] = instrumentObject(obj, label);
-			} catch {
-				/* ignore */
-			}
-		}
-	}
-
-	// Canvas call census on the jsdom realm (where the delegation patch lives).
-	if (dom?.window?.HTMLCanvasElement?.prototype) {
-		const proto = dom.window.HTMLCanvasElement.prototype;
-		for (const m of ["getContext", "toDataURL", "toBlob"]) {
-			const orig = proto[m];
-			if (typeof orig !== "function") continue;
-			proto[m] = function (this: any, ...args: any[]) {
-				log({ call: `canvas.${m}`, args: args.map(summarize) });
-				return orig.apply(this, args);
-			};
-		}
-	}
-	log({ census: "installed", calls: CALLS, dom: DOM, log: LOG_PATH });
-}
-
 /**
- * Which realm does the VM actually read? `window` is jsdom's, but `navigator`
- * was patched on globalThis — if these differ, the VM may read jsdom defaults.
+ * Log an arbitrary census entry (used by call sites that want a structured row
+ * in the same JSONL stream).
  */
-export function logRealmCheck(dom: any): void {
-	const g = globalThis as any;
-	const checks: Record<string, unknown> = {};
-	const t = (k: string, fn: () => unknown) => {
-		try {
-			checks[k] = fn();
-		} catch (e) {
-			checks[k] = "<throw: " + String(e).slice(0, 80) + ">";
-		}
-	};
-	t("window.navigator === globalThis.navigator", () => dom.window.navigator === g.navigator);
-	t("window.navigator.userAgent", () => dom.window.navigator?.userAgent);
-	t("globalThis.navigator.userAgent", () => g.navigator?.userAgent);
-	t("window.screen === globalThis.screen", () => dom.window.screen === g.screen);
-	t("window.screen.width", () => dom.window.screen?.width);
-	t("globalThis.screen.width", () => g.screen?.width);
-	t("window.performance === globalThis.performance", () => dom.window.performance === g.performance);
-	t("window.location.href", () => dom.window.location?.href);
-	t("globalThis.location.href", () => g.location?.href);
-	t("document.defaultView === window", () => dom.window.document.defaultView === dom.window);
-	t("window.HTMLCanvasElement === globalThis.HTMLCanvasElement", () => dom.window.HTMLCanvasElement === g.HTMLCanvasElement);
-	t("window.document === globalThis.document", () => dom.window.document === g.document);
-	log({ realm: checks });
+export function censusEntry(label: string, value: unknown): void {
+	log({ [label]: value });
 }
 
 /**
- * Make jsdom's window expose the fake globals. Opt-in: it changes what the VM
- * sees, so only use it to test the "wrong realm" hypothesis.
- */
-export function forceWindowRealm(dom: any): void {
-	const g = globalThis as any;
-	// navigator/screen/performance/HTMLCanvasElement all differ between jsdom's
-	// window and the fake globals. Point the window at the fakes so a VM that
-	// reads `window.*` sees the same environment as one reading globalThis.
-	// (document.createElement('canvas') still returns a jsdom element — that
-	// path is handled by the prototype delegation in setupBotGuardGlobals.)
-	for (const key of ["navigator", "screen", "performance", "HTMLCanvasElement", "OffscreenCanvas"]) {
-		if (g[key] === undefined) continue;
-		try {
-			Object.defineProperty(dom.window, key, { get: () => g[key], configurable: true });
-			log({ forceRealm: key, ok: true });
-		} catch (e) {
-			log({ forceRealm: key, ok: false, error: String(e).slice(0, 120) });
-		}
-	}
-}
-
-/**
- * Dump Function.prototype.toString for every function we've patched/stubbed.
- * In a real Chrome every one must read `function X() { [native code] }`; any
- * that stringify to real JS source are instrumentation tells (BotGuard
- * canonically detects overrides this way). Diagnostic only (BG_CENSUS=1).
- */
-export function logFnStrings(dom: any): void {
-	const g = globalThis as any;
-	const fns: Array<[string, any]> = [
-		["document.createElement", dom?.window?.document?.createElement],
-		["HTMLCanvasElement.prototype.getContext", dom?.window?.HTMLCanvasElement?.prototype?.getContext],
-		["HTMLCanvasElement.prototype.toDataURL", dom?.window?.HTMLCanvasElement?.prototype?.toDataURL],
-		["navigator.sendBeacon", g.navigator?.sendBeacon],
-		["navigator.mediaDevices.enumerateDevices", g.navigator?.mediaDevices?.enumerateDevices],
-		["navigator.permissions.query", g.navigator?.permissions?.query],
-		["navigator.getBattery", g.navigator?.getBattery],
-		["navigator.mediaCapabilities.decodingInfo", g.navigator?.mediaCapabilities?.decodingInfo],
-		["navigator.storage.estimate", g.navigator?.storage?.estimate],
-		["navigator.locks.request", g.navigator?.locks?.request],
-		["navigator.userAgentData.getHighEntropyValues", g.navigator?.userAgentData?.getHighEntropyValues],
-		["chrome.csi", g.chrome?.csi],
-		["chrome.loadTimes", g.chrome?.loadTimes],
-		["window.matchMedia", g.matchMedia],
-		["window.getComputedStyle", g.getComputedStyle],
-		["performance.now", g.performance?.now],
-		["performance.getEntriesByType", g.performance?.getEntriesByType],
-		["AudioContext", g.AudioContext],
-		["Worker", g.Worker],
-		["SharedWorker", g.SharedWorker],
-		["ServiceWorker", g.ServiceWorker],
-		["IntersectionObserver", g.IntersectionObserver],
-		["ResizeObserver", g.ResizeObserver],
-		["MutationObserver", g.MutationObserver],
-		["PerformanceObserver", g.PerformanceObserver],
-		["RTCPeerConnection", g.RTCPeerConnection],
-		["requestAnimationFrame", g.requestAnimationFrame],
-		["cancelAnimationFrame", g.cancelAnimationFrame],
-		["requestIdleCallback", g.requestIdleCallback],
-		["fetch", g.fetch],
-		["atob", g.atob],
-		["btoa", g.btoa],
-		["trustedTypes.createPolicy", g.trustedTypes?.createPolicy],
-		["caches.open", g.caches?.open],
-		["indexedDB.open", g.indexedDB?.open],
-		["speechSynthesis.getVoices", g.speechSynthesis?.getVoices],
-	];
-	let nonNative = 0;
-	for (const [name, fn] of fns) {
-		if (typeof fn !== "function") {
-			log({ type: "fnstring", name, missing: true });
-			continue;
-		}
-		let src: string;
-		try {
-			src = Function.prototype.toString.call(fn);
-		} catch (e) {
-			src = "<throw: " + String(e).slice(0, 60) + ">";
-		}
-		const isNative = /\[native code\]/.test(src);
-		if (!isNative) nonNative++;
-		log({ type: "fnstring", name, isNative, src: src.replace(/\s+/g, " ").slice(0, 100) });
-	}
-	log({ type: "fnstring-summary", total: fns.length, nonNative });
-	log({ type: "stack", stack: String(new Error().stack ?? "").split("\n").slice(0, 6).join(" | ") });
-	try {
-		log({ type: "window-keys", count: Object.getOwnPropertyNames(dom.window).length });
-	} catch { /* ignore */ }
-}
-
-/**
- * Self-contained fingerprint probe. Uses only `globalThis`, so the same
- * function can run in this JSDOM realm and be stringified into
- * page.evaluate() on the browser side.
+ * Self-contained fingerprint probe. Uses only `globalThis`, so it can be
+ * stringified into a main-world `page.evaluate` on the Camoufox side.
  */
 export function fingerprintProbe(): Record<string, unknown> {
 	const g = globalThis as any;

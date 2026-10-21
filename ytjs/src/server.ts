@@ -37,7 +37,7 @@ import Innertube, {
 import { Utils } from "youtubei.js";
 import { InnerTubeClient } from "./utils/yt-types";
 import { Types } from "youtubei.js/web";
-import { setupBotGuardGlobals } from "./utils/poToken";
+import { warmUpPoTokenMinter } from "./utils/poToken";
 import { cacheDir } from "./utils/constants";
 
 import archiveRoutes  from "./routes/archive.route";
@@ -399,7 +399,9 @@ async function callRejectAfter(call: Promise<unknown>, timeMs: number) {
 
 
 async function connectInnertube(videoId?: string) {
-	setupBotGuardGlobals();
+	// Camoufox launch overlaps Innertube creation; minting awaits the same
+	// shared runtime, so a slow first launch does not block server startup.
+	warmUpPoTokenMinter();
 
 	if (!videoId) {
 		return await Innertube.create({
