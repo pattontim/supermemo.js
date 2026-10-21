@@ -135,6 +135,12 @@ export class SharedCamoufoxRuntime {
 		mkdirSync(dirname(PROFILE_DIR), { recursive: true });
 
 		const headless = parseHeadless(process.env.YTJS_CAMOUFOX_HEADLESS);
+		const headlessLabel =
+			headless === "virtual" ? 'virtual (Xvfb + software GL)' : headless ? "true" : "false (headful)";
+		console.log(
+			`[camoufox] launching headless=${headlessLabel} profile=${PROFILE_DIR}` +
+				(process.env.YTJS_CAMOUFOX_HEADLESS ? "" : " (YTJS_CAMOUFOX_HEADLESS unset -> default false)"),
+		);
 		const context = await Camoufox({
 			headless,
 			persistent_context: true,

@@ -5,8 +5,10 @@
   "main": "index.js",
   "scripts": {
     "build": "tsc",
-    "start": "node ./dist/ytjs/src/server.js",
-    "dev": "ts-node --project ./tsconfig.json src/server.ts",
+    "start": "cross-env YTJS_CAMOUFOX_HEADLESS=virtual node ./dist/ytjs/src/server.js",
+    "dev": "cross-env YTJS_CAMOUFOX_HEADLESS=virtual ts-node --project ./tsconfig.json src/server.ts",
+    "start:headful": "cross-env YTJS_CAMOUFOX_HEADLESS=false node ./dist/ytjs/src/server.js",
+    "start:native": "cross-env YTJS_CAMOUFOX_HEADLESS=true node ./dist/ytjs/src/server.js",
     "prestart": "pnpm run build",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -20,6 +22,7 @@
     "bgutils-js": "^4.0.3",
     "camoufox": "^0.5.8",
     "cors-anywhere": "^0.4.4",
+    "cross-env": "^10.1.0",
     "cross-fetch": "^3.1.6",
     "dotenv": "^16.4.5",
     "express": "^4.18.2",
