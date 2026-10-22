@@ -13,6 +13,7 @@ import SMControls, { SMControlsHandle } from '../../features/player/SMControls';
 import { ArchiveInfo } from '../../../../ytjs/src/utils/archive';
 
 import { convertHHMMSS2Seconds, convertSeconds2HHMMSS, constrainToRange, formatTime, convertHHMMSS2Vector3D } from '../../utils/Duration';
+import { stripPublishedLabel } from '../../utils/published';
 import { StorageKey, useLocalStorage } from '../../utils/storage';
 import { screenshotVideo, copyCue, translateCue, summarizeWithAI, openInYouTube } from '../../utils/videoActions';
 import { InlinePane } from '../../features/sm/InlinePane';
@@ -287,6 +288,15 @@ function App() {
    * @type {ArchiveInfo | undefined}
    */
   const [archiveInfo, setArchiveInfo] = useState<ArchiveInfo>();
+
+  /**
+   * Archive-in-flight marker - Identifies which archive menu item is currently
+   * running so SMControls can show a spinner next to that button only.
+   * Keys: "best" (Archive best), "captions" (Re-archive captions), or the
+   * selected format's quality_label for per-format archives. null = idle.
+   * @type {string | null}
+   */
+  const [archivingId, setArchivingId] = useState<string | null>(null);
 
   /**
    * Session restored flag - Indicates whether session data was successfully loaded and applied.
@@ -1261,7 +1271,7 @@ function App() {
     if(!archiveInfo) return;
     const detailsToCopy = `Title: ${archiveInfo.title}
 ====================
-Published: ${archiveInfo.published}
+Published: ${stripPublishedLabel(archiveInfo.published)}
 ====================
 Author: ${archiveInfo.author_name}
 ====================
@@ -1300,6 +1310,11 @@ Description:\n${archiveInfo.description}
       return;
     }
 
+    // Key identifying which archive menu item was pressed, so SMControls can
+    // render the progress spinner next to that specific button.
+    const archivingKey = quality ? quality : (overwrite && !video && captions) ? "captions" : "best";
+    setArchivingId(archivingKey);
+
     const archiveReq = new XMLHttpRequest();
     const archiveUrl = new URL("http://" + ytjsHost + "/archive/" + archiveId);
     video && archiveUrl.searchParams.append("quality", quality ?? "best");
@@ -1313,10 +1328,21 @@ Description:\n${archiveInfo.description}
       if (archiveReq.status !== 200) {
         console.log('Error: ' + archiveReq.status);
         alert("Failed to archive video!");
+        setArchivingId(null); // after the alert is dismissed
         return;
       }
       console.log("Metadata:" + archiveReq.response);
       alert("Successfully Archived!");
+      // alert() blocks synchronously, so the spinner keeps spinning while the
+      // dialog is up and stops as soon as the user clicks OK.
+      setArchivingId(null);
+      // Refresh the archive metadata in place so the UI reflects the new state.
+      fetchArchiveInfo(archiveId);
+    }
+    archiveReq.onerror = function () {
+      console.log('Archive request failed');
+      alert("Failed to archive video!");
+      setArchivingId(null);
     }
     archiveReq.send();
   }
@@ -1715,6 +1741,7 @@ Description:\n${archiveInfo.description}
           onSummarize={function () { summarizeWithAI(queryParameters.get("videoid")?.trim() ?? ""); }}
           onOpenYT={function () { openInYouTube(queryParameters.get("videoid")?.trim() ?? "", start); }}
           onArchive={handleArchive}
+          archivingId={archivingId}
           onToggleArchivePane={() => setArchivePaneOpen(!archivePaneOpen)}
         />
       </div>

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ArchiveInfo } from '../../../../ytjs/src/utils/archive';
+import { formatPublished } from '../../utils/published';
 
 // IE11 (build targets ['web','es5']):
 //  - No grid / gap / aspect-ratio / flexbox / -webkit-line-clamp.
@@ -122,13 +123,9 @@ export default function HitchhikerInfo({ info }: { info: ArchiveInfo }) {
               </a>
               {(() => {
                 // Prefer an absolute date; fall back to relative; show nothing if neither exists.
-                var dateText = '';
-                if (info.published) {
-                  dateText = 'Published ' + info.published;
-                  if (info.relative_date) { dateText += ' (' + info.relative_date + ')'; }
-                } else if (info.relative_date) {
-                  dateText = info.relative_date;
-                }
+                // formatPublished strips the "Premiered "/"Published " prefix stored by
+                // older archives so we never render "Published Premiered Jan 7, 2022".
+                var dateText = formatPublished(info.relative_date, info.published);
                 return dateText
                   ? <span style={{ verticalAlign: 'middle' }}>{'  ·  ' + dateText}</span>
                   : null;

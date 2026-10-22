@@ -3,6 +3,15 @@ import { PlayerCaptionsTracklist } from './yt-types';
 import { VideoInfo } from './yt-types';
 import { deepCopy } from './lib';
 
+/**
+ * Strips a leading status label that YouTube prepends to primary_info.published
+ * (e.g. "Premiered Jan 7, 2022", "Published Jan 7, 2022", "Streamed live on ...").
+ * Kept in sync with src/app/utils/published.ts (display-time normalisation).
+ */
+export function stripPublishedLabel(published: string): string {
+  return (published || "").replace(/^\s*(Premiered|Published|Streamed live|Started streaming)\s*(on\s+)?/i, "");
+}
+
 export class ArchiveInfoV1 {
   version: number;
   captions?: PlayerCaptionsTracklist;  
@@ -43,7 +52,17 @@ export class ArchiveInfoV1 {
     this.captions = deepCopy(videoInfo?.captions);
     this.game_info = deepCopy(videoInfo?.game_info);
     this.title = deepCopy(videoInfo?.primary_info?.title.text || videoInfo.basic_info?.title || "")
-    this.published = deepCopy(videoInfo?.primary_info?.published.text || "")
+    // youtubei.js >= 18.2.0 exposes publish_date/upload_date on basic_info (from the
+    // microformat), so basic-info-only paths (getBasicInfo) still get a date.
+    // publish_date is the public "Published" date; upload_date is the fallback.
+    // primary_info.published.text can be prefixed ("Premiered ...", "Streamed live ..."),
+    // so strip the leading label and store a clean date for new archives.
+    this.published = deepCopy(stripPublishedLabel(
+      videoInfo?.primary_info?.published.text
+      || videoInfo?.basic_info?.publish_date
+      || videoInfo?.basic_info?.upload_date
+      || ""
+    ))
     this.relative_date = deepCopy(videoInfo?.primary_info?.relative_date.text || "")
     this.author_name = deepCopy(videoInfo?.secondary_info?.owner?.author.name || videoInfo.basic_info?.channel?.name || "")
     this.author_channel_id = deepCopy(videoInfo?.secondary_info?.owner?.author.id || videoInfo.basic_info?.channel?.id || "")

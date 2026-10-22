@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { SMButton } from '../sm/SMElements';
+import { stripPublishedLabel } from '../../utils/published';
 
 // TODO: pick from archive.ts
 type ArchiveInfoData = {
@@ -92,7 +93,7 @@ function ArchiveItem({ v_id, info }: ArchiveItemProps) {
                 <span style={{ color: '#666', fontWeight: '500' }}>Author:</span> {info.author_name || 'Unknown'}
               </div>
               <div style={{ marginBottom: '5px' }}>
-                <span style={{ color: '#666', fontWeight: '500' }}>Published:</span> {info.published || 'N/A'}
+                <span style={{ color: '#666', fontWeight: '500' }}>Published:</span> {stripPublishedLabel(info.published) || 'N/A'}
               </div>
               <div style={{ marginBottom: '5px' }}>
                 <span style={{ color: '#666', fontWeight: '500' }}>Relative Date:</span> {info.relative_date || 'N/A'}

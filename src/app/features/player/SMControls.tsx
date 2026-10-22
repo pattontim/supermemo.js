@@ -3,6 +3,7 @@ import { convertHHMMSS2Seconds, formatTime } from "../../utils/Duration";
 import { Option } from "../../utils/supermemo";
 import { StorageKey, notifyStorageKey } from "../../utils/storage";
 import { ArchiveInfo } from "../../../../ytjs/src/utils/archive";
+import { stripPublishedLabel } from "../../utils/published";
 
 /**
  * SMControls
@@ -144,6 +145,9 @@ interface SMControlsProps {
     onSummarize: () => void;
     onOpenYT: () => void;
     onArchive: (quality?: string, overwrite?: boolean, captions?: boolean, video?: boolean) => void;
+    /** Key of the archive action currently in flight ("best" | "captions" | a
+     *  quality_label), used to render a spinner next to exactly that button. */
+    archivingId?: string | null;
     onToggleArchivePane: () => void;
 }
 
@@ -439,6 +443,27 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
         cursor: "pointer",
         whiteSpace: "nowrap"
     };
+
+    // Text-based progress spinner. A CSS @keyframes animation can't be expressed
+    // in an inline style object, and this build targets IE11/es5, so the frame is
+    // advanced from a timer while an archive request is in flight.
+    var [spinTick, setSpinTick] = useState(0);
+    useEffect(function () {
+        if (!p.archivingId) return;
+        var t = setInterval(function () { setSpinTick(function (n) { return n + 1; }); }, 120);
+        return function () { clearInterval(t); };
+    }, [p.archivingId]);
+    var SPIN_FRAMES = ["|", "/", "-", "\\"];
+
+    /** Renders the spinner inline if this archive action is the one running. */
+    function archiveSpinner(key: string) {
+        if (!p.archivingId || p.archivingId !== key) return null;
+        return (
+            <span style={{ display: "inline-block", width: 10, textAlign: "center", color: EXTRACT_TICK, marginLeft: 6 }}>
+                {SPIN_FRAMES[spinTick % SPIN_FRAMES.length]}
+            </span>
+        );
+    }
 
     /** Whether the current video is archived (mirrors the old Archive accordion:
      * archived_on is a string but is tested for keys). */
@@ -1124,10 +1149,10 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
                             </div>
                             {isArchived
                                 ? <div style={menuItem} onClick={function () { p.onArchive(undefined, true, true, false); }}>
-                                      Re-archive captions
+                                      Re-archive captions{archiveSpinner("captions")}
                                   </div>
                                 : <div style={menuItem} onClick={function () { p.onArchive(); }}>
-                                      Archive (best)
+                                      Archive (best){archiveSpinner("best")}
                                   </div>}
                             {!isArchived && p.info && p.info.file_formats && Object.keys(p.info.file_formats).length !== 0
                                 ? Object.keys(p.info.file_formats).map(function (itagMime) {
@@ -1139,6 +1164,7 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
                                               onClick={function () { p.onArchive(f.quality_label); }}
                                           >
                                               {(f.quality_label || "???") + " [" + f.itag + "]"}
+                                              {archiveSpinner(f.quality_label || "")}
                                           </div>
                                       );
                                   })
@@ -1157,15 +1183,15 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
                             {p.info ? (
                                 <div style={{ padding: "4px 8px", fontSize: 11, whiteSpace: "normal", lineHeight: "15px" }}>
                                     <div>{p.info.title}</div>
-                                    <div style={{ color: STRIP_BUFFER }}>{p.info.author_name} · {p.info.published}</div>
+                                    <div style={{ color: STRIP_BUFFER }}>{p.info.author_name} · {stripPublishedLabel(p.info.published)}</div>
                                 </div>
                             ) : null}
                             {isArchived
                                 ? <div style={menuItem} onClick={function () { p.onArchive(undefined, true, true, false); }}>
-                                      Re-archive captions
+                                      Re-archive captions{archiveSpinner("captions")}
                                   </div>
                                 : <div style={menuItem} onClick={function () { p.onArchive(); }}>
-                                      Archive (best)
+                                      Archive (best){archiveSpinner("best")}
                                   </div>}
                         </div>
                     ) : null}

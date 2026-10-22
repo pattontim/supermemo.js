@@ -464,6 +464,11 @@ function startServer() {
 			// clear cacheDir if it exists and data is older than 30 minutes
 			const files = readdirSync(cacheDir);
 			for (const file of files) {
+				// safety - only delete names that have a hex pattern  ^(innertube_session_data|[0-9a-f]{8})$
+				if (!/^(innertube_session_data|[0-9a-f]{8})$/.test(file)) {
+					console.log(`Skipping deletion of .cache/${file} [INVALID CACHE DATA]`);
+					continue;
+				}
 				const filePath = path.join(cacheDir, file);
 				const stats = statSync(filePath);
 				if (Date.now() - stats.mtimeMs > 30 * 60 * 1000) {
