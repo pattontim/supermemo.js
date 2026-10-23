@@ -1628,6 +1628,11 @@ Description:\n${archiveInfo.description}
           justifyContent: 'center',
           alignItems: 'center',
           minHeight: pseudoFullscreen ? '100%' : 'auto',
+          // minWidth lives here (the containing block) rather than on the
+          // aspect box: percentage padding-bottom resolves against the
+          // containing block width, so this keeps the 16:9 ratio exact even
+          // when the window is narrower than 754px.
+          minWidth: pseudoFullscreen ? 0 : 754,
           overflow: (clickZoom || followZoom) ? 'hidden' : 'visible',
           position: 'relative',
           userSelect: 'none',
@@ -1638,9 +1643,25 @@ Description:\n${archiveInfo.description}
         <div>
           { (() => { console.log( "----- element re-rendered"); return null; })() }
         </div>
+        {/* 16:9 aspect box. Non-fullscreen: height:0 + padding-bottom:56.25%
+            locks the frame height to 56.25% of its width (433.12px at 770px
+            wide) so the loading poster and vertical shorts can never balloon
+            the player. Fullscreen: fill the viewport as before. This is the
+            same IE11-safe pattern used by .videoWrapper in WebView.htm. */}
+        <div
+          style={
+            pseudoFullscreen
+              ? { position: 'relative', width: '100vw', height: '100vh' }
+              : { position: 'relative', width: '100%', height: 0, paddingBottom: '56.25%' }
+          }
+        >
         <ReactPlayer 
           ref={ref}
           className='react-player'
+          // react-player forwards style onto its root wrapper div. Absolute
+          // fill makes the wrapper obey the aspect box instead of driving the
+          // layout height. IE11-safe (same rule as .videoWrapper iframe).
+          style={{ position: 'absolute', top: 0, left: 0 }}
           config={{
               file: {
                 ...runtime.getPlayerConfig(),
@@ -1652,6 +1673,9 @@ Description:\n${archiveInfo.description}
                   // space below the video) so SMControls sits flush at the real  
                   // frame bottom. width/height restore react-player's own sizing  
                   // that this style object would otherwise overwrite. IE11-safe.  
+                  // No object-fit here: IE11 has no support and this build has no
+                  // polyfill. The 16:9 box locks the height regardless; vertical
+                  // shorts simply stretch to fill it on IE11.
                   style: { display: "block", verticalAlign: "bottom", width: "100%", height: "100%" },  
                   streaming: {
                     manifestRequestTimeout: 20000,
@@ -1673,9 +1697,8 @@ Description:\n${archiveInfo.description}
                 }
               }
           }}
-          width={pseudoFullscreen ? '100vw' : '100%'}
-          height={pseudoFullscreen ? '100vh' : 'auto'}
-          minWidth={pseudoFullscreen ? 0 : 754}
+          width='100%'
+          height='100%'
           // minHeight={424}
           url={url}
           pip={pip}
@@ -1744,10 +1767,18 @@ Description:\n${archiveInfo.description}
           archivingId={archivingId}
           onToggleArchivePane={() => setArchivePaneOpen(!archivePaneOpen)}
         />
+        </div>
       </div>
       :
-      <div style={{width: '100%', minWidth: 754, minHeight: 424, display: 'flex', justifyContent: 'center', alignItems: 'center'}}>
-        <div>Loading stream...</div>
+      // Same 16:9 box as the player so there is no size jump when the stream
+      // finishes loading. IE11-safe padding-bottom spacer. minWidth sits on the
+      // outer (containing block) so the percentage padding stays exact.
+      <div style={{ width: '100%', minWidth: 754 }}>
+        <div style={{ position: 'relative', width: '100%', height: 0, paddingBottom: '56.25%' }}>
+          <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+            <div>Loading stream...</div>
+          </div>
+        </div>
       </div>
       }
       <div style={{ display: pseudoFullscreen ? 'none' : 'block' }}>
