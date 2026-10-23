@@ -149,6 +149,7 @@ export async function getWatchPageSabrInputs(
 				codecs: (mt.match(/codecs="([^"]+)"/) ?? [])[1],
 				width: f.width,
 				height: f.height,
+				fps: f.fps ? Number(f.fps) : undefined,
 				bandwidth: f.bitrate ?? f.averageBitrate,
 				audioSampleRate: f.audioSampleRate ? Number(f.audioSampleRate) : undefined,
 				approxDurationMs: f.approxDurationMs ? Number(f.approxDurationMs) : undefined,

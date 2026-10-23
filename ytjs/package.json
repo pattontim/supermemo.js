@@ -5,8 +5,8 @@
   "main": "index.js",
   "scripts": {
     "build": "tsc",
-    "start": "cross-env YTJS_CAMOUFOX_HEADLESS=virtual node ./dist/ytjs/src/server.js",
-    "dev": "cross-env YTJS_CAMOUFOX_HEADLESS=virtual ts-node --project ./tsconfig.json src/server.ts",
+    "start": "cross-env YTJS_CAMOUFOX_HEADLESS=virtual YTJS_STREAM_SABR=1 node ./dist/ytjs/src/server.js",
+    "dev": "cross-env YTJS_CAMOUFOX_HEADLESS=virtual YTJS_STREAM_SABR=1 ts-node --project ./tsconfig.json src/server.ts",
     "start:headful": "cross-env YTJS_CAMOUFOX_HEADLESS=false node ./dist/ytjs/src/server.js",
     "start:native": "cross-env YTJS_CAMOUFOX_HEADLESS=true node ./dist/ytjs/src/server.js",
     "prestart": "pnpm run build",

@@ -37,6 +37,8 @@ export interface SabrInputFormat {
 	codecs?: string;
 	width?: number;
 	height?: number;
+	/** Frame rate, used to declare accurate MediaCapabilities to the server. */
+	fps?: number;
 	bandwidth?: number;
 	audioSampleRate?: number;
 	/** Full media duration in ms (from the watch-page adaptive format) */
@@ -382,18 +384,24 @@ export class SabrStream {
 	 * a wire difference from a real client.
 	 */
 	private buildMediaCapabilities(): Buffer {
-		const videoCaps = [
-			{ codec: 8, maxBitrate: 3250113 },
-			{ codec: 4, maxBitrate: 3038632 },
-			{ codec: 2, maxBitrate: 4349126 },
-		].map((c) =>
+		// The server refuses a FormatId that exceeds the capabilities we declare
+		// (SABR_ERROR sabr.no_video_selected) even when we explicitly ask for it.
+		// The old hardcoded caps topped out at 1920x1080@24 / 4.35 Mbps, so a
+		// 1080p60 format (itag 299, 6.4 Mbps) was rejected while 720p (itag 136,
+		// 3.1 Mbps) was accepted. Declare the max of what we actually offer.
+		const videos = this.formats.filter((f) => !f.isAudio);
+		const maxHeight = Math.max(1080, ...videos.map((f) => f.height ?? 0));
+		const maxWidth = Math.max(1920, ...videos.map((f) => f.width ?? 0));
+		const maxFps = Math.max(24, ...videos.map((f) => f.fps ?? 0));
+		const maxBitrate = Math.max(4349126, ...videos.map((f) => f.bandwidth ?? 0));
+		const videoCaps = [8, 4, 2].map((codec) =>
 			Buffer.concat([
-				int32Field(1, c.codec),
+				int32Field(1, codec),
 				int32Field(2, 1),
-				int32Field(3, 1080),
-				int32Field(4, 1920),
-				int32Field(11, 24),
-				int32Field(12, c.maxBitrate),
+				int32Field(3, maxHeight),
+				int32Field(4, maxWidth),
+				int32Field(11, maxFps),
+				int32Field(12, maxBitrate),
 				boolField(15, false),
 			])
 		);
@@ -555,7 +563,7 @@ export class SabrStream {
 			int32Field(34, 1), // visibility
 			fixed32Field(35, 1.0), // playback_rate
 			int64Field(36, elapsed), // elapsed_wall_time_ms
-			bytesField(38, this.buildMediaCapabilities()), // media_capabilities
+			// bytesField(38, this.buildMediaCapabilities()), // media_capabilities
 			int64Field(39, elapsed), // time_since_last_action_ms
 			// enabled_track_types_bitfield: a real WEB client sends 3 (video|audio
 			// enabled). Sending 0 tells the server no track is enabled, which is a

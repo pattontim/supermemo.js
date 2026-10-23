@@ -257,11 +257,50 @@ async function buildWatchPageStream(videoId: string): Promise<{
 	// IE11 MSE only accepts H.264/AVC video + AAC/MP4A audio; the watch-page
 	// formats include VP9/Opus which must be filtered out before we build the
 	// single-format request and the DASH manifest.
-	const pickVideo = wp.formats.find((f) => !f.isAudio && /avc1/.test(f.mimeType));
+	//
+	// The watch-page list is ordered highest-quality-first, so "first avc1" lands
+	// on the top rung — for some videos that is 1080p60 High@L4.2 (itag 299,
+	// avc1.64002A), which desktop Chrome decodes but IE11's MSE pipeline does
+	// not. Since the SABR manifest emits a SINGLE video Representation there is
+	// no lower rung for dash.js to adapt down to, so the pick itself must be
+	// IE11-decodable.
+	//
+	// Match what dash.js actually tests on IE11: CapabilitiesFilter calls
+	// MediaSource.isTypeSupported('video/mp4;codecs="<codecs>";width="W";height="H"')
+	// — note it appends width/height but NOT framerate. So profile/level and
+	// resolution are the real discriminators; fps is only a preference here.
+	const IE11_MAX_LEVEL = Number(process.env.YTJS_SABR_MAX_LEVEL ?? 0x28); // H.264 level 4.0
+	const IE11_MAX_HEIGHT = Number(process.env.YTJS_SABR_MAX_HEIGHT ?? 1080);
+	const IE11_PREFERRED_MAX_FPS = 30;
+
+	// avc1.PPCCLL — the last hex byte is level_idc (e.g. "2A" = level 4.2).
+	const avcLevel = (codecs?: string): number => {
+		const m = /avc1\.[0-9a-fA-F]{4}([0-9a-fA-F]{2})/.exec(codecs ?? "");
+		return m ? parseInt(m[1], 16) : Number.POSITIVE_INFINITY;
+	};
+	const ie11SafeVideo = (f: SabrInputFormat): boolean =>
+		!f.isAudio &&
+		/avc1/.test(f.mimeType) &&
+		avcLevel(f.codecs) <= IE11_MAX_LEVEL &&
+		(f.height ?? 0) <= IE11_MAX_HEIGHT;
+
+	// Highest IE11-safe rung, preferring <=30fps when one exists (60fps rungs
+	// cost bitrate for no benefit on IE11 and are the likeliest to be refused).
+	const safeVideos = wp.formats.filter(ie11SafeVideo);
+	const pickVideo =
+		safeVideos.find((f) => (f.fps ?? 30) <= IE11_PREFERRED_MAX_FPS) ??
+		safeVideos[0] ??
+		// Nothing strictly safe: fall back to the lowest AVC rung.
+		[...wp.formats].reverse().find((f) => !f.isAudio && /avc1/.test(f.mimeType));
 	const pickAudio = wp.formats.find((f) => f.isAudio && /mp4a/.test(f.mimeType));
 	const videoFormat = pickVideo ?? wp.formats.find((f) => !f.isAudio);
 	const audioFormat = pickAudio ?? wp.formats.find((f) => f.isAudio);
 	const ordered = [videoFormat, audioFormat].filter(Boolean) as SabrInputFormat[];
+	console.log(
+		`[sabr] IE11 video pick: itag=${videoFormat?.itag} codecs=${videoFormat?.codecs} ` +
+		`fps=${videoFormat?.fps} ${videoFormat?.width}x${videoFormat?.height} ` +
+		`(maxLevel=${IE11_MAX_LEVEL.toString(16)} maxHeight=${IE11_MAX_HEIGHT})`
+	);
 
 	// Real content-bound PO token so the session survives past the empty-token
 	// window (StreamProtectionStatus 3). Falls back to an empty token (which
@@ -426,27 +465,37 @@ async function waitForInit(stream: SabrStream, media: SabrMedia, timeoutMs = 450
 
 async function waitForSegment(stream: SabrStream, media: SabrMedia, seq: number, timeoutMs = 45000) {
 	if (seq > 0) {
-		// player_time_ms (field 28) = end of the contiguous buffered range,
-		// matching googlevideo's seekTo(trackCollection.buffered). Fall back to
-		// the requested segment's nominal end, then wall clock (which keeps
-		// fields 28/36 consistent, as a real player reports). The old
-		// `(seq-1)*5000` fallback silently lied because SABR segment durations
-		// aren't uniform.
-		const prev = media.segments.get(seq - 1);
-		const t =
-			media.bufferedEndMs() ??
-			(prev?.startMs !== undefined && prev.durationMs !== undefined
-				? prev.startMs + prev.durationMs
-				: media.segmentDurationMs !== undefined
-					? (seq - 1) * media.segmentDurationMs
-					: stream.elapsedWallMs());
+		// player_time_ms (field 28). We report the NOMINAL START TIME OF THE
+		// REQUESTED SEGMENT, not the end of the contiguous buffered range.
+		//
+		// googlevideo's player-driven SabrStreamingAdapter does exactly this and
+		// documents it as deliberate: "we are cheating a bit by abusing the player
+		// time field (in clientAbrState), setting it to the exact start time value
+		// of the segment we want, while YouTube simply uses the actual player
+		// time." The SABR server only serves a bounded read-ahead window per
+		// player time, so reporting the wanted segment's start makes it serve
+		// that region directly.
+		//
+		// The old `bufferedEndMs()`-first behaviour was copied from the BULK
+		// downloader (SabrStream.ts seeks to trackCollection.buffered and walks
+		// forward sequentially). For a player-driven relay that is wrong: on a
+		// cold session the contiguous buffer ends ~20-40s in, so a seek to 1:04
+		// only told the server "playhead is 40s" and it crawled forward one
+		// throttled cycle at a time until dash.js's segment XHR timed out ->
+		// native media error -> black screen.
+		//
+		// Uses the SAME nominalDurationMs the manifest advertises, so this stays
+		// consistent with the $Number$ dash.js computed to ask for this segment.
+		const kind = media === stream.video ? "video" : "audio";
+		const segStart = (seq - 1) * nominalDurationMs(media, kind);
 		if (process.env.BG_CENSUS === "1") {
+			const prev = media.segments.get(seq - 1);
 			console.log(
-				`[sabr] seg-${seq} nudge t=${Math.round(t)} bufferedEnd=${media.bufferedEndMs()} ` +
-				`prevStart=${prev?.startMs} prevDur=${prev?.durationMs} segDurMs=${media.segmentDurationMs}`
+				`[sabr] seg-${seq} nudge t=${Math.round(segStart)} bufferedEnd=${media.bufferedEndMs()} ` +
+				`prevStart=${prev?.startMs} prevDur=${prev?.durationMs} nominal=${nominalDurationMs(media, kind)}`
 			);
 		}
-		stream.nudge(t);
+		stream.nudge(segStart);
 	}
 	await Promise.race([
 		media.onSegment(seq),
@@ -595,6 +644,18 @@ router.get("/sabr/:id/master.mpd", async (req, res) => {
 				Promise.all([stream.video.onSegment(0), stream.audio.onSegment(0)]),
 				new Promise((_, rej) => setTimeout(() => rej(new Error("playback not ready")), 45000)),
 			]);
+		}
+
+		// Seed the pump at the clip start. SuperMemo clips always open at a known
+		// startSec, so making that region the FIRST thing the session fetches
+		// means dash.js finds it already buffered when it seeks there. Mirrors
+		// googlevideo's `seekTo(options.startTimeMs ?? 0)`. The session instance
+		// is keyed by videoId and reused for the later seg-*.m4s fetches, so this
+		// nudge persists into the segment-serving phase.
+		const startMs = Number(req.query.start ?? 0) * 1000;
+		if (Number.isFinite(startMs) && startMs > 0) {
+			console.log(`[sabr] seeding pump at clip start: ${Math.round(startMs)}ms`);
+			stream.nudge(startMs);
 		}
 
 		// Full media duration (from the watch-page format) so the seekbar spans

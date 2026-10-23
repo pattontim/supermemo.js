@@ -261,6 +261,15 @@ router.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
                     new URL(`http://${fullUrlForClient}/proxy/${url}`),
                 format_filter: (format: Format) => {
                     const isAudioOnly = format.has_audio && !format.has_video;
+                    // YouTube's codec strings are NOT consistently cased: some
+                    // videos report "avc1.64002A" / "avc1.4D401F" (uppercase
+                    // profile/level hex) while others report "avc1.640028".
+                    // The whitelist below is lowercase, so a case-sensitive
+                    // match silently rejected EVERY video format for the
+                    // uppercase videos — leaving an audio-only manifest and a
+                    // black player. Compare case-insensitively.
+                    const mime = (format.mime_type ?? "").toLowerCase();
+                    const keep = !formatsToUse.find((fmt) => mime.includes(fmt));
                     console.log(
                         "format: " +
                             format.itag +
@@ -270,10 +279,11 @@ router.get(/^\/mpd\/([\w-]+)\.mpd$/, async (req, res) => {
                             format.has_video +
                             " mime: " +
                             format.mime_type,
-                        " isAudioOnly: " + isAudioOnly + " lang: " + format.language
+                        " isAudioOnly: " + isAudioOnly + " lang: " + format.language +
+                        " keep: " + keep
                     );
 
-                    return !formatsToUse.find((fmt) => format.mime_type.includes(fmt));
+                    return keep;
                 },
             };
 
@@ -406,6 +416,12 @@ router.get("/streamUrl/:v_id", async (req, res) => {
 		// DASH path. Gate with ?sabr=1 or YTJS_STREAM_SABR=1 while validating.
 		if (req.query.sabr === "1" || process.env.YTJS_STREAM_SABR === "1") {
 			const url = new URL(`http://${fullUrlForClient}/sabr/${v_id}/master.mpd`);
+			// Seed the pump at the clip start server-side. Without this a cold
+			// session begins at t=0 and only crawls forward, so a player that
+			// seeks to startSec stalls before the segment arrives. The
+			// #start,stop fragment is kept for other consumers; SMPlayer strips
+			// it before handing the URL to dash.js (IE11 base-URL resolution).
+			url.searchParams.set("start", String(start));
 			const responseUrl = url.href + "#" + start + "," + stop;
 			console.log(`[8/8] Sending SABR DASH response: ${responseUrl}`);
 			return res.send(responseUrl);

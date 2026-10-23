@@ -463,21 +463,32 @@ function App() {
       const streamUrl = (req.response ?? req.responseURL) as string;
       console.log('Stream URL:', streamUrl);
 
+      // dash.js on IE11 (4.5.2) corrupts SegmentTemplate base-URL resolution
+      // when the manifest URL carries ANY trailing fragment — "#64,208" broke
+      // it, and so does dash.js's own "#t=64" VoD anchor. Both are stripped
+      // here: dash.js must receive a fragment-free URL (this is the known-good
+      // configuration). The clip start is applied after readiness by
+      // handlePlayerReady -> seekVideo(start).
+      const baseUrl = streamUrl.split('#')[0];
+      if (baseUrl !== streamUrl) {
+        console.log('Stripped manifest fragment; dash.js gets:', baseUrl);
+      }
+
       // If it's an MPD file, fetch and wait for it to load completely
-      if (streamUrl.toLowerCase().indexOf('.mpd') > -1) {
+      if (baseUrl.toLowerCase().indexOf('.mpd') > -1) {
         const dummyUrl = new URL("http://" + ytjsHost + "/dummy-manifest.mpd");
         setUrl(dummyUrl.href);
         setIsMpdLoaded(true);
 
         const mpdReq = new XMLHttpRequest();
-        mpdReq.open('GET', streamUrl, true);
+        mpdReq.open('GET', baseUrl, true);
         mpdReq.onload = function() {
           if (mpdReq.status !== 200) {
             console.error('MPD fetch failed');
             return;
           }
-          // Only set the URL after MPD is fully loaded
-          setUrl(streamUrl);
+          // Fragment-free. The start time reaches dash.js via dashStartTime.
+          setUrl(baseUrl);
           setIsMpdLoaded(true);
         };
         mpdReq.onerror = function() {
@@ -487,7 +498,7 @@ function App() {
       } else {
         console.log("non MPD stream found")
         // For non-MPD streams, set URL directly
-        setUrl(streamUrl);
+        setUrl(baseUrl);
         setIsMpdLoaded(true);
       }
     }

@@ -119,6 +119,7 @@ export function sabrInputsFromJson(raw: any): SabrInputs {
 			codecs: f.codecs,
 			width: f.width,
 			height: f.height,
+			fps: f.fps,
 			bandwidth: f.bandwidth,
 			audioSampleRate: f.audioSampleRate,
 			approxDurationMs: f.approxDurationMs,
@@ -511,6 +512,15 @@ export async function getLocalVideoInfo(id: string) {
 							? String(Math.floor(new Date(f.last_modified).getTime() / 1000))
 							: "0",
 						isAudio: !!(f.has_audio && !f.has_video),
+						// Needed so buildMediaCapabilities can declare caps that
+						// cover the formats we actually request.
+						codecs: (f.mime_type?.match(/codecs="([^"]+)"/) ?? [])[1],
+						width: f.width,
+						height: f.height,
+						fps: f.fps,
+						bandwidth: f.bitrate,
+						audioSampleRate: f.audio_sample_rate,
+						approxDurationMs: f.approx_duration_ms,
 					}));
 
 				// TubeReplacer's `webMobileClient` tuple is client_name=2 with
