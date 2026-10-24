@@ -104,6 +104,9 @@ bower_components
 # node files
 node_modules/
 
+.playwright-mcp
+.vscode/mcp.json
+
 # Yarn Integrity file
 .yarn-integrity
 

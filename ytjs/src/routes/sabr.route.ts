@@ -18,6 +18,9 @@ import { Router, Request, Response } from "express";
 import { SabrStream, SabrMedia, SabrClientInfo, SabrInputFormat } from "../sabr/sabr-stream";
 import { getOrCreateSabrInputs, createInnertube, mintContentPoToken, setSabrInputs, sabrInputsFromJson, SabrInputs } from "../utils/localvideo";
 import { getWatchPageSabrInputs } from "../sabr/watchpage";
+import { cache, yti_version } from "../server";
+import { latestCacheConstructor } from "../utils/archive";
+import { VideoInfo } from "../utils/yt-types";
 
 const router = Router();
 
@@ -229,6 +232,11 @@ interface Session {
 	/** Format metadata (from watch page) for building the DASH manifest. */
 	videoFormat?: SabrInputFormat;
 	audioFormat?: SabrInputFormat;
+	/**
+	 * Built from the watch-page player response (no extra getInfo), so the
+	 * serve path can populate cache[v_id] for /archiveInfo.
+	 */
+	videoInfo?: VideoInfo;
 }
 
 const sessions = new Map<string, Session>();
@@ -248,12 +256,28 @@ async function buildWatchPageStream(videoId: string): Promise<{
 	stream: SabrStream;
 	videoFormat?: SabrInputFormat;
 	audioFormat?: SabrInputFormat;
+	videoInfo?: VideoInfo;
 } | null> {
 	const wp = await getWatchPageSabrInputs(videoId);
 	if (!wp) return null;
 	const innertube = await createInnertube({ withPlayer: true, generateSessionLocally: false });
 	const decipheredUrl = (await innertube.session.player!.decipher(wp.sabrUrl)) || wp.sabrUrl;
 	console.log(`[sabr] decipher: changed=${decipheredUrl !== wp.sabrUrl} hasN=${/&n=/.test(decipheredUrl)}`);
+	// Build a VideoInfo from the already-parsed player response, reusing the
+	// Innertube actions we just created — mirrors youtubei.js's own
+	// getTrailerInfo() pattern (new VideoInfo([{ data }], actions, cpn)) and makes
+	// no HTTP call. MediaInfo parses data[0].data.playerResponse ?? data[0].data,
+	// so the raw player response is sufficient. cpn is irrelevant to metadata.
+	let videoInfo: VideoInfo | undefined;
+	try {
+		videoInfo = new VideoInfo(
+			[{ data: wp.playerResponse } as any],
+			innertube.session.actions,
+			"",
+		);
+	} catch (e) {
+		console.error(`[sabr] failed to build VideoInfo from watch page for ${videoId}`, e);
+	}
 	// IE11 MSE only accepts H.264/AVC video + AAC/MP4A audio; the watch-page
 	// formats include VP9/Opus which must be filtered out before we build the
 	// single-format request and the DASH manifest.
@@ -346,7 +370,7 @@ async function buildWatchPageStream(videoId: string): Promise<{
 		`(${videoFormat?.codecs}) audio=${audioFormat?.itag} (${audioFormat?.codecs}) ` +
 		`poToken=${poToken.length}b`
 	);
-	return { stream, videoFormat, audioFormat };
+	return { stream, videoFormat, audioFormat, videoInfo };
 }
 
 /** Build a watch-page session and confirm the first SABR round-trip succeeds. */
@@ -354,6 +378,7 @@ async function probeWatchPageStream(videoId: string): Promise<{
 	stream: SabrStream;
 	videoFormat?: SabrInputFormat;
 	audioFormat?: SabrInputFormat;
+	videoInfo?: VideoInfo;
 } | null> {
 	const built = await buildWatchPageStream(videoId);
 	if (!built) return null;
@@ -396,6 +421,7 @@ async function getSession(videoId: string): Promise<SabrStream> {
 	let stream: SabrStream | undefined;
 	let videoFormat: SabrInputFormat | undefined;
 	let audioFormat: SabrInputFormat | undefined;
+	let videoInfo: VideoInfo | undefined;
 	for (let attempt = 0; attempt < 3 && !stream; attempt++) {
 		try {
 			const built = await probeWatchPageStream(videoId);
@@ -403,6 +429,7 @@ async function getSession(videoId: string): Promise<SabrStream> {
 				stream = built.stream;
 				videoFormat = built.videoFormat;
 				audioFormat = built.audioFormat;
+				videoInfo = built.videoInfo;
 			}
 		} catch (e) {
 			console.error(`[sabr] watchpage attempt ${attempt + 1} failed`, e);
@@ -450,6 +477,7 @@ async function getSession(videoId: string): Promise<SabrStream> {
 		lastAccess: Date.now(),
 		videoFormat,
 		audioFormat,
+		videoInfo,
 	});
 	stream.start();
 	return stream;
@@ -740,6 +768,25 @@ router.get("/sabr/:id/master.mpd", async (req, res) => {
 			representationXml(session?.audioFormat, stream.audio, "audio") +
 			`</AdaptationSet>` +
 			`</Period></MPD>`;
+
+		// Populate cache[v_id] so /archiveInfo/:v_id (which only polls cache and
+		// does not build anything itself) resolves in SABR mode too — the DASH
+		// path does this in its /mpd handler; the SABR path bypasses that route
+		// entirely, so without this the poll times out and 404s. videoInfo was
+		// built from the watch-page player response with no extra getInfo.
+		if (!cache[req.params.id] && session?.videoInfo) {
+			try {
+				cache[req.params.id] = latestCacheConstructor(
+					session.videoInfo,
+					mpd, // SABR manifest string as mpd_manifest (unused by /archiveInfo)
+					"IE", // browser_target; /archiveInfo reads ytiVidInfo, not this
+					yti_version,
+				);
+				console.log(`[sabr] cached video info for ${req.params.id}`);
+			} catch (e) {
+				console.error(`[sabr] failed to populate cache for ${req.params.id}`, e);
+			}
+		}
 
 		res.type("application/dash+xml").send(mpd);
 	} catch (e) {

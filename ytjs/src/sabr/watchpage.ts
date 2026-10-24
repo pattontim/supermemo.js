@@ -19,6 +19,14 @@ export interface WatchPageSabrInputs {
 	ustreamerConfig: Buffer;
 	formats: SabrInputFormat[];
 	videoId: string;
+	/**
+	 * Raw `ytInitialPlayerResponse` JSON. Reused downstream to build a
+	 * youtubei.js VideoInfo with no extra getInfo round-trip (see
+	 * MediaInfo's constructor: it parses `data[0].data.playerResponse ??
+	 * data[0].data`), so the SABR serve path can also populate cache[v_id]
+	 * for /archiveInfo.
+	 */
+	playerResponse: any;
 	debug: {
 		hasPlayerResponse: boolean;
 		hasSabrUrl: boolean;
@@ -169,6 +177,7 @@ export async function getWatchPageSabrInputs(
 		),
 		formats,
 		videoId,
+		playerResponse: pr,
 		debug,
 	};
 }
