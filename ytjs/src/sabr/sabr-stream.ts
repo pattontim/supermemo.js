@@ -144,6 +144,57 @@ export class SabrMedia {
 		}
 		return end;
 	}
+
+	/**
+	 * Sequence number (1-based) containing `ms` on the presentation timeline.
+	 * Prefers the sidx-derived timeline (authoritative for $Number$) and falls
+	 * back to the flat segmentDurationMs divisor.
+	 */
+	sequenceAt(ms: number): number | undefined {
+		if (this.segmentTimeline?.length) {
+			let seq: number | undefined;
+			for (let i = 0; i < this.segmentTimeline.length; i++) {
+				const e = this.segmentTimeline[i];
+				if (e.startMs <= ms) seq = i + 1;
+				else break;
+			}
+			// Before the first segment -> first segment.
+			return seq ?? 1;
+		}
+		const dur = this.segmentDurationMs ?? 5000;
+		if (!Number.isFinite(dur) || dur <= 0) return undefined;
+		return Math.max(1, Math.floor(ms / dur) + 1);
+	}
+
+	/**
+	 * googlevideo's Track.endOfStreamReached — the final segment is present.
+	 */
+	get endOfStreamReached(): boolean {
+		return (
+			this.endSegmentNumber !== undefined &&
+			this.endSegmentNumber > 0 &&
+			this.segments.has(this.endSegmentNumber)
+		);
+	}
+
+	/**
+	 * True when every sequence in [playerTimeMs, playerTimeMs + aheadMs] is
+	 * already buffered. Used as the relay's demand gate so it stops fetching
+	 * when the player is caught up (or at end-of-stream) and idles until a
+	 * segment request nudges it again.
+	 */
+	hasWindow(playerTimeMs: number, aheadMs: number): boolean {
+		if (!this.ready) return false;
+		if (this.endSegmentNumber === undefined) return false; // bounds unknown -> keep pumping
+		const fromSeq = this.sequenceAt(playerTimeMs);
+		const toSeqRaw = this.sequenceAt(playerTimeMs + aheadMs);
+		if (fromSeq === undefined || toSeqRaw === undefined) return false;
+		const toSeq = Math.min(this.endSegmentNumber, Math.max(fromSeq, toSeqRaw));
+		for (let i = fromSeq; i <= toSeq; i++) {
+			if (!this.segments.has(i)) return false;
+		}
+		return true;
+	}
 }
 
 export class SabrStream {
@@ -175,6 +226,15 @@ export class SabrStream {
 	// so refresh is disabled by default; set YTJS_SABR_TOKEN_REFRESH_MS to
 	// re-enable it for experiments.
 	private static readonly TOKEN_REFRESH_MS = Number(process.env.YTJS_SABR_TOKEN_REFRESH_MS ?? 0);
+	/**
+	 * How far ahead of the current player time the relay keeps its buffer
+	 * topped up. Mirrors dash.js's buffer target (stableBufferTime 12s,
+	 * bufferTimeAtTopQuality 30s) so the relay's own readahead stays in
+	 * lockstep with the player's scheduler instead of racing to the end.
+	 */
+	private static readonly READAHEAD_MS = Number(process.env.YTJS_SABR_READAHEAD_MS ?? 30000);
+	/** Resolver for the parked (idle) pump loop, if it is parked. */
+	private wake?: () => void;
 
 	constructor(
 		public sabrUrl: string,
@@ -215,13 +275,35 @@ export class SabrStream {
 	stop() {
 		this.dead = true;
 		this.deadAt = Date.now();
+		this.releaseWake();
 	}
 
 	/** Ask the pump to fetch now (e.g. a segment request found nothing buffered). */
 	nudge(playerTimeMs = this.lastPlayerTimeMs) {
 		this.lastPlayerTimeMs = playerTimeMs;
 		console.log(`[sabr] nudge playerTimeMs=${Math.round(playerTimeMs)} wall=${Date.now() - this.playbackStartAt}ms`);
+		this.releaseWake();
 		if (!this.requesting && !this.dead) void this.pumpOnce(playerTimeMs);
+	}
+
+	/** Wake a parked pump loop (used by nudge/stop). */
+	private releaseWake() {
+		const w = this.wake;
+		if (!w) return;
+		this.wake = undefined;
+		w();
+	}
+
+	/**
+	 * Demand gate: true when either enabled track still has a gap in the
+	 * readahead window around the current player time.
+	 */
+	private needsData(): boolean {
+		const ahead = SabrStream.READAHEAD_MS;
+		const t = this.lastPlayerTimeMs;
+		const videoDone = this.video.endOfStreamReached || this.video.hasWindow(t, ahead);
+		const audioDone = this.audio.endOfStreamReached || this.audio.hasWindow(t, ahead);
+		return !(videoDone && audioDone);
 	}
 
 	/** Milliseconds since the session started — the value a real player reports
@@ -247,12 +329,32 @@ export class SabrStream {
 				return;
 			}
 		}
-		// Steady state: top up periodically. Segment requests also call nudge().
+		// Steady state: only fetch while there is a gap in the readahead window.
+		// When the player is caught up (or the stream is fully buffered / at
+		// end-of-stream) the loop parks on a wake promise that nudge() resolves,
+		// so a seek back into an unbuffered region restarts fetching without
+		// hammering YouTube in the background.
+		//
+		// Note: reaching end-of-stream does NOT call stop() — the session stays
+		// alive (with its cached segments) so seek-back replays instantly.
 		while (!this.dead) {
-			const wait = Math.max(0, this.backoffUntil - Date.now(), 750);
-			await new Promise((r) => setTimeout(r, wait));
-			if (this.dead) return;
-			await this.pumpOnce(this.lastPlayerTimeMs);
+			if (this.needsData()) {
+				await this.pumpOnce(this.lastPlayerTimeMs);
+				const wait = Math.max(0, this.backoffUntil - Date.now(), 750);
+				await new Promise((r) => setTimeout(r, wait));
+			} else {
+				console.log(
+					`[sabr] idle: buffer complete around t=${Math.round(this.lastPlayerTimeMs)}ms (wall=${Date.now() - this.playbackStartAt}ms)`
+				);
+				await new Promise<void>((resolve) => {
+					this.wake = resolve;
+					// A stop()/nudge() may have happened between the check and here.
+					if (this.dead) {
+						this.wake = undefined;
+						resolve();
+					}
+				});
+			}
 		}
 	}
 

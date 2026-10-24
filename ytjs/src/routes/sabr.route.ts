@@ -252,6 +252,12 @@ function pruneSessions() {
 	}
 }
 
+// Active reaper: pruneSessions() used to run only inside getSession(), so a
+// closed player (no more requests) never triggered cleanup and its background
+// pump kept running. Reap on a timer instead.
+const reaper = setInterval(pruneSessions, 30_000);
+if (typeof reaper.unref === "function") reaper.unref();
+
 async function buildWatchPageStream(videoId: string): Promise<{
 	stream: SabrStream;
 	videoFormat?: SabrInputFormat;
@@ -492,6 +498,14 @@ async function waitForInit(stream: SabrStream, media: SabrMedia, timeoutMs = 450
 }
 
 async function waitForSegment(stream: SabrStream, media: SabrMedia, seq: number, timeoutMs = 45000) {
+	// Cache hit — serve straight from media.segments, like PipePipe's
+	// awaitSegment returning a cachedSegment before issuing any request.
+	// Crucially, do NOT nudge: nudge() rewinds lastPlayerTimeMs to the
+	// seek-back position and fires pumpOnce, which makes the SABR server
+	// re-send a read-ahead window of bytes we already hold. Returning here
+	// means a backward seek into buffered territory costs zero server traffic.
+	if (seq > 0 && media.segments.has(seq)) return;
+
 	if (seq > 0) {
 		// player_time_ms (field 28). We report the NOMINAL START TIME OF THE
 		// REQUESTED SEGMENT, not the end of the contiguous buffered range.
