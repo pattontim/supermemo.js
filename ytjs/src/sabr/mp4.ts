@@ -50,15 +50,26 @@ function findChildBox(buf: Buffer, parent: Box, type: string): Box | null {
 	return findTopLevelBox(buf.subarray(parent.start, parent.start + parent.size), type);
 }
 
-/** Descend a path of box types, e.g. ["moov", "mvhd"]. */
+/**
+ * Descend a path of box types, e.g. ["moov", "mvhd"].
+ *
+ * Returns offsets RELATIVE TO THE ORIGINAL BUFFER. findTopLevelBox reports
+ * offsets relative to the scope it was handed, so descending without
+ * accumulating the shift produced offsets that only looked valid — callers
+ * reading `buf.readUInt32BE(box.start + n)` then read the wrong bytes (this is
+ * why getTimescale returned garbage even after its +12/+20 fix).
+ */
 function findNestedBox(buf: Buffer, path: string[]): Box | null {
 	let scope = buf;
+	let scopeBase = 0;
 	let box: Box | null = null;
 	for (const type of path) {
-		box = findTopLevelBox(scope.subarray(0, scope.length), type);
-		if (!box) return null;
-		// re-slice so child offsets are relative to the found box
-		scope = scope.subarray(box.start, box.start + box.size);
+		const found = findTopLevelBox(scope, type);
+		if (!found) return null;
+		box = { type: found.type, start: scopeBase + found.start, size: found.size };
+		// re-slice so the next search starts inside this box
+		scope = scope.subarray(found.start, found.start + found.size);
+		scopeBase += found.start;
 	}
 	return box;
 }
@@ -67,27 +78,45 @@ function findNestedBox(buf: Buffer, path: string[]): Box | null {
 export function getTimescale(initSegment: Buffer): number | undefined {
 	const mvhd = findNestedBox(initSegment, ["moov", "mvhd"]);
 	if (!mvhd) return undefined;
-	// fullbox: version(1) flags(3) then creation/modification times
-	return mvhd.size >= 12 ? initSegment.readUInt32BE(mvhd.start + 8) : undefined;
+	// fullbox: version(1)+flags(3), then creation+modification times
+	// (4 bytes each for v0, 8 each for v1), then the 4-byte timescale.
+	// Reading +8 lands on modification_time, which is why the old code
+	// produced garbage like 1769172790.
+	const version = initSegment.readUInt8(mvhd.start);
+	const tsOffset = mvhd.start + (version === 1 ? 20 : 12);
+	return tsOffset + 4 <= mvhd.start + mvhd.size
+		? initSegment.readUInt32BE(tsOffset)
+		: undefined;
 }
 
 export interface SidxEntry {
 	durationTicks: number;
 }
 
-/** Parse the top-level sidx box (if present) of an init segment. */
-export function getSidxEntries(initSegment: Buffer): SidxEntry[] {
+export interface SidxInfo {
+	timescale: number;
+	entries: SidxEntry[];
+}
+
+/**
+ * Parse the top-level sidx box, returning its OWN timescale plus the per-ref
+ * durations. The sidx timescale is not necessarily the mvhd timescale, and
+ * converting sidx ticks through mvhd yields garbage — so it must be returned
+ * rather than assumed.
+ */
+export function getSidxInfo(initSegment: Buffer): SidxInfo | undefined {
 	const sidx = findTopLevelBox(initSegment, "sidx");
-	if (!sidx) return [];
+	if (!sidx) return undefined;
 	const base = sidx.start;
 	const version = initSegment.readUInt8(base);
 	const timescaleOffset = base + 8; // version(1)+flags(3)+reference_id(4)
-	if (timescaleOffset + 4 > base + sidx.size) return [];
+	if (timescaleOffset + 4 > base + sidx.size) return undefined;
+	const timescale = initSegment.readUInt32BE(timescaleOffset);
 	// timescale sits at +8 for both v0/v1
 	const earliestOffset = timescaleOffset + 4;
 	const cursor = version === 0 ? earliestOffset + 8 : earliestOffset + 16;
 	const countOffset = cursor + 2;
-	if (countOffset + 2 > base + sidx.size) return [];
+	if (countOffset + 2 > base + sidx.size) return undefined;
 	const count = initSegment.readUInt16BE(countOffset);
 	const entries: SidxEntry[] = [];
 	let off = countOffset + 2;
@@ -97,7 +126,12 @@ export function getSidxEntries(initSegment: Buffer): SidxEntry[] {
 		entries.push({ durationTicks });
 		off += 12;
 	}
-	return entries;
+	return { timescale, entries };
+}
+
+/** Parse the top-level sidx box (if present) of an init segment. */
+export function getSidxEntries(initSegment: Buffer): SidxEntry[] {
+	return getSidxInfo(initSegment)?.entries ?? [];
 }
 
 export interface FragmentTiming {
@@ -116,34 +150,40 @@ export function getFragmentTiming(fragment: Buffer): FragmentTiming {
 	const result: FragmentTiming = {};
 
 	const moofScope = fragment.subarray(moof.start, moof.start + moof.size);
-	const tfdt = findTopLevelBox(moofScope, "tfdt");
+	// traf.start is relative to the moof payload (findChildBox slices the
+	// parent), so tfdt/trun must be looked up inside the traf payload, not in
+	// the moof. They are grandchildren (moof->traf->tfdt), never direct children.
+	const trafScope = moofScope.subarray(traf.start, traf.start + traf.size);
+
+	const tfdt = findTopLevelBox(trafScope, "tfdt");
 	if (tfdt) {
-		const version = moofScope.readUInt8(tfdt.start);
+		const version = trafScope.readUInt8(tfdt.start);
 		const valueOffset = tfdt.start + 4;
 		if (version === 1) {
 			result.baseDecodeTimeTicks =
-				moofScope.readUInt32BE(valueOffset) * 0x100000000 +
-				moofScope.readUInt32BE(valueOffset + 4);
+				trafScope.readUInt32BE(valueOffset) * 0x100000000 +
+				trafScope.readUInt32BE(valueOffset + 4);
 		} else {
-			result.baseDecodeTimeTicks = moofScope.readUInt32BE(valueOffset);
+			result.baseDecodeTimeTicks = trafScope.readUInt32BE(valueOffset);
 		}
 	}
 
-	const trun = findTopLevelBox(moofScope, "trun");
+	const trun = findTopLevelBox(trafScope, "trun");
 	if (trun) {
-		const flags = moofScope.readUInt16BE(trun.start + 1);
-		const sampleCount = moofScope.readUInt32BE(trun.start + 4);
+		const flags = trafScope.readUInt16BE(trun.start + 1);
+		const sampleCount = trafScope.readUInt32BE(trun.start + 4);
 		const sampleDurationPresent = (flags & 0x000100) !== 0;
 		const sampleSizePresent = (flags & 0x000200) !== 0;
 		const sampleFlagsPresent = (flags & 0x000400) !== 0;
 		const sampleCtsPresent = (flags & 0x000800) !== 0;
 		const perSample = 4 * (Number(sampleDurationPresent) + Number(sampleSizePresent) + Number(sampleFlagsPresent) + Number(sampleCtsPresent));
-		let total = 0;
-		let off = trun.start + 8;
+		// data_offset is present when flag 0x1 is set; it precedes the sample array.
+		let off = trun.start + 8 + ((flags & 0x000001) ? 4 : 0);
 		if (sampleDurationPresent && perSample > 0) {
+			let total = 0;
 			for (let i = 0; i < sampleCount; i++) {
-				if (off + 4 > moofScope.length) break;
-				total += moofScope.readUInt32BE(off);
+				if (off + 4 > trafScope.length) break;
+				total += trafScope.readUInt32BE(off);
 				off += perSample;
 			}
 			result.durationTicks = total;
@@ -153,19 +193,37 @@ export function getFragmentTiming(fragment: Buffer): FragmentTiming {
 	return result;
 }
 
+export interface TimelineEntry {
+	startMs: number;
+	durationMs: number;
+}
+
 export interface ParsedInit {
 	timescale?: number;
 	/** per-segment duration in ms, derived from sidx (averaged) if available */
 	segmentDurationMs?: number;
+	/** per-segment presentation timeline derived from sidx (authoritative) */
+	segmentTimeline?: TimelineEntry[];
 }
 
 export function parseInitSegment(init: Buffer): ParsedInit {
 	const timescale = getTimescale(init);
-	const entries = getSidxEntries(init);
+	const sidx = getSidxInfo(init);
 	let segmentDurationMs: number | undefined;
-	if (timescale && entries.length) {
-		const total = entries.reduce((acc, e) => acc + e.durationTicks, 0);
-		segmentDurationMs = (total / entries.length / timescale) * 1000;
+	let segmentTimeline: TimelineEntry[] | undefined;
+	if (sidx && sidx.timescale && sidx.entries.length) {
+		// Convert through the sidx's OWN timescale. The mvhd timescale is a
+		// different clock and must not be used here.
+		const ts = sidx.timescale;
+		let cumTicks = 0;
+		segmentTimeline = sidx.entries.map((e) => {
+			const startMs = (cumTicks / ts) * 1000;
+			const durationMs = (e.durationTicks / ts) * 1000;
+			cumTicks += e.durationTicks;
+			return { startMs, durationMs };
+		});
+		const totalTicks = sidx.entries.reduce((a, e) => a + e.durationTicks, 0);
+		segmentDurationMs = (totalTicks / sidx.entries.length / ts) * 1000;
 	}
-	return { timescale, segmentDurationMs };
+	return { timescale, segmentDurationMs, segmentTimeline };
 }

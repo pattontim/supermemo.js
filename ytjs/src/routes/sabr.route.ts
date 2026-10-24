@@ -487,12 +487,29 @@ async function waitForSegment(stream: SabrStream, media: SabrMedia, seq: number,
 		// Uses the SAME nominalDurationMs the manifest advertises, so this stays
 		// consistent with the $Number$ dash.js computed to ask for this segment.
 		const kind = media === stream.video ? "video" : "audio";
-		const segStart = (seq - 1) * nominalDurationMs(media, kind);
+		const nominal = nominalDurationMs(media, kind);
+		// Prefer the sidx-derived real start: the manifest now advertises a
+		// SegmentTimeline, so the $Number$ dash.js asks for corresponds to real
+		// presentation time, and the pump must be nudged to that same time.
+		const segStart = media.segmentTimeline?.[seq - 1]?.startMs ?? (seq - 1) * nominal;
 		if (process.env.BG_CENSUS === "1") {
 			const prev = media.segments.get(seq - 1);
+			// Drift diagnostic: nominalPrevStart is where the SegmentTemplate's
+			// $Number$ mapping places the segment dash.js just asked for; realMs is
+			// the fragment's actual moof/tfdt decode time (baseDecodeTimeTicks /
+			// timescale). If these diverge by seconds, the static-timeline rewrite
+			// is justified; if they agree, the canplay failure is elsewhere.
+			const realMs =
+				prev?.baseDecodeTimeTicks !== undefined && media.timescale
+					? (prev.baseDecodeTimeTicks / media.timescale) * 1000
+					: undefined;
 			console.log(
-				`[sabr] seg-${seq} nudge t=${Math.round(segStart)} bufferedEnd=${media.bufferedEndMs()} ` +
-				`prevStart=${prev?.startMs} prevDur=${prev?.durationMs} nominal=${nominalDurationMs(media, kind)}`
+				`[sabr] seg-${seq} nudge t=${Math.round(segStart)} ` +
+				`nominalPrevStart=${(seq - 2) * nominal} ` +
+				`realPrevDecodeMs=${realMs !== undefined ? Math.round(realMs) : "n/a"} ` +
+				`prevStart=${prev?.startMs} prevDur=${prev?.durationMs} ` +
+				`tfdtTicks=${prev?.baseDecodeTimeTicks} timescale=${media.timescale} ` +
+				`bufferedEnd=${media.bufferedEndMs()} nominal=${nominal}`
 			);
 		}
 		stream.nudge(segStart);
@@ -578,11 +595,11 @@ router.get("/sabr/:id/audio.m3u8", (req, res) => servePlaylist(req, res, "audio"
  * the static manifest is complete before dash.js sees it.
  */
 /**
- * Nominal per-segment duration used in the SegmentTemplate. SABR `duration_ms`
- * values are not always uniform (the first few segments can differ), so we use
- * the mean of what we've seen and clamp it to a sane range. This only drives
- * the $Number$ -> presentation-time mapping for seeking; dash.js places decoded
- * fragments by their own moof timestamps, so mild drift doesn't break playback.
+ * Nominal per-segment duration, used only as a fallback when the init segment
+ * carries no sidx. SABR `duration_ms` values are NOT uniform (measured: 31
+ * distinct values, 3.0-7.0s on one video), so a single constant accumulates
+ * huge drift (+8995ms by segment 17). media.segmentTimeline is authoritative and
+ * is preferred everywhere it exists.
  */
 function nominalDurationMs(media: SabrMedia, kind: "video" | "audio"): number {
 	const seqs = media.availableSegments();
@@ -598,16 +615,21 @@ function nominalDurationMs(media: SabrMedia, kind: "video" | "audio"): number {
 /**
  * DASH Representation for one SABR track.
  *
- * Uses a STATIC SegmentTemplate with a nominal `duration` (no SegmentTimeline).
- * dash.js computes every $Number$ segment URL from `duration` up to the
- * declared mediaPresentationDuration, so it fetches segments on demand as the
- * player advances — which is what SABR needs. A static SegmentList only
- * declares the segments we already hold, so dash.js stops after that window;
- * and a dynamic SegmentTimeline anchors playback to wall-clock "now", which
- * finds no segments in the media-ordered SABR window. Both were tested; only
- * this shape plays.
+ * Emits a type="static" SegmentTimeline built from the init segment's sidx when
+ * available, otherwise falls back to a nominal-duration SegmentTemplate.
+ *
+ * The timeline is the correct shape: dash.js maps $Number$=N to the Nth <S> and
+ * derives its presentation time from the accumulated <S> durations, which match
+ * the fragments' real moof/tfdt decode times. The old single-`duration`
+ * SegmentTemplate assumed uniform segments; real SABR durations vary 3.0-7.0s,
+ * so by segment 17 the template position was ~9s ahead of reality and a seek to
+ * 64s requested a segment that actually started at 71.7s — leaving currentTime
+ * in an unbuffered hole so canplay never fired.
+ *
+ * Note: the earlier comment claiming a SegmentTimeline "was tested and didn't
+ * play" conflated it with type="dynamic" (wall-clock anchored, which finds
+ * nothing in a media-ordered VOD window). A type="static" timeline is fine.
  *  - startNumber="1": $Number$=1 -> seg-<kind>-1.m4s (SABR seq is 1-based).
- *  - availabilityTimeOffset="0": dash.js copies ATO verbatim (no defaulting).
  */
 function representationXml(fmt: SabrInputFormat | undefined, media: SabrMedia, kind: "video" | "audio"): string {
 	const codecs = fmt?.codecs ?? (kind === "video" ? "avc1.4d401f" : "mp4a.40.2");
@@ -623,6 +645,37 @@ function representationXml(fmt: SabrInputFormat | undefined, media: SabrMedia, k
 	if (kind === "audio" && fmt?.audioSampleRate) {
 		attrs.push(`audioSamplingRate="${fmt.audioSampleRate}"`);
 	}
+
+	// Authoritative path: a real SegmentTimeline built from the init segment's
+	// sidx, so $Number$=N maps to the Nth <S> and its presentation time equals
+	// the fragment's real moof/tfdt decode time. This eliminates the nominal-vs-
+	// real drift that left currentTime in an unbuffered hole after a seek.
+	// The sidx covers 0 -> end regardless of which segments are buffered, so
+	// no full pump from segment 1 is required.
+	const timeline = media.segmentTimeline;
+	if (timeline && timeline.length) {
+		// Collapse runs of equal durations into d/r to keep the MPD small.
+		let s = "";
+		for (let i = 0; i < timeline.length; ) {
+			const d = Math.round(timeline[i].durationMs);
+			let r = 0;
+			while (i + r + 1 < timeline.length && Math.round(timeline[i + r + 1].durationMs) === d) r++;
+			s += i === 0
+				? `<S t="0" d="${d}"${r ? ` r="${r}"` : ""}/>`
+				: `<S d="${d}"${r ? ` r="${r}"` : ""}/>`;
+			i += r + 1;
+		}
+		return (
+			`<Representation ${attrs.join(" ")}>` +
+			`<SegmentTemplate timescale="1000" startNumber="1" ` +
+			`initialization="init-${kind}.m4s" media="seg-${kind}-$Number$.m4s">` +
+			`<SegmentTimeline>${s}</SegmentTimeline>` +
+			`</SegmentTemplate>` +
+			`</Representation>`
+		);
+	}
+
+	// Fallback (no sidx): legacy nominal SegmentTemplate.
 	const duration = nominalDurationMs(media, kind);
 	return (
 		`<Representation ${attrs.join(" ")}>` +
@@ -658,15 +711,21 @@ router.get("/sabr/:id/master.mpd", async (req, res) => {
 			stream.nudge(startMs);
 		}
 
-		// Full media duration (from the watch-page format) so the seekbar spans
-		// the whole video immediately, not just the buffered window.
+		// Full media duration so the seekbar spans the whole video immediately, not
+		// just the buffered window. Prefer the sidx sum so the declared duration
+		// agrees with the last <S> in the timeline; fall back to the watch-page
+		// format duration, then to whatever we have buffered.
+		const timelineTotalMs = Math.max(
+			stream.video.segmentTimeline?.reduce((s, e) => s + e.durationMs, 0) ?? 0,
+			stream.audio.segmentTimeline?.reduce((s, e) => s + e.durationMs, 0) ?? 0
+		);
 		const fullDurationMs =
 			session?.videoFormat?.approxDurationMs ?? session?.audioFormat?.approxDurationMs;
 		const bufferedMs = Math.max(
 			stream.video.availableSegments().reduce((s, n) => s + segmentDurationMs(stream.video, n), 0),
 			stream.audio.availableSegments().reduce((s, n) => s + segmentDurationMs(stream.audio, n), 0)
 		);
-		const durMs = fullDurationMs ?? bufferedMs;
+		const durMs = timelineTotalMs || fullDurationMs || bufferedMs;
 
 		const mpd =
 			`<?xml version="1.0" encoding="utf-8"?>` +

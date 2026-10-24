@@ -24,7 +24,7 @@ import {
 	int32Field, int64Field, boolField, fixed32Field,
 	bytesField, stringField,
 } from "./proto";
-import { parseInitSegment } from "./mp4";
+import { parseInitSegment, getFragmentTiming } from "./mp4";
 import { censusLog } from "../utils/bgCensus";
 
 export interface SabrInputFormat {
@@ -73,6 +73,8 @@ export class SabrMedia {
 	timescale = 1000;
 	/** per-segment duration in ms, derived from sidx if available */
 	segmentDurationMs?: number;
+	/** per-segment presentation timeline from sidx (authoritative for $Number$) */
+	segmentTimeline?: { startMs: number; durationMs: number }[];
 	/** sequence number (1-based, matching TubeReplacer) -> segment */
 	segments = new Map<number, SabrSegment>();
 	/** total number of segments, from FormatInitializationMetadata */
@@ -106,6 +108,7 @@ export class SabrMedia {
 		const parsed = parseInitSegment(data);
 		if (parsed.timescale) this.timescale = parsed.timescale;
 		if (parsed.segmentDurationMs) this.segmentDurationMs = parsed.segmentDurationMs;
+		if (parsed.segmentTimeline?.length) this.segmentTimeline = parsed.segmentTimeline;
 		this.initSegment = data;
 		this.ready = true;
 		this.notify(0);
@@ -743,10 +746,16 @@ export class SabrStream {
 				if (header.isInitSeg) {
 					media.setInitSegment(data);
 				} else {
+					// Parse the fragment's own moof/tfdt timing so we can compare the
+					// SegmentTemplate's $Number$ position against the real decode time
+					// (drift diagnostic; see waitForSegment).
+					const timing = getFragmentTiming(data);
 					media.addSegment(header.sequenceNumber, {
 						data,
 						durationMs: header.durationMs,
 						startMs: header.startMs,
+						baseDecodeTimeTicks: timing.baseDecodeTimeTicks,
+						durationTicks: timing.durationTicks,
 					});
 				}
 				this.progressCounter++;
