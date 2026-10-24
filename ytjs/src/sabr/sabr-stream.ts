@@ -81,8 +81,24 @@ export class SabrMedia {
 	endSegmentNumber?: number;
 	/** end time in ms, from FormatInitializationMetadata */
 	endTimeMs?: number;
+	/** Cached merged coverage intervals; invalidated when a segment arrives. */
+	private intervalsCache?: Array<[number, number]>;
 
 	private pending = new Map<number, Array<() => void>>();
+	/** Registration time (ms) per pending waiter, so stale ones can be dropped. */
+	private pendingAt = new Map<number, number>();
+	/**
+	 * Called when a new waiter registers for a segment we do not have yet.
+	 * The owning stream uses it to wake a parked pump loop (the route nudges
+	 * BEFORE awaiting onSegment, so without this the loop could re-park in the
+	 * window between the nudge and the waiter registration).
+	 */
+	onDemand?: () => void;
+	/** Waiters older than this are considered abandoned (the route's race timed
+	 * out) and no longer count as demand. Kept in sync with the route's
+	 * segment-request give-up (Math.min(timeoutMs, 15000)) so the relay stops
+	 * hitting the server at the same moment the player gives up. */
+	private static readonly PENDING_TTL_MS = 15_000;
 
 	/** Resolves once `seq` (or the init segment for seq 0) has arrived. */
 	onSegment(seq: number): Promise<void> {
@@ -92,11 +108,16 @@ export class SabrMedia {
 			const arr = this.pending.get(seq) ?? [];
 			arr.push(resolve);
 			this.pending.set(seq, arr);
+			this.pendingAt.set(seq, Date.now());
+			// Wake the pump only after the waiter is registered, so the loop
+			// observes the pending demand when it re-evaluates needsData().
+			this.onDemand?.();
 		});
 	}
 
 	private notify(seq: number) {
 		const arr = this.pending.get(seq);
+		this.pendingAt.delete(seq);
 		if (arr) {
 			this.pending.delete(seq);
 			for (const cb of arr) cb();
@@ -111,11 +132,17 @@ export class SabrMedia {
 		if (parsed.segmentTimeline?.length) this.segmentTimeline = parsed.segmentTimeline;
 		this.initSegment = data;
 		this.ready = true;
+		// The nominal duration may have just changed -> coverage cache is stale.
+		this.intervalsCache = undefined;
 		this.notify(0);
 	}
 
 	addSegment(seq: number, segment: SabrSegment) {
-		if (!this.segments.has(seq)) this.segments.set(seq, segment);
+		if (!this.segments.has(seq)) {
+			this.segments.set(seq, segment);
+			// Coverage changed -> the merged-interval cache is stale.
+			this.intervalsCache = undefined;
+		}
 		this.notify(seq);
 	}
 
@@ -146,6 +173,70 @@ export class SabrMedia {
 	}
 
 	/**
+	 * True when the buffer already covers [fromMs, fromMs + aheadMs] of
+	 * presentation time.
+	 *
+	 * Coverage-based (not sequence-count-based) on purpose: the seq math used
+	 * the nominal segment duration, and any mismatch with the real sidx timings
+	 * produced a "toSeq" that never existed, so the window could never be
+	 * considered full and the pump ran forever. This walks the ACTUAL segment
+	 * intervals instead, so a fully buffered track parks the pump.
+	 *
+	 * `endOfStreamReached` short-circuits: once the final segment is buffered
+	 * there is nothing more to fetch, regardless of the window bounds.
+	 */
+	hasWindow(fromMs: number, aheadMs: number): boolean {
+		if (!this.ready) return false;
+		if (this.endOfStreamReached) return true;
+		return this.coversRange(fromMs, fromMs + aheadMs);
+	}
+
+	/**
+	 * True when every millisecond of [fromMs, toMs] falls inside some buffered
+	 * segment. Uses real startMs/durationMs where available and falls back to
+	 * the nominal duration otherwise.
+	 */
+	coversRange(fromMs: number, toMs: number): boolean {
+		if (toMs <= fromMs) return true;
+		const merged = this.mergedIntervals();
+		// Walk the merged intervals and check the range is fully covered.
+		let cursor = fromMs;
+		for (const [s, e] of merged) {
+			if (e <= cursor) continue;
+			if (s > cursor) break; // gap
+			cursor = e;
+			if (cursor >= toMs) return true;
+		}
+		return cursor >= toMs;
+	}
+
+	/**
+	 * Merged, sorted coverage intervals of the buffered segments.
+	 * Cached and invalidated when a new segment arrives, so the pump loop
+	 * does not re-sort every segment on every tick.
+	 */
+	private mergedIntervals(): Array<[number, number]> {
+		if (this.intervalsCache) return this.intervalsCache;
+		const nominal = this.segmentDurationMs && this.segmentDurationMs > 0 ? this.segmentDurationMs : 5000;
+		const intervals: Array<[number, number]> = [];
+		for (const [seq, seg] of this.segments) {
+			const start = seg.startMs ?? (seq - 1) * nominal;
+			const dur = seg.durationMs ?? nominal;
+			if (!Number.isFinite(start) || !Number.isFinite(dur) || dur <= 0) continue;
+			intervals.push([start, start + dur]);
+		}
+		intervals.sort((a, b) => a[0] - b[0]);
+		const merged: Array<[number, number]> = [];
+		for (const [s, e] of intervals) {
+			const last = merged[merged.length - 1];
+			if (last && s <= last[1]) last[1] = Math.max(last[1], e);
+			else merged.push([s, e]);
+		}
+		this.intervalsCache = merged;
+		return merged;
+	}
+
+	/**
 	 * Sequence number (1-based) containing `ms` on the presentation timeline.
 	 * Prefers the sidx-derived timeline (authoritative for $Number$) and falls
 	 * back to the flat segmentDurationMs divisor.
@@ -167,6 +258,28 @@ export class SabrMedia {
 	}
 
 	/**
+	 * True when someone is waiting for a segment we don't have yet.
+	 * Pending waiters are an explicit demand signal (PipePipe's awaitSegment
+	 * only fetches until the requested segment arrives).
+	 */
+	hasPendingDemand(): boolean {
+		const now = Date.now();
+		for (const [seq, arr] of this.pending) {
+			if (!arr.length) continue;
+			const started = this.pendingAt.get(seq) ?? 0;
+			if (now - started > SabrMedia.PENDING_TTL_MS) {
+				// The waiter abandoned the request (the route's race timed out);
+				// it must not keep the pump alive forever.
+				this.pending.delete(seq);
+				this.pendingAt.delete(seq);
+				continue;
+			}
+			if (seq === 0 ? !this.ready : !this.segments.has(seq)) return true;
+		}
+		return false;
+	}
+
+	/**
 	 * googlevideo's Track.endOfStreamReached — the final segment is present.
 	 */
 	get endOfStreamReached(): boolean {
@@ -175,25 +288,6 @@ export class SabrMedia {
 			this.endSegmentNumber > 0 &&
 			this.segments.has(this.endSegmentNumber)
 		);
-	}
-
-	/**
-	 * True when every sequence in [playerTimeMs, playerTimeMs + aheadMs] is
-	 * already buffered. Used as the relay's demand gate so it stops fetching
-	 * when the player is caught up (or at end-of-stream) and idles until a
-	 * segment request nudges it again.
-	 */
-	hasWindow(playerTimeMs: number, aheadMs: number): boolean {
-		if (!this.ready) return false;
-		if (this.endSegmentNumber === undefined) return false; // bounds unknown -> keep pumping
-		const fromSeq = this.sequenceAt(playerTimeMs);
-		const toSeqRaw = this.sequenceAt(playerTimeMs + aheadMs);
-		if (fromSeq === undefined || toSeqRaw === undefined) return false;
-		const toSeq = Math.min(this.endSegmentNumber, Math.max(fromSeq, toSeqRaw));
-		for (let i = fromSeq; i <= toSeq; i++) {
-			if (!this.segments.has(i)) return false;
-		}
-		return true;
 	}
 }
 
@@ -235,6 +329,18 @@ export class SabrStream {
 	private static readonly READAHEAD_MS = Number(process.env.YTJS_SABR_READAHEAD_MS ?? 30000);
 	/** Resolver for the parked (idle) pump loop, if it is parked. */
 	private wake?: () => void;
+	/** progressCounter snapshot from the last pump round (stall detection). */
+	private lastProgressCounter = 0;
+	/** Number of buffered segments at the last pump round (stall detection). */
+	private lastSegmentCount = 0;
+	/** Consecutive pump rounds without any new segment. */
+	private stallRounds = 0;
+	/**
+	 * Consecutive no-progress rounds required before the pump parks. SABR can
+	 * answer across multiple round-trips, so a single duplicate-only round is
+	 * not proof that the read-ahead window is exhausted.
+	 */
+	private static readonly STALL_ROUNDS_BEFORE_PARK = 2;
 
 	constructor(
 		public sabrUrl: string,
@@ -251,7 +357,14 @@ export class SabrStream {
 		public headerOverrides?: Record<string, string>,
 		/** Force a specific cpn (browser-captured replay experiments). */
 		public forcedCpn?: string,
-	) {}
+	) {
+		// A newly registered waiter is explicit demand: wake the parked pump so
+		// it re-evaluates needsData() and keeps fetching until that segment
+		// arrives (PipePipe's awaitSegment semantics).
+		const onDemand = () => this.releaseWake();
+		this.video.onDemand = onDemand;
+		this.audio.onDemand = onDemand;
+	}
 
 	private async maybeRefreshToken() {
 		if (!this.tokenMinter) return;
@@ -281,6 +394,9 @@ export class SabrStream {
 	/** Ask the pump to fetch now (e.g. a segment request found nothing buffered). */
 	nudge(playerTimeMs = this.lastPlayerTimeMs) {
 		this.lastPlayerTimeMs = playerTimeMs;
+		// A new position is a fresh chance to make progress: don't let the
+		// stall counter from the previous position trigger an immediate park.
+		this.stallRounds = 0;
 		console.log(`[sabr] nudge playerTimeMs=${Math.round(playerTimeMs)} wall=${Date.now() - this.playbackStartAt}ms`);
 		this.releaseWake();
 		if (!this.requesting && !this.dead) void this.pumpOnce(playerTimeMs);
@@ -295,15 +411,58 @@ export class SabrStream {
 	}
 
 	/**
-	 * Demand gate: true when either enabled track still has a gap in the
-	 * readahead window around the current player time.
+	 * Demand gate: true when there is outstanding demand we have not satisfied.
+	 *
+	 * Two signals, both required to be quiet:
+	 *  - coverage: the buffer already covers the readahead window around the
+	 *    current player time (or the track is fully buffered / at EOS);
+	 *  - pending: nobody is waiting on a segment that has not arrived.
+	 *
+	 * The coverage check is time-based (real segment intervals), not sequence
+	 * based: a nominal-duration mismatch used to make the window permanently
+	 * "incomplete", so the pump kept running forever while paused.
 	 */
 	private needsData(): boolean {
 		const ahead = SabrStream.READAHEAD_MS;
 		const t = this.lastPlayerTimeMs;
-		const videoDone = this.video.endOfStreamReached || this.video.hasWindow(t, ahead);
-		const audioDone = this.audio.endOfStreamReached || this.audio.hasWindow(t, ahead);
+		if (this.hasPendingDemand()) return true;
+		const videoDone = this.video.hasWindow(t, ahead);
+		const audioDone = this.audio.hasWindow(t, ahead);
 		return !(videoDone && audioDone);
+	}
+
+	/** Either track has an unsatisfied waiter. */
+	private hasPendingDemand(): boolean {
+		return this.video.hasPendingDemand() || this.audio.hasPendingDemand();
+	}
+
+	/**
+	 * True when the last pump round brought nothing NEW *twice in a row*.
+	 *
+	 * The SABR server's read-ahead window is bounded and grows slowly, so a
+	 * paused player whose buffer is ahead of the playhead can otherwise keep
+	 * the pump alive forever without ever satisfying the coverage gate. When
+	 * the pump stops making progress we park and wait for an explicit
+	 * nudge/pending demand.
+	 *
+	 * Counts newly buffered segments rather than raw parts received: the server
+	 * happily re-sends the same segments on every request, so counting parts
+	 * would never detect the stall.
+	 *
+	 * Two consecutive rounds are required: SABR legitimately answers across
+	 * multiple round-trips, so a single duplicate-only round does not mean the
+	 * window is exhausted.
+	 */
+	private stalled(): boolean {
+		const count = this.video.segments.size + this.audio.segments.size;
+		const progressed = count > this.lastSegmentCount;
+		this.lastSegmentCount = count;
+		if (progressed) {
+			this.stallRounds = 0;
+			return false;
+		}
+		this.stallRounds++;
+		return this.stallRounds >= SabrStream.STALL_ROUNDS_BEFORE_PARK;
 	}
 
 	/** Milliseconds since the session started — the value a real player reports
@@ -340,22 +499,50 @@ export class SabrStream {
 		while (!this.dead) {
 			if (this.needsData()) {
 				await this.pumpOnce(this.lastPlayerTimeMs);
+				// If the round produced nothing new, the server's read-ahead
+				// window is exhausted for this position. Park instead of
+				// hammering the server in a loop (this is what kept the network
+				// busy forever while the player was paused).
+				if (this.stalled()) {
+					if (this.hasPendingDemand()) {
+						// Someone is genuinely waiting for a segment we do not have
+						// yet: keep retrying (the server may answer later). The
+						// pending waiter expires via PENDING_TTL_MS, so this cannot
+						// spin forever.
+						console.log(
+							`[sabr] retrying: demand pending but no new media (wall=${Date.now() - this.playbackStartAt}ms)`
+						);
+						const wait = Math.max(0, this.backoffUntil - Date.now(), 1000);
+						await new Promise((r) => setTimeout(r, wait));
+						continue;
+					}
+					console.log(
+						`[sabr] idle: no new media around t=${Math.round(this.lastPlayerTimeMs)}ms (wall=${Date.now() - this.playbackStartAt}ms)`
+					);
+					await this.park();
+					continue;
+				}
 				const wait = Math.max(0, this.backoffUntil - Date.now(), 750);
 				await new Promise((r) => setTimeout(r, wait));
 			} else {
 				console.log(
 					`[sabr] idle: buffer complete around t=${Math.round(this.lastPlayerTimeMs)}ms (wall=${Date.now() - this.playbackStartAt}ms)`
 				);
-				await new Promise<void>((resolve) => {
-					this.wake = resolve;
-					// A stop()/nudge() may have happened between the check and here.
-					if (this.dead) {
-						this.wake = undefined;
-						resolve();
-					}
-				});
+				await this.park();
 			}
 		}
+	}
+
+	/** Park the pump until nudge()/stop()/onDemand() wakes it. */
+	private async park(): Promise<void> {
+		await new Promise<void>((resolve) => {
+			this.wake = resolve;
+			// A stop()/nudge() may have happened between the check and here.
+			if (this.dead) {
+				this.wake = undefined;
+				resolve();
+			}
+		});
 	}
 
 	/** Random per-session client playback nonce, like YouTube's `cpn`. */
