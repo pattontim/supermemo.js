@@ -258,7 +258,7 @@ function pruneSessions() {
 const reaper = setInterval(pruneSessions, 30_000);
 if (typeof reaper.unref === "function") reaper.unref();
 
-async function buildWatchPageStream(videoId: string): Promise<{
+async function buildWatchPageStream(videoId: string, maxHeightOverride?: number): Promise<{
 	stream: SabrStream;
 	videoFormat?: SabrInputFormat;
 	audioFormat?: SabrInputFormat;
@@ -300,7 +300,7 @@ async function buildWatchPageStream(videoId: string): Promise<{
 	// — note it appends width/height but NOT framerate. So profile/level and
 	// resolution are the real discriminators; fps is only a preference here.
 	const IE11_MAX_LEVEL = Number(process.env.YTJS_SABR_MAX_LEVEL ?? 0x28); // H.264 level 4.0
-	const IE11_MAX_HEIGHT = Number(process.env.YTJS_SABR_MAX_HEIGHT ?? 1080);
+	const IE11_MAX_HEIGHT = maxHeightOverride ?? Number(process.env.YTJS_SABR_MAX_HEIGHT ?? 1080);
 	const IE11_PREFERRED_MAX_FPS = 30;
 
 	// avc1.PPCCLL — the last hex byte is level_idc (e.g. "2A" = level 4.2).
@@ -489,8 +489,79 @@ async function getSession(videoId: string): Promise<SabrStream> {
 	return stream;
 }
 
-async function waitForInit(stream: SabrStream, media: SabrMedia, timeoutMs = 45000) {
-	stream.nudge();
+/**
+ * Build or attach to a SABR session for the archive download path.
+ *
+ * Attach-first: if the player already has a live session for this video whose
+ * served video rendition matches the requested height, reuse it. Its segment
+ * cache is then free bytes (a span already watched costs zero network) and we
+ * avoid the second-session StreamProtectionStatus-3 collision documented in
+ * getSession (googlevideo allows ONE live session per visitor+video).
+ *
+ * A non-matching height gets a DEDICATED stream pinned to that height, because
+ * a session requests exactly one video itag — its cached segments are the wrong
+ * rendition and cannot be reused.
+ *
+ * `owned` tells the caller whether it may stop() the stream: never stop a
+ * session the player is still using.
+ */
+export async function acquireSabrDownloadStream(
+	videoId: string,
+	maxHeight: number,
+): Promise<{ stream: SabrStream; owned: boolean } | null> {
+	pruneSessions();
+	const live = sessions.get(videoId);
+	if (live && !live.stream.dead) {
+		// Prefer the itag the SERVER actually picked (stream.videoHeight), since
+		// the NEXT_REQUEST_POLICY cookie can substitute a different rendition.
+		const servedHeight = live.stream.videoHeight() ?? live.videoFormat?.height;
+		const exact = servedHeight !== undefined && Math.abs(servedHeight - maxHeight) <= 1;
+		if (exact) {
+			// Keep the session alive for the duration of the download.
+			live.stream.onProgress = () => { live.lastAccess = Date.now(); };
+			live.lastAccess = Date.now();
+			console.log(
+				`[sabr] archive reusing live ${videoId} session at ${servedHeight}p ` +
+				`(${live.stream.video.segments.size}v/${live.stream.audio.segments.size}a cached)`
+			);
+			return { stream: live.stream, owned: false };
+		}
+		console.log(
+			`[sabr] archive wants ${maxHeight}p but live session serves ${servedHeight}p — ` +
+			`building a dedicated download stream (no cache reuse)`
+		);
+	}
+
+	const stream = await buildSabrDownloadStream(videoId, maxHeight);
+	if (!stream) return null;
+	return { stream, owned: true };
+}
+
+/**
+ * Build a dedicated SABR session pinned to a target height, for the archive
+ * download path. Reuses the same watch-page sourcing + IE11 (H.264/AAC) format
+ * pick the playback relay uses, but keys off the requested height instead of
+ * the global YTJS_SABR_MAX_HEIGHT cap.
+ *
+ * The caller owns the returned stream (call stop() when done).
+ */
+export async function buildSabrDownloadStream(
+	videoId: string,
+	maxHeight: number,
+): Promise<SabrStream | null> {
+	const built = await buildWatchPageStream(videoId, maxHeight);
+	if (!built) return null;
+	// Probe the first round-trip the same way getSession does, so a rejected
+	// URL fails here instead of mid-download.
+	await built.stream.pumpOnce(0);
+	if (built.stream.dead) {
+		console.warn(`[sabr] download probe failed for ${videoId} at ${maxHeight}p`);
+		return null;
+	}
+	return built.stream;
+}
+
+async function waitForInit(stream: SabrStream, media: SabrMedia, timeoutMs = 45000) {	stream.nudge();
 	await Promise.race([
 		media.onSegment(0),
 		new Promise((_, rej) => setTimeout(() => rej(new Error("init segment timeout")), timeoutMs)),

@@ -173,6 +173,32 @@ export class SabrMedia {
 	}
 
 	/**
+	 * Contiguous buffered end in ms, tolerant of segments that carry no timing.
+	 *
+	 * `bufferedEndMs()` returns undefined the moment a segment lacks startMs
+	 * (some SABR media headers omit both field 11/12 and the time_range
+	 * fallback), which would pin a download driver's player_time_ms at 0 forever
+	 * — the server then re-serves the same first window indefinitely. Here an
+	 * untimed segment is assumed to follow the previous one, using the sidx
+	 * timeline or the nominal duration, so the reported position keeps advancing.
+	 */
+	contiguousEndMs(): number {
+		const seqs = this.availableSegments();
+		if (!seqs.length || seqs[0] !== 1) return 0;
+		const nominal = this.segmentDurationMs && this.segmentDurationMs > 0 ? this.segmentDurationMs : 5000;
+		let end = 0;
+		for (const s of seqs) {
+			const seg = this.segments.get(s)!;
+			const tl = this.segmentTimeline?.[s - 1];
+			const start = seg.startMs ?? tl?.startMs ?? end;
+			const dur = seg.durationMs ?? tl?.durationMs ?? nominal;
+			if (start > end + 1) break; // real gap
+			end = Math.max(end, start + dur);
+		}
+		return end;
+	}
+
+	/**
 	 * True when the buffer already covers [fromMs, fromMs + aheadMs] of
 	 * presentation time.
 	 *
@@ -310,10 +336,20 @@ export class SabrStream {
 	lastPlayerTimeMs = 0;
 	/** When stop() was called (for post-mortem backoff in the session map). */
 	deadAt?: number;
+	/**
+	 * Invoked after every successful round-trip. The SABR session map uses it to
+	 * refresh its idle timer, so a long run-to-completion download keeping the
+	 * stream busy cannot be reaped out from under the caller.
+	 */
+	onProgress?: () => void;
 
 	private requesting = false;
 	private pumping = false;
 	private tokenMintedAt = Date.now();
+	/** Reactive SP=3 re-mint in flight (guards against a mint storm). */
+	private isReMinting = false;
+	/** Last reactive re-mint attempt (cooldown gate). */
+	private lastReMintAt = 0;
 	// The integrity token TTL is 12h (GenerateIT returns ttl=43200), so a
 	// content-bound PO token does NOT expire in ~60s. Swapping the token
 	// mid-stream makes the server reject the new one (StreamProtectionStatus 3),
@@ -389,6 +425,154 @@ export class SabrStream {
 		this.dead = true;
 		this.deadAt = Date.now();
 		this.releaseWake();
+	}
+
+	/**
+	 * Drive the session to completion and return concatenated init + all
+	 * segments for both tracks.
+	 *
+	 * The SABR server doles out a bounded read-ahead window anchored to
+	 * `player_time_ms` (client_abr_state field 28). A download has no player
+	 * clock feeding it, so the driver must advance that field itself: after each
+	 * round it reports the contiguous buffered END as the player time, which is
+	 * exactly what a real client does as its buffer fills. Pinning the value at 0
+	 * makes the server re-send the same first window forever (identical byte
+	 * counts, no new segments).
+	 *
+	 * Advance by the MIN of both tracks so neither outruns the other and leaves a
+	 * gap — `bufferedEndMs()` stops at the first hole, so a gap would freeze the
+	 * reported position permanently.
+	 *
+	 * Completion is judged by `endOfStreamReached` when the server sends
+	 * FORMAT_INITIALIZATION_METADATA (part 42), and otherwise by contiguous
+	 * coverage reaching the format's advertised duration — some SABR responses
+	 * never carry part 42, so `endSegmentNumber` stays undefined.
+	 *
+	 * Does NOT call stop(): the caller owns the session lifecycle.
+	 *
+	 * `sharedWithPlayer` only softens the polling cadence; the min-buffered-end
+	 * target keeps the window adjacent to what the player is about to need, so
+	 * advancing is safe for a session the player also reads from.
+	 */
+	async downloadToCompletion(
+		timeoutMs = Number(process.env.YTJS_SABR_DOWNLOAD_TIMEOUT_MS ?? 900_000),
+		sharedWithPlayer = false,
+	): Promise<{
+		video: Buffer;
+		audio: Buffer;
+		videoItag: number;
+		audioItag: number;
+	}> {
+		if (!this.pumping) this.start();
+		const deadline = Date.now() + timeoutMs;
+
+		// 1) Init segments. Deliberately NOT waiting for endSegmentNumber here:
+		//    it comes from FORMAT_INITIALIZATION_METADATA, which some sessions
+		//    never send — waiting on it deadlocks the download.
+		this.nudge(0);
+		while ((!this.video.ready || !this.audio.ready) && !this.dead) {
+			if (Date.now() > deadline) throw new Error("sabr download: init timeout");
+			this.nudge(this.lastPlayerTimeMs);
+			await new Promise((r) => setTimeout(r, 200));
+		}
+		if (this.dead) throw new Error("sabr download: stream died before init");
+
+		// 2) Full duration, for the fallback completion test. The sidx-derived
+		//    timeline (from the init segment) is authoritative when present;
+		//    format approxDurationMs and part-42 endTimeMs are the fallbacks.
+		const timelineMs = (m: SabrMedia) =>
+			m.segmentTimeline?.reduce((sum, e) => sum + e.durationMs, 0) ?? 0;
+		const totalMs = Math.max(
+			this.currentVideoFormat()?.approxDurationMs ?? 0,
+			this.currentAudioFormat()?.approxDurationMs ?? 0,
+			this.video.endTimeMs ?? 0,
+			this.audio.endTimeMs ?? 0,
+			timelineMs(this.video),
+			timelineMs(this.audio),
+		);
+		const covered = (m: SabrMedia) => m.contiguousEndMs();
+		const complete = (): boolean => {
+			if (this.video.endOfStreamReached && this.audio.endOfStreamReached) return true;
+			if (totalMs <= 0) return false;
+			return covered(this.video) >= totalMs - 2000 && covered(this.audio) >= totalMs - 2000;
+		};
+
+		// 3) Advance player_time_ms to the contiguous buffered end until both
+		//    tracks are done.
+		const sleepMs = sharedWithPlayer ? 750 : 250;
+		let lastCount = -1;
+		let idleRounds = 0;
+		let lastLogAt = 0;
+		while (!this.dead) {
+			if (complete()) break;
+			if (Date.now() > deadline) {
+				throw new Error(
+					`sabr download: timeout at v=${Math.round(covered(this.video))}ms ` +
+					`a=${Math.round(covered(this.audio))}ms of ${Math.round(totalMs)}ms`
+				);
+			}
+			const next = Math.min(covered(this.video), covered(this.audio));
+			// Never go backwards: the server treats a lower player_time_ms as a
+			// seek and re-serves an earlier window.
+			this.nudge(Math.max(next, this.lastPlayerTimeMs));
+
+			const count = this.video.segments.size + this.audio.segments.size;
+			if (count > lastCount) {
+				lastCount = count;
+				idleRounds = 0;
+				if (Date.now() - lastLogAt >= 10_000) {
+					lastLogAt = Date.now();
+					const pct = totalMs > 0 ? Math.round((next / totalMs) * 100) : -1;
+					console.log(
+						`[sabr] download ${pct >= 0 ? pct + "% " : ""}` +
+						`t=${Math.round(next)}ms/${Math.round(totalMs)}ms ` +
+						`${this.video.segments.size}v/${this.audio.segments.size}a segments`
+					);
+				}
+			} else if (++idleRounds >= 10) {
+				// Ten consecutive rounds with no new segment: the server has
+				// nothing else to give (or the remaining region is unavailable).
+				console.warn(
+					`[sabr] download stalled at ${Math.round(next)}ms ` +
+					`(${this.video.segments.size}v/${this.audio.segments.size}a segments)`
+				);
+				break;
+			}
+			await new Promise((r) => setTimeout(r, sleepMs));
+		}
+		if (this.dead) throw new Error("sabr download: stream died before completion");
+
+		// 4) Refuse a truncated result so the caller can fall back instead of
+		//    saving a short file that still passes the codec check.
+		const vCov = covered(this.video);
+		const aCov = covered(this.audio);
+		if (totalMs > 0 && !complete()) {
+			throw new Error(
+				`sabr download incomplete: v=${Math.round(vCov)}ms a=${Math.round(aCov)}ms ` +
+				`of ${Math.round(totalMs)}ms`
+			);
+		}
+
+		// 5) Concatenate init + segments in sequence order.
+		const concat = (media: SabrMedia): Buffer => {
+			const parts: Buffer[] = [];
+			if (media.initSegment) parts.push(media.initSegment);
+			for (const seq of media.availableSegments()) {
+				const seg = media.segments.get(seq);
+				if (seg) parts.push(seg.data);
+			}
+			return Buffer.concat(parts);
+		};
+		const result = {
+			video: concat(this.video),
+			audio: concat(this.audio),
+			videoItag: this.video.itag,
+			audioItag: this.audio.itag,
+		};
+		if (!result.video.length || !result.audio.length) {
+			throw new Error("sabr download: empty track data");
+		}
+		return result;
 	}
 
 	/** Ask the pump to fetch now (e.g. a segment request found nothing buffered). */
@@ -658,6 +842,7 @@ export class SabrStream {
 			console.error("[sabr] pump error", e);
 		} finally {
 			this.requesting = false;
+			try { this.onProgress?.(); } catch { /* ignore */ }
 			// A nudge that arrived while we were in-flight was persisted to
 			// lastPlayerTimeMs; honour it now instead of waiting for the next
 			// steady-state tick (up to ~750ms).
@@ -771,6 +956,11 @@ export class SabrStream {
 			}
 		}
 		return Buffer.concat(ctx);
+	}
+
+	/** Millisecond height (px) of the video rendition this session is serving. */
+	videoHeight(): number | undefined {
+		return this.currentVideoFormat()?.height;
 	}
 
 	/** The single video format we're currently requesting. */
@@ -924,7 +1114,38 @@ export class SabrStream {
 				const status = Number(getVarint(f, 1) ?? 0);
 				const maxRetries = getVarint(f, 2);
 				console.log(`[sabr] stream protection status: ${status}${maxRetries !== undefined ? ` maxRetries=${maxRetries}` : ""} (poToken=${this.poToken.length}b, age=${Math.round((Date.now() - this.tokenMintedAt) / 1000)}s)`);
-				if (status === 3) this.stop();
+				if (status === 3) {
+					// The server rejected the current (empty/aged) token. Re-mint
+					// reactively and continue instead of killing the stream — this
+					// fixes both the playback relay and the SABR archive download
+					// stalling mid-way. Only one mint at a time, with a cooldown so
+					// a rejected mint cannot loop.
+					if (this.tokenMinter && !this.isReMinting && Date.now() - this.lastReMintAt > 5000) {
+						this.isReMinting = true;
+						this.lastReMintAt = Date.now();
+						void (async () => {
+							try {
+								const minted = await this.tokenMinter!();
+								if (minted?.poToken?.length) {
+									this.poToken = minted.poToken;
+									this.tokenMintedAt = Date.now();
+									console.log(`[sabr] SP=3 re-mint ok (${this.poToken.length}b), continuing`);
+									this.releaseWake();
+								} else {
+									console.error("[sabr] SP=3 re-mint returned empty token, stopping");
+									this.stop();
+								}
+							} catch (e) {
+								console.error("[sabr] SP=3 re-mint failed, stopping", e);
+								this.stop();
+							} finally {
+								this.isReMinting = false;
+							}
+						})();
+					} else if (!this.tokenMinter) {
+						this.stop(); // no way to recover
+					}
+				}
 				break;
 			}
 			case UMP_PART_ID.NEXT_REQUEST_POLICY: {

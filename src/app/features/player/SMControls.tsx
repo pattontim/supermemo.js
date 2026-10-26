@@ -470,6 +470,31 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
     var isArchived = Object.keys((p.info && p.info.archived_on) ? p.info.archived_on : []).length !== 0;
 
     /**
+     * Quality selector row for archiving: "current" plus the fixed IE11 rungs.
+     * Each button is a best-effort attempt — the backend tries SABR, then
+     * yt-dlp, and alerts on failure so the user can pick another quality.
+     */
+    function archiveQualityButtons(): JSX.Element {
+        var qualities = ["current", "360p", "480p", "720p", "1080p"];
+        return (
+            <div style={{ display: "flex", flexWrap: "wrap", padding: "2px 8px 4px" }}>
+                {qualities.map(function (q) {
+                    return (
+                        <div
+                            key={q}
+                            style={{ ...menuItem, padding: "4px 6px", fontSize: 11 }}
+                            onClick={function () { p.onArchive(q); }}
+                        >
+                            {q === "current" ? "Current" : q}
+                            {archiveSpinner(q)}
+                        </div>
+                    );
+                })}
+            </div>
+        );
+    }
+
+    /**
      * A boolean-setting row with a sliding on/off toggle. Reads the raw
      * localStorage value (the same contract useLocalStorage writes) and toggles
      * it, then dispatches smstorage:<key> so live hooks update, and bumps tickN
@@ -1152,8 +1177,9 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
                                       Re-archive captions{archiveSpinner("captions")}
                                   </div>
                                 : <div style={menuItem} onClick={function () { p.onArchive(); }}>
-                                      Archive (best){archiveSpinner("best")}
+                                      Archive: {archiveSpinner("best")}
                                   </div>}
+                            {!isArchived ? archiveQualityButtons() : null}
                             {!isArchived && p.info && p.info.file_formats && Object.keys(p.info.file_formats).length !== 0
                                 ? Object.keys(p.info.file_formats).map(function (itagMime) {
                                       var f = (p.info as ArchiveInfo).file_formats[itagMime];
@@ -1191,8 +1217,9 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
                                       Re-archive captions{archiveSpinner("captions")}
                                   </div>
                                 : <div style={menuItem} onClick={function () { p.onArchive(); }}>
-                                      Archive (best){archiveSpinner("best")}
+                                      Archive: {archiveSpinner("best")}
                                   </div>}
+                            {!isArchived ? archiveQualityButtons() : null}
                         </div>
                     ) : null}
 

@@ -1310,6 +1310,20 @@ Description:\n${archiveInfo.description}
   }
 
   /**
+   * Resolves the "current" archive quality to a concrete height label by
+   * reading the active DASH video quality. Falls back to "best" when there is
+   * no DASH player (e.g. an archived mp4 source).
+   */
+  function resolveCurrentQuality(): string {
+    const player = ref.current?.getInternalPlayer('dash');
+    if (!player) return "best";
+    const idx = player.getQualityFor('video');
+    const list = player.getBitrateInfoListFor('video');
+    const height = list && list[idx] ? list[idx].height : undefined;
+    return height ? height + "p" : "best";
+  }
+
+  /**
    * Archives the current video (lifted from the old Archive accordion).
    * Requests the backend archive endpoint with the requested quality and
    * options; defaults mirror the accordion's Best / captions behaviour.
@@ -1326,9 +1340,13 @@ Description:\n${archiveInfo.description}
     const archivingKey = quality ? quality : (overwrite && !video && captions) ? "captions" : "best";
     setArchivingId(archivingKey);
 
+    // Keep the spinner keyed on what the user clicked, but send a concrete
+    // height ("current" is meaningless to the backend quality mapping).
+    const resolvedQuality = quality === "current" ? resolveCurrentQuality() : quality;
+
     const archiveReq = new XMLHttpRequest();
     const archiveUrl = new URL("http://" + ytjsHost + "/archive/" + archiveId);
-    video && archiveUrl.searchParams.append("quality", quality ?? "best");
+    video && archiveUrl.searchParams.append("quality", resolvedQuality ?? "best");
     archiveUrl.searchParams.append("video", `${video}`);
     archiveUrl.searchParams.append("captions", `${captions}`);
     overwrite && archiveUrl.searchParams.append("overwrite", "true");

@@ -16,6 +16,8 @@ import { IE11_ITAG_PRESETS, IE11Quality, YtdlpService } from "../services/ytdlp.
 import { deepCopy } from "../utils/lib";
 import { FFmpegService } from "../services/ffmpeg.service";
 import { normalizeCaptions } from "../utils/caption-cleanup";
+import { acquireSabrDownloadStream } from "./sabr.route";
+import type { SabrStream } from "../sabr/sabr-stream";
 
 const router = Router();
 
@@ -306,8 +308,101 @@ router.get("/archive/:v_id", async (req, res) => {
 		const quality = (req.query.quality as IE11Quality) || "360p";
 		let videoDownloadSuccess = false;
 
-		try {
-			if (downloadStrategy === "ytdlp") {
+		// SABR is opt-in, gated exactly like the playback relay (stream.route.ts):
+		// ?sabr=1 or YTJS_STREAM_SABR=1. With the flag off this whole block is
+		// skipped and the legacy standard/ytdlp branches below run unchanged.
+		const sabrEnabled = req.query.sabr === "1" || process.env.YTJS_STREAM_SABR === "1";
+		/** Whether the SABR attempt was actually made (drives the fallback choice). */
+		let sabrAttempted = false;
+
+		// Success means "an IE11-playable file was saved" (H.264 + AAC), not just
+		// "bytes were written". ffprobe ships with ffmpeg; if it is missing the
+		// check degrades to best-effort (accept) rather than failing everything.
+		const ffprobeAvailable = await FFmpegService.isFFprobeAvailable();
+		const verifyIE11 = async (filePath: string): Promise<boolean> =>
+			!ffprobeAvailable || (await FFmpegService.isIE11Compatible(filePath));
+
+		if (sabrEnabled && downloadStrategy !== "ytdlp") {
+			const heightByQuality: Record<string, number> = {
+				"360p": 360, "480p": 480, "720p": 720, "1080p": 1080,
+			};
+			const maxHeight = heightByQuality[quality] ?? 1080;
+			let sabrStream: SabrStream | undefined;
+			let sabrOwned = false;
+			try {
+				sabrAttempted = true;
+				console.log(`[Video] Attempting SABR download at ${quality} (maxHeight=${maxHeight})`);
+				const acquired = await acquireSabrDownloadStream(v_id, maxHeight);
+				if (!acquired) throw new Error("could not build SABR session");
+				sabrStream = acquired.stream;
+				sabrOwned = acquired.owned;
+				if (!sabrOwned) {
+					// Reused player session: its buffered segments cost nothing, and
+					// the pump only fetches what the player has not reached yet.
+					console.log(`[Video] attaching to live SABR session (partial cache reuse)`);
+				}
+
+				const dl = await sabrStream.downloadToCompletion(undefined, !sabrOwned);
+				const combinedItag = `${dl.videoItag}+${dl.audioItag}`;
+				const outputFile = combinedItag + "." + archiveContainer;
+				const outputPath = path.join(archiveEntryDir, outputFile);
+				const tempVideoPath = path.join(archiveEntryDir, `temp-sabr-video-${Date.now()}.mp4`);
+				const tempAudioPath = path.join(archiveEntryDir, `temp-sabr-audio-${Date.now()}.mp4`);
+
+				writeFileSync(tempVideoPath, dl.video);
+				writeFileSync(tempAudioPath, dl.audio);
+
+				const fFmpegService = new FFmpegService();
+				await fFmpegService.mergeAV(tempAudioPath, tempVideoPath, outputPath);
+
+				try {
+					if (existsSync(tempVideoPath)) unlinkSync(tempVideoPath);
+					if (existsSync(tempAudioPath)) unlinkSync(tempAudioPath);
+				} catch (error) {
+					console.warn(`[FFmpeg] Temporary file cleanup error: ${error}`);
+				}
+
+				// Only count the download as successful if the saved file is
+				// actually IE11-playable (H.264 + AAC). mergeAV is `-c copy`, so
+				// it guarantees nothing about codecs.
+				if (!(await verifyIE11(outputPath))) {
+					try { if (existsSync(outputPath)) unlinkSync(outputPath); } catch { /* ignore */ }
+					throw new Error("SABR output is not IE11-compatible (need H.264 + AAC)");
+				}
+
+				const fileFormats: { [key: string]: Format; } = {};
+				fileFormats[outputFile] = {
+					itag: combinedItag,
+					mime_type: "video/mp4",
+					quality_label: quality,
+					has_video: true,
+					has_audio: true,
+					last_modified: new Date(),
+					last_modified_ms: Date.now(),
+				} as unknown as Format;
+				newInfo.file_formats = fileFormats;
+				videoDownloadSuccess = true;
+				console.log(`[Video] SABR download completed successfully (${combinedItag})`);
+			} catch (error) {
+				console.warn(`[Video] SABR download failed, falling back: ${error}`);
+			} finally {
+				// Never stop a session the player still owns — only tear down one
+				// this request created, and release any keep-alive we installed.
+				if (sabrOwned) {
+					try { sabrStream?.stop(); } catch { /* ignore */ }
+				} else if (sabrStream) {
+					sabrStream.onProgress = undefined;
+				}
+			}
+		}
+
+		if (!videoDownloadSuccess) try {
+			// When SABR was attempted and failed, fall back to yt-dlp — which
+			// fetches independently of the deciphered progressive URLs — rather
+			// than to "standard", which cannot serve SABR-only videos (it throws
+			// "No matching formats found" for them).
+			const legacyStrategy = sabrEnabled && sabrAttempted ? "ytdlp" : downloadStrategy;
+			if (legacyStrategy === "ytdlp") {
 				// Use yt-dlp service for download
 				console.log(`[Video] Using yt-dlp strategy for download with quality ${quality}`);
 				
@@ -327,6 +422,11 @@ router.get("/archive/:v_id", async (req, res) => {
 		
 				console.log(`[Video] Downloading to: ${outputPath}`);
 				await ytdlpService.streamToFile(videoUrl, outputPath, options);
+
+				if (!(await verifyIE11(outputPath))) {
+					try { if (existsSync(outputPath)) unlinkSync(outputPath); } catch { /* ignore */ }
+					throw new Error("yt-dlp output is not IE11-compatible (need H.264 + AAC)");
+				}
 				
 				const fileFormats: { [key: string]: Format; } = {};
 				fileFormats[fileNameItag] = {
@@ -339,7 +439,7 @@ router.get("/archive/:v_id", async (req, res) => {
 				newInfo.file_formats = fileFormats;
 				videoDownloadSuccess = true;
 				console.log(`[Video] yt-dlp download completed successfully`);
-			} else if (downloadStrategy === "standard") {
+			} else if (legacyStrategy === "standard") {
 				// Use standard YouTubei method for download
 				console.log(`[Video] Using standard strategy for download with quality ${quality}`);
 				
@@ -371,7 +471,19 @@ router.get("/archive/:v_id", async (req, res) => {
 					for await (const chunk of Utils.streamToIterable(stream)) {
 						file.write(chunk);
 					}
-					file.close();
+					// Wait for the descriptor to flush before probing, otherwise
+					// ffprobe can see a truncated file and reject valid output.
+					await new Promise<void>((resolve, reject) => {
+						file.on("error", reject);
+						file.end(() => { file.removeAllListeners(); resolve(); });
+					});
+
+					// "best muxed mp4" is not guaranteed to be an IE11-decodable
+					// profile; if it is not, throw so the ffmpeg IE11-preset
+					// fallback below runs instead of reporting a bad artifact.
+					if (!(await verifyIE11(path.join(archiveEntryDir, fileNameItag)))) {
+						throw new Error("standard output is not IE11-compatible (need H.264 + AAC)");
+					}
 
 					const fileFormats: { [key: string]: Format; } = {};
 					fileFormats[format.itag + "." + archiveContainer] = format;
@@ -388,7 +500,8 @@ router.get("/archive/:v_id", async (req, res) => {
 					const outputPath = path.join(archiveEntryDir, fileNameItag);
 
 					// TODO: select based on browser
-					const preset = IE11_ITAG_PRESETS[quality as IE11Quality];
+					const preset = IE11_ITAG_PRESETS[quality as IE11Quality]
+						?? IE11_ITAG_PRESETS["720p"];
 					const audioStream = await videoInfoFull.download({
 						itag: preset.audio
 					});
@@ -456,6 +569,14 @@ router.get("/archive/:v_id", async (req, res) => {
 						}
 					} catch (error) {
 						console.warn(`[FFmpeg] Temporary file cleanup error: ${error}`);
+					}
+
+					// Pinned to an IE11 AVC+AAC preset, but verify the artifact
+					// anyway so a server-substituted stream cannot be reported as
+					// a successful archive.
+					if (!(await verifyIE11(outputPath))) {
+						try { if (existsSync(outputPath)) unlinkSync(outputPath); } catch { /* ignore */ }
+						throw new Error("ffmpeg fallback output is not IE11-compatible (need H.264 + AAC)");
 					}
 
 					const combinedItag = preset.video + "+" + preset.audio;

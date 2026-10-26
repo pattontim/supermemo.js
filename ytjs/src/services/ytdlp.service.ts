@@ -19,6 +19,7 @@ export const IE11_ITAG_PRESETS = {
   "360p": { video: 134, audio: 140, label: "360p (H.264 + AAC)" },
   "480p": { video: 135, audio: 140, label: "480p (H.264 + AAC)" },
   "720p": { video: 136, audio: 140, label: "720p (H.264 + AAC)" },
+  "1080p": { video: 137, audio: 140, label: "1080p (H.264 + AAC)" },
 } as const;
 
 export type IE11Quality = keyof typeof IE11_ITAG_PRESETS;
@@ -276,7 +277,7 @@ export class YtdlpService extends VideoDownloadService {
         "360p": "360p",
         "480p": "480p",
         "720p": "720p",
-        "1080p": "720p", // Fallback to 720p for unsupported qualities
+        "1080p": "1080p",
       };
       const fallbackQuality = heightMap[quality] || "720p";
       const preset = IE11_ITAG_PRESETS[fallbackQuality];

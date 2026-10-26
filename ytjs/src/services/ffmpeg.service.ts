@@ -60,6 +60,80 @@ export class FFmpegService extends VideoDownloadService {
   }
 
   /**
+   * True when an ffprobe binary resolves. Used to decide whether an IE11
+   * codec check is enforceable in this environment (best-effort otherwise).
+   */
+  static async isFFprobeAvailable(ffprobePath: string = "ffprobe"): Promise<boolean> {
+    return new Promise((resolve) => {
+      let proc: ReturnType<typeof spawn>;
+      try {
+        proc = spawn(ffprobePath, ["-version"]);
+      } catch {
+        resolve(false);
+        return;
+      }
+      proc.on("close", (code: number | null) => resolve(code === 0));
+      proc.on("error", () => resolve(false));
+    });
+  }
+
+  /**
+   * Probe a file's video/audio codec names via ffprobe.
+   * Returns null if the probe fails (missing binary, unreadable file, ...).
+   */
+  static async probeCodecs(
+    filePath: string,
+    ffprobePath: string = "ffprobe"
+  ): Promise<{ video?: string; audio?: string } | null> {
+    return new Promise((resolve) => {
+      let proc: ReturnType<typeof spawn>;
+      try {
+        proc = spawn(ffprobePath, [
+          "-v", "error",
+          "-show_entries", "stream=codec_type,codec_name",
+          "-of", "json",
+          filePath,
+        ]);
+      } catch {
+        resolve(null);
+        return;
+      }
+      let out = "";
+      proc.stdout?.on("data", (d: Buffer) => { out += d.toString(); });
+      proc.on("close", (code: number | null) => {
+        if (code !== 0) return resolve(null);
+        try {
+          const streams = (JSON.parse(out).streams ?? []) as Array<{ codec_type: string; codec_name: string; }>;
+          resolve({
+            video: streams.find((s) => s.codec_type === "video")?.codec_name,
+            audio: streams.find((s) => s.codec_type === "audio")?.codec_name,
+          });
+        } catch {
+          resolve(null);
+        }
+      });
+      proc.on("error", () => resolve(null));
+    });
+  }
+
+  /**
+   * True only when the file is H.264 (avc) video + AAC audio — the IE11
+   * contract. mergeAV is a plain `-c copy` remux, so it guarantees nothing
+   * about codecs: this is the check that decides whether an archive attempt
+   * actually produced a usable artifact.
+   */
+  static async isIE11Compatible(
+    filePath: string,
+    ffprobePath: string = "ffprobe"
+  ): Promise<boolean> {
+    const codecs = await FFmpegService.probeCodecs(filePath, ffprobePath);
+    if (!codecs) return false;
+    const videoOk = !!codecs.video && /^(h264|avc)/.test(codecs.video);
+    const audioOk = !!codecs.audio && /^aac/.test(codecs.audio);
+    return videoOk && audioOk;
+  }
+
+  /**
    * Download video by converting DASH manifest to MP4
    * @param manifestUrl - URL to the DASH manifest (MPD file)
    * @param options - Download options
