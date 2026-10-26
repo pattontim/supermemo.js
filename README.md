@@ -27,9 +27,30 @@ I now consider this a beta and usable, it won't overwrite your cards under expec
 ### Dependencies
 
 * SuperMemo 18 or 20 (18 is recommended)
-* Windows 
+* Windows (or Linux)
 * NodeJS (install CLI tools via scoop if you don't have it already)
 * pnpm
+* ~1.3 GB of free disk space for the Camoufox browser used for YouTube token minting
+* Linux only: `xvfb` (the default server mode runs Camoufox under a virtual display)
+
+### Installing Camoufox
+
+ytjs mints YouTube tokens by running BotGuard inside a real Camoufox browser, so the browser binary (~1.3 GB) must be downloaded once. After `pnpm install` in the ytjs folder:
+
+    cd ytjs
+    pnpm exec camoufox fetch   # downloads the Camoufox browser
+
+On Linux, install a virtual display so the default (virtual) headless mode works:
+
+    sudo apt install xvfb      # Debian/Ubuntu
+
+Headless modes (set via `YTJS_CAMOUFOX_HEADLESS`):
+
+* `virtual` — Xvfb + software GL (default; `pnpm run start` / `pnpm run dev`)
+* `true` — native headless (`pnpm run start:native`)
+* `false` — headful, shows the window (`pnpm run start:headful`)
+
+The browser profile defaults to `<ytjs>/.cache/camoufox-profile` (override with `YTJS_CAMOUFOX_PROFILE`).
 
 ### Quick start [SM18 only]
 
@@ -42,6 +63,8 @@ I now consider this a beta and usable, it won't overwrite your cards under expec
 * cd to ytjs folder: `cd ytjs`
 
 * run `pnpm install` again to install deps for the ytjs server
+
+* download the Camoufox browser: `pnpm exec camoufox fetch`
 
 * cd to root folder: `cd ..`
 
@@ -90,6 +113,8 @@ Run `pnpm run build` in the root folder
 
 We are capable of loading videos from youtube more quickly. The server does this by running a server with a cached [youtubei.js Innertube](https://github.com/LuanRT/YouTube.js) player and serving the MPD to the player for streaming.
 
+Since 3.0 the stream is relayed via SABR (server-side adaptive bitrate): the player drives the session on demand, so seeking within buffered territory costs no extra server traffic and nothing is streamed while paused. Playback tokens (PO tokens) are minted by running BotGuard's VM inside a persistent, offline Camoufox browser instead of emulating a DOM in Node.
+
 SuperMemo loads a YouTube.htm when video components are loaded. We redirect it to load our own react app directly in SM. Therefore the code is totally extensible. Also, we can hijack the way SM stores YouTube video IDs to store more than just YouTube videos. These IDs are normally only 11 characters. In theory we can store up to 32 characters, which is the limit set by SM. In this data we can store links to other files. Other component types will use this novel technique to extend SuperMemo in an open source way. 
 
 ## Using youtube video archive feature
@@ -98,7 +123,7 @@ You can archive videos and they'll be loaded instead of from youtube. To do this
 
 OR
 
-[RECOMMENDED!!!] Open the Archive Pane and click the button for the qulity you want.
+[RECOMMENDED!!!] Open the player overlay controls and pick a quality for the current video. "Current" archives the rendition height you are already watching.
 
 Videos are stored in <SUPERMEMO_JS_FOLDER>/archive (configurable via the YTJS_ARCHIVE_DIR env var). You can delete folders by ID at any time.
 
@@ -117,6 +142,22 @@ Most recent downtimes:
 > 1 day (2024-07-24), [Fixed 2024-07-25]
 
 > 1 day (2024-07-31), [Fixed 2024-08-01]
+
+> Extended downtime (2026-04-30 to 2026-10-21) — YouTube streaming changes required migrating token minting to Camoufox and adding SABR streaming. [Fixed 2026-10-21]
+
+### Videos stall / buffer forever / SABR issues
+
+This version streams via SABR by default. If videos stall, buffer forever, or refuse to start, you can disable SABR and fall back to the previous DASH path. Edit `ytjs/package.json` and change the `start` (and `dev`) scripts from
+
+    YTJS_STREAM_SABR=1
+
+to
+
+    YTJS_STREAM_SABR=0
+
+then restart the server with `pnpm run ytjs`.
+
+If the server fails at startup with a Camoufox/browser error, make sure you ran `pnpm exec camoufox fetch` (see [Installing Camoufox](#installing-camoufox)) and, on Linux, that `xvfb` is installed.
 
 ### Manual subtitles are not saved / V2 migration
 
@@ -146,11 +187,13 @@ Backup your supermemo collection via the regular process. Archived videos are st
 
 4. run `pnpm install` again to install deps for the ytjs server
 
-5. cd to root folder: `cd ..`
+5. download the Camoufox browser if you don't have it yet: `pnpm exec camoufox fetch`
 
-6. run `pnpm run build` to build the react app that SuperMemo will load
+6. cd to root folder: `cd ..`
 
-7. run `pnpm run ytjs` to start the video server
+7. run `pnpm run build` to build the react app that SuperMemo will load
+
+8. run `pnpm run ytjs` to start the video server
 
 ### One of my extract timestamps wiped!?
 
@@ -214,12 +257,20 @@ Change prefLangLabel '' to whatever lang you want and run a build, eg English, J
     * Archive quality selector
     * Fixes to downloaded subtitles
     * Cleaner sleek UI that fits on one page, expands based on video type
+* 3.0
+    * Migrated YouTube token minting from JSDOM to a real Camoufox browser (requires ~1.3 GB disk; Linux needs `xvfb`)
+    * SABR streaming driven on-demand by the player, with yt-dlp fallback for archiving
+    * SABR-based archiving with IE11-compatible (H.264 + AAC) output verification
+    * Added 1080p archive quality
+    * New Hitchhiker-style overlay controls replacing the old Settings/Archive/ClipTool accordions
+    * Click-to-zoom and mouse-follow zoom (1.5x)
+    * Dual-target (ie11 / webview2) bundle paths
 
 ### Roadmap
 
 * Add Archive component which lets send a video to be archived
-* Archive quality selector
-* Settings page: subtitle settings, auto archive videos, etc.
+* Offline-first playback of archived videos
+* More caption/subtitle settings in the overlay
 
 ## License
 
