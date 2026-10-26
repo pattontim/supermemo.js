@@ -12,6 +12,7 @@ dist/webview2/main*.js*
 dist/webview2/reactPlayer*.js*
 ytjs/dist/archive
 dist/archive
+ytjs/archive
 dist/elements
 */scripts/reactPlayer*.js*
 dist/*.bundle.js

@@ -2,7 +2,7 @@ import os
 import shutil
 
 # Define the path to the root directory
-root_dir = '../../dist/archive'
+root_dir = os.environ.get('YTJS_ARCHIVE_DIR', '../../archive')
 
 # Iterate over all subdirectories in the root directory
 print("Iterating over all subdirectories in the root directory...", root_dir)

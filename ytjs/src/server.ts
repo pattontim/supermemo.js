@@ -83,7 +83,9 @@ export let fullUrl = "localhost" + ":" + port;
 export const fullUrlForClient = "10.0.2.2" + ":" + port;
 export const defaultLocalUrl = "localhost:3000";
 // let port = SERVER_CONFIG.development.port;
-export let archiveDir = "./dist/archive";
+// Archive lives outside dist so a build/clean of dist can never delete it.
+// Override with YTJS_ARCHIVE_DIR in .env (relative to the ytjs folder or absolute).
+export let archiveDir = process.env.YTJS_ARCHIVE_DIR || "./archive";
 export let yti_version = "0.0.0";
 export let archive = {} as Archive;
 export let cache = {} as Cache;
@@ -325,6 +327,25 @@ const setNoCacheHeaders = (
 
 app.use(express.static("./dist"), setNoCacheHeaders);
 app.use(express.static("../dist"), setNoCacheHeaders);
+// The archive now lives outside dist, so it needs an explicit mount.
+// URLs of the form /archive/<v_id>/<file> are emitted by archive.route.ts and
+// stream.route.ts independently of where archiveDir points.
+// Resolved per-request because startServer() may reassign archiveDir to the
+// legacy ./dist/archive location after this module has been loaded.
+// The static handler is cached per resolved path to avoid rebuilding it.
+let archiveStaticHandler: {
+	dir: string;
+	handler: express.RequestHandler;
+} | null = null;
+app.use("/archive", setNoCacheHeaders, (req, res, next) => {
+	if (!archiveStaticHandler || archiveStaticHandler.dir !== archiveDir) {
+		archiveStaticHandler = {
+			dir: archiveDir,
+			handler: express.static(archiveDir),
+		};
+	}
+	archiveStaticHandler.handler(req, res, next);
+});
 
 // Custom middleware to log all requests
 app.use(async (req, res, next) => {
@@ -520,9 +541,39 @@ function startServer() {
 			});
 		}
 
+		// Backwards compatibility: the archive used to live inside dist, where a
+		// rebuild can wipe it. If the old location still has content, keep using
+		// it (load + serve + write) so migration is non-destructive, and warn.
+		const legacyArchiveDir = "./dist/archive";
+		const legacyHasContent =
+			existsSync(legacyArchiveDir) &&
+			readdirSync(legacyArchiveDir).length > 0 &&
+			path.resolve(legacyArchiveDir) !== path.resolve(archiveDir);
+
+		if (legacyHasContent) {
+			console.warn(
+				"\n========================= WARNING =========================\n" +
+					`Archive content found in the OLD, UNSAFE location: ${path.join(
+						process.cwd(),
+						legacyArchiveDir
+					)}\n` +
+					"A rebuild/clean of 'dist' can DELETE your archived videos.\n" +
+					`Please migrate its contents to: ${path.join(
+						process.cwd(),
+						archiveDir
+					)}\n` +
+					"Set YTJS_ARCHIVE_DIR in your .env to customize the location.\n" +
+					"===========================================================\n"
+			);
+			// Keep serving/writing from the legacy location until migrated, so
+			// archive.route.ts (path.join(archiveDir, v_id)) agrees with what we
+			// loaded and what the /archive mount serves.
+			archiveDir = legacyArchiveDir;
+		}
+
 		// TODO support symlink
 		if (!existsSync(archiveDir)) {
-			mkdirSync(archiveDir);
+			mkdirSync(archiveDir, { recursive: true });
 			console.log("created a new archive");
 		} else {
 			const curDir = process.cwd();

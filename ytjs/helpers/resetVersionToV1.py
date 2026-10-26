@@ -14,7 +14,7 @@ print("WARNING: This operation will reset the version to V1 for all directories 
 
 
 # Define the path to the root directory
-root_dir = '../../dist/archive'
+root_dir = os.environ.get('YTJS_ARCHIVE_DIR', '../../archive')
 
 # Iterate over all subdirectories in the root directory
 for dir_path, dir_names, file_names in os.walk(root_dir):

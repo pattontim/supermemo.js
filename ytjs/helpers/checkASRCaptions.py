@@ -1,8 +1,8 @@
 import os
 import json
 
-# Set the path to the parent directory of the dist/archive folders
-parent_dir = os.path.abspath('../../dist/archive')
+# Set the path to the parent directory of the archive folders
+parent_dir = os.path.abspath(os.environ.get('YTJS_ARCHIVE_DIR', '../../archive'))
 
 foundOnlyAlignStartPos = 0
 foundCaptionsJA = 0

@@ -100,7 +100,7 @@ OR
 
 [RECOMMENDED!!!] Open the Archive Pane and click the button for the qulity you want.
 
-Videos are stored in <SUPERMEMO_JS_FOLDER>/dist/archive. You can delete folders by ID at any time.
+Videos are stored in <SUPERMEMO_JS_FOLDER>/archive (configurable via the YTJS_ARCHIVE_DIR env var). You can delete folders by ID at any time.
 
 ## Help
 
@@ -132,7 +132,7 @@ There was a bug in the code that caused ONLY the auto caption to be saved if bot
 
 ### Backup your collection and archive
 
-Backup your supermemo collection via the regular process. Archived videos are stored in <root_folder>/dist/archive, back this up as well.
+Backup your supermemo collection via the regular process. Archived videos are stored in <root_folder>/archive (YTJS_ARCHIVE_DIR overrides this), back this up as well.
 
 ### Updating
 
