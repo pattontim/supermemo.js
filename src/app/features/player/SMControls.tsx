@@ -131,6 +131,8 @@ interface SMControlsProps {
     setSettingsOpen: (b: boolean) => void;
     onFullscreen: () => void;
     qualities: string[];
+    /** Height (string) of the rung dash.js is currently rendering, for the mark. */
+    activeQuality: string | null;
     setResolution: (h: string) => void;
     tracks: { label: string; srclang: string }[];
     activeTrack: string | null;
@@ -1297,12 +1299,12 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
                                 return (
                                     <div
                                         key={q}
-                                        style={menuItem}
+                                        style={{ ...menuItem, fontWeight: p.activeQuality === q ? "bold" : "normal" }}
                                         onClick={function () {
                                             p.setResolution(q);
                                         }}
                                     >
-                                        {q + "p"}
+                                        {p.activeQuality === q ? "\u2713 " : ""}{q + "p"}
                                     </div>
                                 );
                             })}

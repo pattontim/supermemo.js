@@ -358,12 +358,15 @@ function App() {
    * - trackList: caption tracks available on the <video> element.
    * - activeSrclang: srclang of the currently shown caption track (null = off).
    * - qualityHeights: available DASH video heights (strings) for the Quality submenu.
+   * - activeQuality: height (string) of the rung dash.js is currently rendering,
+   *   so the Quality submenu can mark it. null when unknown / non-DASH.
    * - selectedOption: the extract currently mirrored in the overlay/settings list.
    */
   const [smSettingsOpen, setSmSettingsOpen] = useState(false);
   const [trackList, setTrackList] = useState<{ label: string, srclang: string }[]>([]);
   const [activeSrclang, setActiveSrclang] = useState<string | null>(null);
   const [qualityHeights, setQualityHeights] = useState<string[]>([]);
+  const [activeQuality, setActiveQuality] = useState<string | null>(null);
   const [selectedOption, setSelectedOption] = useState<Option | null>(null);
 
   // ============================================================================
@@ -686,7 +689,13 @@ function App() {
     if (!seeking && imposeBoundaries) {
       checkBoundaries()
     }
-      // TODO quality selector
+    if (!seeking) {
+      // Keep the Quality menu honest: dash.js can change rendition at any time
+      // (ABR upshift on start, SABR switch), and `handleProgress` is the one
+      // callback that already runs continuously. `syncActiveQuality` is a no-op
+      // when the value has not changed and swallows API-shape errors.
+      syncActiveQuality();
+    }
     // const dashjs = ref.current.getInternalPlayer('dash')
     // if (dashjs) {
     //   console.log('dashjs', dashjs)
@@ -1227,7 +1236,8 @@ function App() {
   }
 
   /**
-   * Reads the DASH video bitrate list into height strings for the Quality menu.
+   * Reads the DASH video bitrate list into height strings for the Quality menu,
+   * and records which rung is currently active.
    * Safe to call for non-DASH (mp4) sources; leaves the list empty then.
    * @returns {void}
    */
@@ -1235,12 +1245,38 @@ function App() {
     const player = ref.current?.getInternalPlayer('dash');
     if (!player) {
       setQualityHeights([]);
+      setActiveQuality(null);
       return;
     }
     const heights = player.getBitrateInfoListFor('video').map(function (info: { height: any }) {
       return String(info.height);
     });
     setQualityHeights(heights);
+    syncActiveQuality(player);
+  }
+
+  /**
+   * Records the height dash.js is currently rendering, so the Quality submenu
+   * can mark it. Uses `getQualityFor('video')` as an index into
+   * `getBitrateInfoListFor('video')` — the same pairing `resolveCurrentQuality`
+   * uses. Guarded because both are empty until dash.js has a manifest, and an
+   * out-of-range index (e.g. right after a switch) must not throw.
+   *
+   * @param {any} [player] - dash.js instance; looked up when omitted.
+   * @returns {void}
+   */
+  function syncActiveQuality(player?: any) {
+    const p = player || ref.current?.getInternalPlayer('dash');
+    if (!p) return;
+    try {
+      const idx = p.getQualityFor('video');
+      const list = p.getBitrateInfoListFor('video');
+      const height = list && list[idx] ? list[idx].height : undefined;
+      const next = height ? String(height) : null;
+      setActiveQuality(function (prev) { return prev === next ? prev : next; });
+    } catch (e) {
+      /* dash.js not ready — keep the previous value */
+    }
   }
 
   /**
@@ -1468,6 +1504,11 @@ Description:\n${archiveInfo.description}
    * Retrieves available quality levels from dash.js player and sets the specified resolution.
    * Only works with DASH streams; shows alert for archive-only players.
    *
+   * Also records the choice server-side so SABR sessions started later begin at
+   * this height ("set once, continues across sessions"). dash.js's
+   * setQualityFor handles the live switch; the endpoint only matters for future
+   * sessions, so a failure there must not break playback.
+   *
    * @param {string} res - Resolution height to set (e.g., "720" for 720p)
    * @returns {void}
    */
@@ -1478,13 +1519,34 @@ Description:\n${archiveInfo.description}
       return;
     }
 
-    const qualityLevels = player.getBitrateInfoListFor('video').map((info: { height: any; }) => info.height);
-    const level = qualityLevels.indexOf(res)
-    if(!level) {
+    // getBitrateInfoListFor returns heights as NUMBERS, but the selector passes
+    // a string. indexOf with a string never matches -> "quality not found".
+    const wanted = Number(res);
+    const qualityLevels = player.getBitrateInfoListFor('video')
+      .map((info: { height: any; }) => Number(info.height));
+    const level = qualityLevels.indexOf(wanted);
+    // `!level` treated index 0 (the LOWEST rung) as "not found".
+    if (level < 0) {
       window.alert("quality not found")
       return;
     }
     player.setQualityFor('video', level);
+    // Reflect the choice immediately; handleProgress will correct it once
+    // dash.js actually renders the new rung.
+    setActiveQuality(String(wanted));
+
+    // Persist server-side. Fire-and-forget: a missing SABR session or an
+    // archived clip must not surface an error to the user.
+    try {
+      var vId = queryParameters.get('videoid');
+      if (vId && !isNaN(wanted)) {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', "http://" + ytjsHost + "/sabr/" + vId + "/quality?h=" + wanted);
+        xhr.send();
+      }
+    } catch (e) {
+      /* best effort */
+    }
   }
 
   window.addEventListener('beforeunload', function(e) {
@@ -1816,6 +1878,7 @@ Description:\n${archiveInfo.description}
           setSettingsOpen={setSmSettingsOpen}
           onFullscreen={() => setPseudoFullscreen(!pseudoFullscreen)}
           qualities={qualityHeights}
+          activeQuality={activeQuality}
           setResolution={setResolution}
           tracks={trackList}
           activeTrack={activeSrclang}

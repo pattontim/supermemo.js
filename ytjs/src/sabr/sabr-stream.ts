@@ -152,6 +152,31 @@ export class SabrMedia {
 	}
 
 	/**
+	 * Compact description of the sidx-derived timeline, used by the diagnostics
+	 * endpoints. Comparing two renditions' timelines establishes whether SABR
+	 * segments are aligned across itags — if seq N covers the same presentation
+	 * time in every rendition, a multi-Representation MPD can clone one timeline
+	 * onto all of them instead of prefetching every init segment.
+	 */
+	describeTimeline(): {
+		entries: number;
+		totalMs: number;
+		first5: number[];
+		last5: number[];
+		first5Starts: number[];
+	} | null {
+		if (!this.segmentTimeline?.length) return null;
+		const durs = this.segmentTimeline.map((e) => Math.round(e.durationMs));
+		return {
+			entries: durs.length,
+			totalMs: durs.reduce((a, b) => a + b, 0),
+			first5: durs.slice(0, 5),
+			last5: durs.slice(-5),
+			first5Starts: this.segmentTimeline.slice(0, 5).map((e) => Math.round(e.startMs)),
+		};
+	}
+
+	/**
 	 * End (ms) of the contiguous buffered range starting at seq 1, mirroring
 	 * googlevideo's TrackCollection.buffered. Returns undefined if the first
 	 * segment is missing or untimed. This is the value a real player reports as
@@ -339,6 +364,54 @@ export class SabrStream {
 
 	video = new SabrMedia();
 	audio = new SabrMedia();
+	/**
+	 * One SabrMedia per video rendition (itag). The server serves exactly one
+	 * video itag at a time, but each rendition needs its own init segment and
+	 * its own seq -> segment map: sequence numbers collide across itags, and a
+	 * switch back to a previously served rendition replays from cache for free.
+	 *
+	 * `audio` stays a single track — audio switching is out of scope.
+	 */
+	readonly videoTracks = new Map<number, SabrMedia>();
+	/** Itag the server is actually serving (from the playback cookie / part 42). */
+	servedVideoItag = 0;
+	/** Itag we have asked for (field 17). Equals `servedVideoItag` once the
+	 * server confirms; the two diverge transiently during a switch. */
+	private requestedVideoItag?: number;
+	/** When the last user-driven format selection happened, for field 13. */
+	private lastFormatSwitchAt = 0;
+	/**
+	 * Observation state for `probeFormatSwitch`. Deliberately separate from
+	 * `video`/`audio`: the live tracks keep their identity so an in-flight switch
+	 * cannot disturb what the player is reading. Media for the probe target is
+	 * captured here instead of the real track.
+	 */
+	private probe: {
+		active: boolean;
+		targetItag: number;
+		init?: Buffer;
+		segments: Map<number, Buffer>;
+		/** Per-sequence header timing (part 20 fields 11/12/15). */
+		segmentTiming: Map<number, { startMs?: number; durationMs?: number }>;
+		timeline?: { startMs: number; durationMs: number }[];
+		endSeg?: number;
+		endTime?: number;
+		sawSeek: boolean;
+		armedAt: number;
+		expiresAt: number;
+	} = {
+		active: false,
+		targetItag: 0,
+		segments: new Map(),
+		segmentTiming: new Map(),
+		sawSeek: false,
+		armedAt: 0,
+		expiresAt: 0,
+	};
+	private probeFormat?: SabrInputFormat;
+	/** Probe requests issued so far (bounded so a refusal cannot spin forever). */
+	private probeRounds = 0;
+	private static readonly PROBE_MAX_ROUNDS = 15;
 	/** Increments whenever new media arrived — used by wait loops. */
 	progressCounter = 0;
 	/** Last player time we told the server about, for readahead. */
@@ -618,15 +691,25 @@ export class SabrStream {
 	private needsData(): boolean {
 		const ahead = SabrStream.READAHEAD_MS;
 		const t = this.lastPlayerTimeMs;
+		// An armed probe is explicit demand: the server can answer across several
+		// rn round-trips, so a single fruitless response must not park the pump
+		// and produce a false negative. Bounded by PROBE_MAX_ROUNDS.
+		if (this.probeActive() && this.probeRounds < SabrStream.PROBE_MAX_ROUNDS) return true;
 		if (this.hasPendingDemand()) return true;
 		const videoDone = this.video.hasWindow(t, ahead);
 		const audioDone = this.audio.hasWindow(t, ahead);
 		return !(videoDone && audioDone);
 	}
 
-	/** Either track has an unsatisfied waiter. */
+	/** Any track (video rendition or audio) has an unsatisfied waiter. */
 	private hasPendingDemand(): boolean {
-		return this.video.hasPendingDemand() || this.audio.hasPendingDemand();
+		if (this.audio.hasPendingDemand()) return true;
+		// A seg-<itag>-N request waits on that rendition's own track, not on the
+		// currently-served one, so every live video track counts as demand.
+		for (const t of this.videoTracks.values()) {
+			if (t.hasPendingDemand()) return true;
+		}
+		return this.video.hasPendingDemand();
 	}
 
 	/**
@@ -647,7 +730,14 @@ export class SabrStream {
 	 * window is exhausted.
 	 */
 	private stalled(): boolean {
-		const count = this.video.segments.size + this.audio.segments.size;
+		// While probing, "no new live segment" is expected (the server is serving
+		// the probe rendition instead), so never park on that basis.
+		if (this.probeActive() && this.probeRounds < SabrStream.PROBE_MAX_ROUNDS) return false;
+		// Count segments across ALL video tracks: a rendition a switch just
+		// brought in is progress even though the served track did not grow.
+		let count = this.audio.segments.size;
+		for (const t of this.videoTracks.values()) count += t.segments.size;
+		if (this.videoTracks.size === 0) count += this.video.segments.size;
 		const progressed = count > this.lastSegmentCount;
 		this.lastSegmentCount = count;
 		if (progressed) {
@@ -839,9 +929,22 @@ export class SabrStream {
 			}
 			const body = Buffer.from(await res.arrayBuffer());
 			const parts = parseUmp(body);
+			if (this.probeActive()) this.probeRounds++;
 			console.log(`[sabr] response ${res.status}, ${body.length} bytes, parts=[${parts.map((p) => `${p.type}:${p.data.length}`).join(",")}]`);
 			for (const part of parts) {
-				const hexTypes: number[] = [UMP_PART_ID.PLAYBACK_START_POLICY, UMP_PART_ID.RELOAD_PLAYER_RESPONSE, UMP_PART_ID.NEXT_REQUEST_POLICY, UMP_PART_ID.SABR_ERROR, UMP_PART_ID.SABR_CONTEXT_UPDATE, UMP_PART_ID.SABR_CONTEXT_SENDING_POLICY];
+				// Parts that only carry control signals are hex-dumped: on a format
+				// flip these are where the server states its intent (see
+				// handlePart's SABR_SEEK / USTREAMER_SELECTED_MEDIA_STREAM cases).
+				const hexTypes: number[] = [
+					UMP_PART_ID.PLAYBACK_START_POLICY,
+					UMP_PART_ID.RELOAD_PLAYER_RESPONSE,
+					UMP_PART_ID.NEXT_REQUEST_POLICY,
+					UMP_PART_ID.SABR_ERROR,
+					UMP_PART_ID.SABR_CONTEXT_UPDATE,
+					UMP_PART_ID.SABR_CONTEXT_SENDING_POLICY,
+					UMP_PART_ID.SABR_SEEK,
+					UMP_PART_ID.USTREAMER_SELECTED_MEDIA_STREAM,
+				];
 				if (hexTypes.includes(part.type)) {
 					console.log(`[sabr]   part ${part.type} hex=${part.data.toString("hex")}`);
 				}
@@ -972,10 +1075,204 @@ export class SabrStream {
 		return this.currentVideoFormat()?.height;
 	}
 
-	/** The single video format we're currently requesting. */
+	/** Itag the client has most recently asked for (undefined until a switch). */
+	requestedItag(): number | undefined {
+		return this.requestedVideoItag;
+	}
+
+	/** True while a switch is in flight (requested != served). */
+	private switchPending(): boolean {
+		if (this.requestedVideoItag === undefined) return false;
+		return this.requestedVideoItag !== (this.servedVideoItag || this.video.itag);
+	}
+
+	/**
+	 * The SabrMedia for a video itag, created lazily.
+	 *
+	 * Lazy creation matters for the route: the server sends FORMAT_INIT (part
+	 * 42) and the init MEDIA_HEADER before any media for a rendition it is
+	 * switching to, so the track must exist to receive those parts. waitForInit
+	 * then parks on that track's onSegment(0) and is woken by setInitSegment.
+	 */
+	videoTrackFor(itag: number): SabrMedia {
+		let t = this.videoTracks.get(itag);
+		if (!t) {
+			t = new SabrMedia();
+			t.itag = itag;
+			t.onDemand = () => this.releaseWake();
+			this.videoTracks.set(itag, t);
+		}
+		return t;
+	}
+
+	/**
+	 * Which track an incoming media part belongs to.
+	 *
+	 * Classification MUST come from the format list, not from comparing against
+	 * `audio.itag`/`video.itag`: on the very first response both are still 0 (the
+	 * playback cookie has not been decoded yet), so an equality test misfiles the
+	 * audio parts as video renditions and pollutes `videoTracks` with the audio
+	 * itag. Every itag we can be sent is in `formats` — the watch page supplied
+	 * them, and `setVideoFormat` pushes any switch target it is missing.
+	 */
+	private classifyItag(itag: number): "audio" | "video" | undefined {
+		const f = this.formats.find((x) => x.itag === itag);
+		if (f) return f.isAudio ? "audio" : "video";
+		// Unknown itag: fall back to whatever identity the session already has.
+		if (itag === this.audio.itag) return "audio";
+		if (itag === this.servedVideoItag || itag === this.requestedVideoItag) return "video";
+		return undefined;
+	}
+
+	/** The track an itag maps to, or undefined if it is not a known rendition. */
+	private mediaForItag(itag: number): SabrMedia | undefined {
+		const kind = this.classifyItag(itag);
+		if (kind === "audio") return this.audio;
+		if (kind === "video") return this.videoTrackFor(itag);
+		return undefined;
+	}
+
+	/**
+	 * Make `itag` the rendition the server serves, and point `video` at its
+	 * track. Called from the cookie decode and FORMAT_INITIALIZATION_METADATA —
+	 * i.e. only once the SERVER says it is serving this itag, never on request.
+	 */
+	private confirmServed(itag: number): void {
+		if (!itag) return;
+		const t = this.videoTrackFor(itag);
+		const prev = this.servedVideoItag || this.video.itag;
+		this.servedVideoItag = itag;
+		if (this.video !== t) {
+			this.video.onDemand = undefined;
+			this.video = t;
+		}
+		if (prev !== itag) {
+			console.log(
+				`[sabr] serving itag ${itag}` +
+				(this.requestedVideoItag === itag ? " (switch confirmed)" : "")
+			);
+		}
+	}
+
+	/**
+	 * Request a different video rendition mid-session.
+	 *
+	 * Wire shape: the target goes in preferred_video_format_ids (17) ONLY.
+	 * Listing it in initialization_format_ids (2) tells the server its init is
+	 * already held, and the init is then withheld. The live itag stays in field 2
+	 * and is reported as last_video_itag (22).
+	 *
+	 * `source` only affects logging: a "user" switch is sticky (no auto-disarm),
+	 * a "probe" switch is observed and then cancelled by its caller.
+	 *
+	 * Returns false when the itag is not in this session's format list — the
+	 * server would reject it with sabr.no_video_selected.
+	 */
+	setVideoFormat(itag: number, source: "user" | "probe" = "user"): boolean {
+		const fmt = this.formats.find((f) => !f.isAudio && f.itag === itag);
+		if (!fmt) {
+			console.warn(`[sabr] setVideoFormat: itag ${itag} not in session formats`);
+			return false;
+		}
+		const served = this.servedVideoItag || this.video.itag;
+		if (itag === served && this.requestedVideoItag === undefined) {
+			// Already streaming this rendition — nothing to do.
+			return true;
+		}
+		this.requestedVideoItag = itag;
+		this.lastFormatSwitchAt = Date.now();
+		console.log(
+			`[sabr] format switch (${source}): ${served || "?"} -> ${itag} ` +
+			`(${fmt.width}x${fmt.height} ${fmt.codecs})`
+		);
+		// Wake the pump so the next rn carries the new preferred set at once.
+		this.releaseWake();
+		if (!this.requesting && !this.dead) void this.pumpOnce(this.lastPlayerTimeMs);
+		return true;
+	}
+
+	/** Read-only view of the probe bucket (diagnostics). */
+	get probeState() {
+		return this.probe;
+	}
+
+	/** The live video track's sidx timeline (diagnostics). */
+	get videoTimeline() {
+		return this.video.segmentTimeline;
+	}
+
+	/**
+	 * Arm a switch while capturing what the server serves for the target
+	 * rendition into a separate bucket.
+	 *
+	 * This delegates to the real switch path (`setVideoFormat`) — it is not a
+	 * separate wire experiment, just the production path with an observation
+	 * bucket attached, so probing exercises exactly what a user switch does.
+	 */
+	probeFormatSwitch(targetItag: number, formats: SabrInputFormat[], ttlMs = 60_000): void {
+		const fmt =
+			this.formats.find((f) => !f.isAudio && f.itag === targetItag) ??
+			formats.find((f) => !f.isAudio && f.itag === targetItag);
+		if (!fmt) throw new Error(`itag ${targetItag} not available`);
+		// encodeFormatId needs lastModified/xtags, so the format must be known.
+		if (!this.formats.some((f) => f.itag === targetItag)) this.formats.push(fmt);
+		this.probe = {
+			active: true,
+			targetItag,
+			segments: new Map(),
+			segmentTiming: new Map(),
+			sawSeek: false,
+			armedAt: Date.now(),
+			expiresAt: Date.now() + ttlMs,
+		};
+		this.probeFormat = fmt;
+		this.probeRounds = 0;
+		console.log(
+			`[sabr:probe] armed switch -> itag ${targetItag} ` +
+			`(${fmt.codecs} ${fmt.width}x${fmt.height} fps=${fmt.fps} bw=${fmt.bandwidth}) ` +
+			`live=${this.video.itag} ttl=${ttlMs}ms`
+		);
+		this.setVideoFormat(targetItag, "probe");
+	}
+
+	/**
+	 * Disarm the probe. User switches are sticky, so this only clears the
+	 * observation bucket and reverts the request to the served rendition — it
+	 * does not cancel a user-initiated switch.
+	 */
+	probeCancel(reason = "manual"): void {
+		if (!this.probe.active) return;
+		console.log(`[sabr:probe] cancelled (${reason}) target=${this.probe.targetItag}`);
+		this.probe.active = false;
+		this.probeFormat = undefined;
+		// Restore the wire to the served rendition only (unless the server has
+		// already confirmed the target, in which case there is nothing to undo).
+		this.requestedVideoItag = this.servedVideoItag || this.video.itag || undefined;
+		this.releaseWake();
+	}
+
+	/** True when the probe is armed and has not expired. */
+	private probeActive(): boolean {
+		if (!this.probe.active) return false;
+		if (Date.now() > this.probe.expiresAt) {
+			console.log(`[sabr:probe] expired target=${this.probe.targetItag}`);
+			this.probe.active = false;
+			this.probeFormat = undefined;
+			return false;
+		}
+		return true;
+	}
+
+	/**
+	 * The format whose FormatId goes into fields 2/17 as the BASE (served)
+	 * rendition. Before the first cookie decode `video.itag` is still 0, so fall
+	 * back to the requested rendition — otherwise the very first request would
+	 * omit the video FormatId entirely and the server answers with an error.
+	 */
 	private currentVideoFormat(): SabrInputFormat | undefined {
 		return (
-			this.formats.find((f) => !f.isAudio && f.itag === this.video.itag) ??
+			this.formats.find((f) => !f.isAudio && f.itag === (this.servedVideoItag || this.video.itag)) ??
+			this.formats.find((f) => !f.isAudio && f.itag === this.requestedVideoItag) ??
 			this.formats.find((f) => !f.isAudio)
 		);
 	}
@@ -1034,19 +1331,34 @@ export class SabrStream {
 		// these; googlevideo does the same, and it's what makes the server's
 		// nextRequestPolicy targetReadaheadMs grow so it keeps sending.
 		const elapsed = this.elapsedWallMs();
+		// A switch in flight is a manual format selection: report a RECENT
+		// selection and the target height as sticky, which is how a real client
+		// says "the user picked this, stop ABR-ing". Without it the server may
+		// substitute its own pick.
+		const switched = this.switchPending();
+		const switchHeight = switched
+			? (this.formats.find((f) => !f.isAudio && f.itag === this.requestedVideoItag)?.height ?? 0)
+			: 0;
 		const parts: Buffer[] = [
 			// field 13: time_since_last_manual_format_selection_ms (int64).
 			// The live WEB capture showed 173636903198703 — epoch-µs magnitude,
-			// i.e. the "never manually selected" sentinel. Replay at the same
-			// magnitude, recomputed per request (it tracked wall time).
-			int64Field(13, BigInt(Date.now()) * 1000n),
+			// i.e. the "never manually selected" sentinel. A real manual selection
+			// sends a small elapsed value instead.
+			int64Field(
+				13,
+				switched
+					? BigInt(Math.max(1, Date.now() - this.lastFormatSwitchAt))
+					: BigInt(Date.now()) * 1000n
+			),
 			// field 14: last_manual_direction (sint32, zigzag-encoded). The
 			// capture showed raw varint 2 = direction 1. Passing the raw
 			// captured varint is wire-identical to a proper sint32 encode.
+			// NOTE: verified working for a step DOWN (itag 137 -> 134); the
+			// up/down semantics of this field remain unconfirmed.
 			int32Field(14, 2),
 			int32Field(18, 1280), // client_viewport_width
 			int32Field(19, 720), // client_viewport_height
-			int32Field(21, 0), // sticky_resolution
+			int32Field(21, switched ? switchHeight : 0), // sticky_resolution
 			boolField(22, false), // client_viewport_is_flexible
 			int64Field(23, this.bandwidthEstimate), // bandwidth_estimate
 			int64Field(28, currentStreamTimeMs), // player_time_ms
@@ -1083,9 +1395,25 @@ export class SabrStream {
 		const videoId = videoFormat ? this.encodeFormatId(videoFormat) : undefined;
 		const audioId = audioFormat ? this.encodeFormatId(audioFormat) : undefined;
 		const isInit = currentStreamTimeMs === 0 && !this.video.ready && !this.audio.ready;
+		// The rendition we are asking the server to switch TO. It travels in
+		// preferred_video_format_ids (17) only — never in field 2.
+		const targetFormat = this.switchPending()
+			? this.formats.find((f) => !f.isAudio && f.itag === this.requestedVideoItag)
+			: undefined;
+		const targetId = targetFormat ? this.encodeFormatId(targetFormat) : undefined;
 
 		const parts: Buffer[] = [bytesField(1, this.buildClientAbrState(currentStreamTimeMs))];
-		// selected_format_ids (field 2): sent on non-init requests, empty on init.
+		// field 2 = INITIALIZATION_FORMAT_IDS — formats whose init segment we
+		// ALREADY hold, i.e. "do not send me this init again". It is NOT
+		// selected_format_ids (the wire-equivalent of "selected" is 16/17).
+		//
+		// Keeping only the live itags here is what makes a rendition switch
+		// fetchable: listing the target itag in field 2 told the server it was
+		// already initialized, so it (correctly) withheld that rendition's init
+		// segment — the switch then delivered media with no init to append it to.
+		//
+		// Empty on the very first request, which is right for the right reason:
+		// nothing is initialized yet, so every needed init must be sent.
 		if (!isInit && videoId && audioId) {
 			parts.push(bytesField(2, videoId));
 			parts.push(bytesField(2, audioId));
@@ -1096,13 +1424,29 @@ export class SabrStream {
 		// alone. NOTE: measured to REGRESS (status-3 count 13 vs 7 with it off),
 		// so it stays opt-in via YTJS_SABR_BUFFERED_RANGES=1.
 		if (process.env.YTJS_SABR_BUFFERED_RANGES === "1") {
-			const vr = this.encodeBufferedRange(videoFormat, this.video);
+			// Per-track ranges: each rendition's buffered range is reported under
+			// its own FormatId, so a switched-to rendition does not claim the old
+			// one's buffer.
+			for (const [itag, media] of this.videoTracks) {
+				const fmt = this.formats.find((f) => !f.isAudio && f.itag === itag);
+				const vr = this.encodeBufferedRange(fmt, media);
+				if (vr) parts.push(bytesField(3, vr));
+			}
 			const ar = this.encodeBufferedRange(audioFormat, this.audio);
-			if (vr) parts.push(bytesField(3, vr));
 			if (ar) parts.push(bytesField(3, ar));
 		}
-		if (videoId) parts.push(bytesField(17, videoId)); // preferred_video_format_ids
+		// preferred_video_format_ids (17): listing both the live and the target
+		// rendition is what drives a mid-session switch — the server substitutes
+		// on this field alone.
+		if (videoId) parts.push(bytesField(17, videoId));
+		if (targetId) parts.push(bytesField(17, targetId)); // preferred_video_format_ids
 		if (audioId) parts.push(bytesField(16, audioId)); // preferred_audio_format_ids
+		// last_video_itag (22): the honest "I am switching away from this
+		// rendition" signal. Only sent while a switch is in flight so steady
+		// state keeps its exact previous wire shape.
+		if (targetId && this.video.itag) {
+			parts.push(int32Field(22, this.video.itag));
+		}
 		parts.push(bytesField(19, this.buildStreamerContext()));
 		const body = Buffer.concat(parts);
 		if (process.env.BG_CENSUS === "1") {
@@ -1163,13 +1507,34 @@ export class SabrStream {
 				const backoff = getVarint(f, 4);
 				if (cookie) {
 					this.playbackCookie = Buffer.from(cookie);
-					if (this.video.itag === 0) {
-						const cf = decodeFields(cookie);
-						const vfmt = getBytes(cf, 7);
-						const afmt = getBytes(cf, 8);
-						if (vfmt) this.video.itag = Number(getVarint(decodeFields(vfmt), 1) ?? 0);
-						if (afmt) this.audio.itag = Number(getVarint(decodeFields(afmt), 1) ?? 0);
-						console.log(`[sabr] server picked itags: video=${this.video.itag} audio=${this.audio.itag}`);
+					// Decode on EVERY response, not just the first: the server can
+					// substitute a different rendition mid-session, and a silent
+					// substitution is what makes a format flip look like it failed.
+					const cf = decodeFields(cookie);
+					const vfmt = getBytes(cf, 7);
+					const afmt = getBytes(cf, 8);
+					const vItag = vfmt ? Number(getVarint(decodeFields(vfmt), 1) ?? 0) : 0;
+					const aItag = afmt ? Number(getVarint(decodeFields(afmt), 1) ?? 0) : 0;
+					if (vItag && this.probeActive() && vItag !== this.probe.targetItag) {
+						console.log(
+							`[sabr:probe] cookie says video=${vItag} but probe asked ` +
+							`${this.probe.targetItag} (server substituted)`
+						);
+					}
+					if (aItag && !this.audio.itag) this.audio.itag = aItag;
+					if (vItag) {
+						// The cookie is authoritative for "what is the server serving".
+						// First pick, a confirmed switch, and a silent substitution all
+						// land here; `servedVideoItag` lags a request, so a switch's
+						// target is only adopted once the server says so.
+						const wasServed = this.servedVideoItag || this.video.itag;
+						if (vItag !== wasServed) {
+							console.log(`[sabr] cookie: served video ${wasServed || "?"} -> ${vItag}`);
+						}
+						this.confirmServed(vItag);
+						if (wasServed === 0) {
+							console.log(`[sabr] server picked itags: video=${this.video.itag} audio=${this.audio.itag}`);
+						}
 					}
 				}
 				if (backoff !== undefined) this.backoffUntil = Date.now() + Number(backoff);
@@ -1235,8 +1600,13 @@ export class SabrStream {
 			case UMP_PART_ID.MEDIA_HEADER: {
 				const h = this.readMediaHeader(part.data);
 				if (h.isInitSeg) {
-					if (h.itag === this.video.itag && this.video.ready) break;
-					if (h.itag === this.audio.itag && this.audio.ready) break;
+					// Skip an init we already hold for that rendition — but only for
+					// the rendition's OWN track. A switch target has no init yet, so
+					// its init header must be collected.
+					if (this.mediaForItag(h.itag)?.ready) break;
+					if (this.probeActive() && h.itag === this.probe.targetItag) {
+						console.log(`[sabr:probe] init arriving for probe itag ${h.itag}`);
+					}
 				}
 				this.parsingHeaders.set(h.headerId, h);
 				this.parsingDatas.set(h.headerId, []);
@@ -1258,10 +1628,42 @@ export class SabrStream {
 				this.parsingDatas.delete(headerId);
 				if (!header || !chunks) break;
 				const data = Buffer.concat(chunks);
-				const media =
-					header.itag === this.video.itag ? this.video :
-					header.itag === this.audio.itag ? this.audio : undefined;
-				if (!media) break;
+				// While a probe is armed, capture the target rendition into its own
+				// bucket instead of the real track: an observation must not disturb
+				// what the player is currently reading.
+				if (this.probeActive() && header.itag === this.probe.targetItag) {
+					if (header.isInitSeg) {
+						this.probe.init = data;
+						const parsed = parseInitSegment(data);
+						if (parsed.segmentTimeline?.length) {
+							this.probe.timeline = parsed.segmentTimeline;
+						}
+						console.log(
+							`[sabr:probe] captured INIT itag=${header.itag} ${data.length}b ` +
+							`timescale=${parsed.timescale ?? "?"} timelineEntries=${parsed.segmentTimeline?.length ?? 0}`
+						);
+					} else {
+						this.probe.segments.set(header.sequenceNumber, data);
+						this.probe.segmentTiming.set(header.sequenceNumber, {
+							startMs: header.startMs,
+							durationMs: header.durationMs,
+						});
+						console.log(
+							`[sabr:probe] captured SEG ${header.sequenceNumber} itag=${header.itag} ` +
+							`${data.length}b start=${header.startMs ?? "?"} dur=${header.durationMs ?? "?"}`
+						);
+					}
+					this.progressCounter++;
+					break;
+				}
+				const media = this.mediaForItag(header.itag);
+				if (!media) {
+					console.log(
+						`[sabr] unrouted part: itag=${header.itag} seq=${header.sequenceNumber} ` +
+						`init=${header.isInitSeg} ${data.length}b`
+					);
+					break;
+				}
 				if (header.isInitSeg) {
 					media.setInitSegment(data);
 				} else {
@@ -1286,19 +1688,77 @@ export class SabrStream {
 				const itag = fmt ? Number(getVarint(decodeFields(fmt), 1) ?? 0) : 0;
 				const endTime = getVarint(f, 3);
 				const endSeg = getVarint(f, 4);
-				const media =
-					itag === this.video.itag ? this.video :
-					itag === this.audio.itag ? this.audio : undefined;
+				const media = this.mediaForItag(itag);
 				if (media) {
 					if (endSeg !== undefined) media.endSegmentNumber = Number(endSeg);
 					if (endTime !== undefined) media.endTimeMs = Number(endTime);
+					// The server is announcing this rendition: it is (or is about to
+					// be) the served one. This is the primary confirmation signal
+					// alongside the playback cookie. Adopted only when it is the
+					// first pick, already the served rendition, or the target we
+					// actually asked for — so a stray announcement for some other
+					// rendition cannot flip the live track.
+					if (
+						this.classifyItag(itag) === "video" &&
+						itag &&
+						(this.servedVideoItag === 0 || itag === this.video.itag || itag === this.requestedVideoItag)
+					) {
+						this.confirmServed(itag);
+					}
+				} else {
+					// On a format flip this is the server's rendition announcement, so
+					// log it instead of dropping it.
+					console.log(
+						`[sabr:probe] FORMAT_INIT unknown itag=${itag} ` +
+						`endSeg=${endSeg ?? "?"} endTime=${endTime ?? "?"} ` +
+						`hex=${part.data.toString("hex").slice(0, 128)}`
+					);
+					if (this.probeActive() && itag === this.probe.targetItag) {
+						if (endSeg !== undefined) this.probe.endSeg = Number(endSeg);
+						if (endTime !== undefined) this.probe.endTime = Number(endTime);
+					}
 				}
 				break;
 			}
-			default:
-				// SABR_CONTEXT_UPDATE / SABR_CONTEXT_SENDING_POLICY etc. are
-				// ignored — TubeReplacer ignores them and streams fine.
+			case UMP_PART_ID.SABR_SEEK: {
+				// Part 45. A real player re-anchors its buffer position here; smjs
+				// ignores it, and only records that it was seen so a format switch
+				// can be checked for provoking one.
+				console.log(`[sabr:probe] SABR_SEEK ${part.data.length}b hex=${part.data.toString("hex")}`);
+				if (this.probe.active) this.probe.sawSeek = true;
 				break;
+			}
+			case UMP_PART_ID.USTREAMER_SELECTED_MEDIA_STREAM: {
+				// Part 38 — most likely the server telling us which rendition it
+				// actually selected. Decode the FormatIds (field 1 = video, field 2 =
+				// audio) and log the raw bytes either way so the shape can be
+				// corrected from a real capture.
+				const f = decodeFields(part.data);
+				const vfmt = getBytes(f, 1);
+				const afmt = getBytes(f, 2);
+				const readItag = (b?: Buffer): number => {
+					if (!b) return 0;
+					const inner = getBytes(decodeFields(b), 1);
+					const target = inner ?? b;
+					return Number(getVarint(decodeFields(target), 1) ?? 0);
+				};
+				console.log(
+					`[sabr:probe] SELECTED_MEDIA_STREAM videoItag=${readItag(vfmt)} ` +
+					`audioItag=${readItag(afmt)} ${part.data.length}b hex=${part.data.toString("hex").slice(0, 128)}`
+				);
+				break;
+			}
+			default: {
+				// Temporary: log any other unknown part so nothing the server sends
+				// during a format flip is invisible. Remove once probing is done.
+				if (!(Object.values(UMP_PART_ID) as number[]).includes(part.type)) {
+					console.log(
+						`[sabr:probe] UNKNOWN part id=${part.type} ${part.data.length}b ` +
+						`hex=${part.data.toString("hex").slice(0, 256)}`
+					);
+				}
+				break;
+			}
 		}
 	}
 

@@ -89,6 +89,19 @@ export const UMP_PART_ID = {
 	SABR_SEEK: 45,
 	RELOAD_PLAYER_RESPONSE: 46,
 	PLAYBACK_START_POLICY: 47,
+	/**
+	 * 50-56 are the ustreamer config/metadata block that follows the start
+	 * policy. Observed on every response as a fixed trio: 52 carries a short
+	 * config payload (`0a064341676f4151` — a varint field 1 plus a 6-byte
+	 * ca-prefixed blob), 53 carries a varint pair (`08e807120708882710…`).
+	 *
+	 * They are named as a group (not individually) because the individual
+	 * numbering has not been confirmed against googlevideo's enum: 52/53 are
+	 * logged rather than interpreted, and nothing here depends on their shape.
+	 * Do not treat these labels as authoritative.
+	 */
+	USTREAMER_CONFIG: 52,
+	USTREAMER_METADATA: 53,
 	SABR_CONTEXT_UPDATE: 57,
 	STREAM_PROTECTION_STATUS: 58,
 	SABR_CONTEXT_SENDING_POLICY: 59,

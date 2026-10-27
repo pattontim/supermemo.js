@@ -233,11 +233,31 @@ interface Session {
 	videoFormat?: SabrInputFormat;
 	audioFormat?: SabrInputFormat;
 	/**
+	 * Every IE11-safe video rendition the watch page offered. Each one becomes a
+	 * <Representation> in the DASH manifest, and each is switchable at runtime
+	 * via SabrStream.setVideoFormat.
+	 */
+	videoFormats: SabrInputFormat[];
+	/**
 	 * Built from the watch-page player response (no extra getInfo), so the
 	 * serve path can populate cache[v_id] for /archiveInfo.
 	 */
 	videoInfo?: VideoInfo;
 }
+
+/**
+ * Sticky quality preference: the height the user last selected.
+ *
+ * Deliberately global rather than per-video: the request was "set once, it
+ * continues across sessions", and a per-video map would forget it the moment
+ * a different clip is opened. Applies to the INITIAL pick of new sessions via
+ * buildWatchPageStream; live changes go through SabrStream.setVideoFormat.
+ *
+ * In-memory on purpose: it survives player reloads and new sessions within a
+ * server run, which is what "sticky" needs here. It does NOT survive a server
+ * restart — that was considered and rejected.
+ */
+let preferredHeight: number | undefined;
 
 const sessions = new Map<string, Session>();
 const SESSION_IDLE_MS = 5 * 60 * 1000;
@@ -263,6 +283,7 @@ async function buildWatchPageStream(videoId: string, maxHeightOverride?: number)
 	videoFormat?: SabrInputFormat;
 	audioFormat?: SabrInputFormat;
 	videoInfo?: VideoInfo;
+	videoFormats: SabrInputFormat[];
 } | null> {
 	const wp = await getWatchPageSabrInputs(videoId);
 	if (!wp) return null;
@@ -317,7 +338,21 @@ async function buildWatchPageStream(videoId: string, maxHeightOverride?: number)
 	// Highest IE11-safe rung, preferring <=30fps when one exists (60fps rungs
 	// cost bitrate for no benefit on IE11 and are the likeliest to be refused).
 	const safeVideos = wp.formats.filter(ie11SafeVideo);
+	// Every safe rung goes into the session, not just the pick: encodeFormatId
+	// needs lastModified/xtags for each itag the client may switch to, and
+	// buildMediaCapabilities declares their maximum.
+	const videoFormats = safeVideos.length ? safeVideos : wp.formats.filter((f) => !f.isAudio);
+
+	// Sticky quality: honour the stored preference when a rung at or below it
+	// exists, else fall back to the previous default (top safe rung, <=30fps).
+	const pref = preferredHeight;
+	const prefRung = pref !== undefined
+		? [...safeVideos]
+			.sort((a, b) => (b.height ?? 0) - (a.height ?? 0))
+			.find((f) => (f.height ?? 0) <= pref)
+		: undefined;
 	const pickVideo =
+		prefRung ??
 		safeVideos.find((f) => (f.fps ?? 30) <= IE11_PREFERRED_MAX_FPS) ??
 		safeVideos[0] ??
 		// Nothing strictly safe: fall back to the lowest AVC rung.
@@ -325,11 +360,21 @@ async function buildWatchPageStream(videoId: string, maxHeightOverride?: number)
 	const pickAudio = wp.formats.find((f) => f.isAudio && /mp4a/.test(f.mimeType));
 	const videoFormat = pickVideo ?? wp.formats.find((f) => !f.isAudio);
 	const audioFormat = pickAudio ?? wp.formats.find((f) => f.isAudio);
-	const ordered = [videoFormat, audioFormat].filter(Boolean) as SabrInputFormat[];
+	// ALL safe rungs + audio, deduped. The fallback pick can duplicate a rung.
+	const seenItags = new Set<number>();
+	const ordered = [...videoFormats, videoFormat, audioFormat]
+		.filter(Boolean)
+		.filter((f) => {
+			const key = (f as SabrInputFormat).itag;
+			if (seenItags.has(key)) return false;
+			seenItags.add(key);
+			return true;
+		}) as SabrInputFormat[];
 	console.log(
 		`[sabr] IE11 video pick: itag=${videoFormat?.itag} codecs=${videoFormat?.codecs} ` +
 		`fps=${videoFormat?.fps} ${videoFormat?.width}x${videoFormat?.height} ` +
-		`(maxLevel=${IE11_MAX_LEVEL.toString(16)} maxHeight=${IE11_MAX_HEIGHT})`
+		`(maxLevel=${IE11_MAX_LEVEL.toString(16)} maxHeight=${IE11_MAX_HEIGHT}` +
+		`${preferredHeight !== undefined ? ` sticky=${preferredHeight}` : ""})`
 	);
 
 	// Real content-bound PO token so the session survives past the empty-token
@@ -376,7 +421,10 @@ async function buildWatchPageStream(videoId: string, maxHeightOverride?: number)
 		`(${videoFormat?.codecs}) audio=${audioFormat?.itag} (${audioFormat?.codecs}) ` +
 		`poToken=${poToken.length}b`
 	);
-	return { stream, videoFormat, audioFormat, videoInfo };
+	console.log(
+		`[sabr:renditions] ${videoFormats.map((f) => `${f.itag}@${f.height}p/${f.fps ?? "?"}fps`).join(" ")}`
+	);
+	return { stream, videoFormat, audioFormat, videoInfo, videoFormats };
 }
 
 /** Build a watch-page session and confirm the first SABR round-trip succeeds. */
@@ -385,6 +433,7 @@ async function probeWatchPageStream(videoId: string): Promise<{
 	videoFormat?: SabrInputFormat;
 	audioFormat?: SabrInputFormat;
 	videoInfo?: VideoInfo;
+	videoFormats: SabrInputFormat[];
 } | null> {
 	const built = await buildWatchPageStream(videoId);
 	if (!built) return null;
@@ -428,6 +477,8 @@ async function getSession(videoId: string): Promise<SabrStream> {
 	let videoFormat: SabrInputFormat | undefined;
 	let audioFormat: SabrInputFormat | undefined;
 	let videoInfo: VideoInfo | undefined;
+	let candidateFormats: SabrInputFormat[] | undefined;
+	let videoFormats: SabrInputFormat[] | undefined;
 	for (let attempt = 0; attempt < 3 && !stream; attempt++) {
 		try {
 			const built = await probeWatchPageStream(videoId);
@@ -436,6 +487,7 @@ async function getSession(videoId: string): Promise<SabrStream> {
 				videoFormat = built.videoFormat;
 				audioFormat = built.audioFormat;
 				videoInfo = built.videoInfo;
+				videoFormats = built.videoFormats;
 			}
 		} catch (e) {
 			console.error(`[sabr] watchpage attempt ${attempt + 1} failed`, e);
@@ -475,6 +527,8 @@ async function getSession(videoId: string): Promise<SabrStream> {
 			inputs.headers,
 			inputs.cpn,
 		);
+		candidateFormats = inputs.formats.filter((f) => !f.isAudio);
+		videoFormats = candidateFormats;
 	}
 
 	sessions.set(videoId, {
@@ -483,6 +537,7 @@ async function getSession(videoId: string): Promise<SabrStream> {
 		lastAccess: Date.now(),
 		videoFormat,
 		audioFormat,
+		videoFormats: videoFormats ?? (videoFormat ? [videoFormat] : []),
 		videoInfo,
 	});
 	stream.start();
@@ -599,12 +654,17 @@ async function waitForSegment(stream: SabrStream, media: SabrMedia, seq: number,
 		//
 		// Uses the SAME nominalDurationMs the manifest advertises, so this stays
 		// consistent with the $Number$ dash.js computed to ask for this segment.
-		const kind = media === stream.video ? "video" : "audio";
+		const kind = media === stream.audio ? "audio" : "video";
+		// A rendition that has not been served yet has no sidx of its own. Every
+		// itag of a video shares one keyframe grid (segments align with zero
+		// drift and the server reports the same endSeg/endTime for each), so the
+		// served track's timeline is valid for any rendition — and it is
+		// what the manifest advertises for that rep, so $Number$ must map to it.
+		const timeline = media.segmentTimeline?.length
+			? media.segmentTimeline
+			: stream.video.segmentTimeline;
 		const nominal = nominalDurationMs(media, kind);
-		// Prefer the sidx-derived real start: the manifest now advertises a
-		// SegmentTimeline, so the $Number$ dash.js asks for corresponds to real
-		// presentation time, and the pump must be nudged to that same time.
-		const segStart = media.segmentTimeline?.[seq - 1]?.startMs ?? (seq - 1) * nominal;
+		const segStart = timeline?.[seq - 1]?.startMs ?? (seq - 1) * nominal;
 		if (process.env.BG_CENSUS === "1") {
 			const prev = media.segments.get(seq - 1);
 			// Drift diagnostic: nominalPrevStart is where the SegmentTemplate's
@@ -744,20 +804,38 @@ function nominalDurationMs(media: SabrMedia, kind: "video" | "audio"): number {
  * nothing in a media-ordered VOD window). A type="static" timeline is fine.
  *  - startNumber="1": $Number$=1 -> seg-<kind>-1.m4s (SABR seq is 1-based).
  */
-function representationXml(fmt: SabrInputFormat | undefined, media: SabrMedia, kind: "video" | "audio"): string {
+function representationXml(
+	fmt: SabrInputFormat | undefined,
+	media: SabrMedia,
+	kind: "video" | "audio",
+	itag?: number,
+	sharedTimeline?: { startMs: number; durationMs: number }[],
+): string {
 	const codecs = fmt?.codecs ?? (kind === "video" ? "avc1.4d401f" : "mp4a.40.2");
 	const bandwidth = fmt?.bandwidth ?? (kind === "video" ? 1000000 : 128000);
+	// Per-rendition id: dash.js keys Representations by this, so two video reps
+	// MUST differ. Audio keeps its plain id.
+	const id = itag !== undefined ? String(itag) : String(media.itag);
 	const attrs: string[] = [
-		`id="${media.itag}"`,
+		`id="${id}"`,
 		`bandwidth="${bandwidth}"`,
 		`codecs="${codecs}"`,
 	];
 	if (kind === "video" && fmt?.width && fmt?.height) {
 		attrs.push(`width="${fmt.width}"`, `height="${fmt.height}"`);
 	}
+	if (kind === "video" && fmt?.fps) {
+		attrs.push(`frameRate="${fmt.fps}"`);
+	}
 	if (kind === "audio" && fmt?.audioSampleRate) {
 		attrs.push(`audioSamplingRate="${fmt.audioSampleRate}"`);
 	}
+
+	// Per-rendition URLs. Each Representation gets its OWN init and segment
+	// template, because every itag has a distinct init segment (and its own
+	// sidx); reusing one URL across reps would append the wrong init.
+	const initUrl = kind === "audio" ? "init-audio.m4s" : `init-${itag}.m4s`;
+	const mediaUrl = kind === "audio" ? "seg-audio-$Number$.m4s" : `seg-${itag}-$Number$.m4s`;
 
 	// Authoritative path: a real SegmentTimeline built from the init segment's
 	// sidx, so $Number$=N maps to the Nth <S> and its presentation time equals
@@ -765,7 +843,15 @@ function representationXml(fmt: SabrInputFormat | undefined, media: SabrMedia, k
 	// real drift that left currentTime in an unbuffered hole after a seek.
 	// The sidx covers 0 -> end regardless of which segments are buffered, so
 	// no full pump from segment 1 is required.
-	const timeline = media.segmentTimeline;
+	//
+	// A rep that has never been served has no sidx of its own yet. Every
+	// rendition of a video shares one keyframe grid (sidx entries match across
+	// itags, and the server reports the same endSeg/endTime for each), so the
+	// served track's timeline is cloned onto it rather than falling back to the
+	// drifting nominal template.
+	const timeline = media.segmentTimeline?.length
+		? media.segmentTimeline
+		: sharedTimeline;
 	if (timeline && timeline.length) {
 		// Collapse runs of equal durations into d/r to keep the MPD small.
 		let s = "";
@@ -781,25 +867,29 @@ function representationXml(fmt: SabrInputFormat | undefined, media: SabrMedia, k
 		return (
 			`<Representation ${attrs.join(" ")}>` +
 			`<SegmentTemplate timescale="1000" startNumber="1" ` +
-			`initialization="init-${kind}.m4s" media="seg-${kind}-$Number$.m4s">` +
+			`initialization="${initUrl}" media="${mediaUrl}">` +
 			`<SegmentTimeline>${s}</SegmentTimeline>` +
 			`</SegmentTemplate>` +
 			`</Representation>`
 		);
 	}
 
-	// Fallback (no sidx): legacy nominal SegmentTemplate.
+	// Fallback (no sidx anywhere): legacy nominal SegmentTemplate.
 	const duration = nominalDurationMs(media, kind);
 	return (
 		`<Representation ${attrs.join(" ")}>` +
 		`<SegmentTemplate timescale="1000" duration="${duration}" startNumber="1" ` +
-		`initialization="init-${kind}.m4s" media="seg-${kind}-$Number$.m4s" ` +
+		`initialization="${initUrl}" media="${mediaUrl}" ` +
 		`availabilityTimeOffset="0"/>` +
 		`</Representation>`
 	);
 }
 
 router.get("/sabr/:id/master.mpd", async (req, res) => {
+	// Diagnostics: the request stream IS the client-side log (the IE11 webview is
+	// not debuggable). A re-fetched manifest means something reloaded the player;
+	// a healthy type="static" player should ask once.
+	console.log(`[sabr:req] master.mpd id=${req.params.id}${req.query.start ? ` start=${req.query.start}` : ""}`);
 	try {
 		const stream = await getSession(req.params.id);
 		const session = sessions.get(req.params.id);
@@ -849,6 +939,31 @@ router.get("/sabr/:id/master.mpd", async (req, res) => {
 		);
 		const durMs = timelineTotalMs || fullDurationMs || bufferedMs;
 
+		// One <Representation> per IE11-safe rung, lowest first.
+		//
+		// Lowest-first matches YouTube's own manifests and keeps the bitrate
+		// list ascending for dash.js's picker. Every rep shares the served
+		// track's sidx timeline (proven identical across itags), so a rep that
+		// has never been fetched still gets a correct, non-drifting timeline.
+		const servedTimeline = stream.video.segmentTimeline;
+		const reps = (session?.videoFormats?.length
+			? [...session.videoFormats]
+			: session?.videoFormat
+				? [session.videoFormat]
+				: []
+		)
+			.sort((a, b) => (a.height ?? 0) - (b.height ?? 0))
+			.map((f) =>
+				representationXml(
+					f,
+					stream.videoTracks.get(f.itag) ?? stream.video,
+					"video",
+					f.itag,
+					servedTimeline,
+				)
+			)
+			.join("");
+
 		const mpd =
 			`<?xml version="1.0" encoding="utf-8"?>` +
 			`<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" ` +
@@ -856,7 +971,7 @@ router.get("/sabr/:id/master.mpd", async (req, res) => {
 			`mediaPresentationDuration="PT${(durMs / 1000).toFixed(3)}S">` +
 			`<Period id="1">` +
 			`<AdaptationSet mimeType="video/mp4" segmentAlignment="true" startWithSAP="1">` +
-			representationXml(session?.videoFormat, stream.video, "video") +
+			reps +
 			`</AdaptationSet>` +
 			`<AdaptationSet mimeType="audio/mp4" segmentAlignment="true">` +
 			representationXml(session?.audioFormat, stream.audio, "audio") +
@@ -888,27 +1003,79 @@ router.get("/sabr/:id/master.mpd", async (req, res) => {
 	}
 });
 
-router.get("/sabr/:id/init-:kind.m4s", async (req, res) => {
+/**
+ * fMP4 init segment.
+ *
+ * Two shapes so old and new manifests both work:
+ *   init-audio.m4s   -> the audio track
+ *   init-<itag>.m4s  -> that video rendition's init
+ *   init-video.m4s   -> the currently served video rendition (legacy)
+ *
+ * Requesting a video init for a rendition the session is not serving IS the
+ * switch signal: dash.js only asks for a Representation's init when it intends
+ * to append that Representation's media. No step-down/step-up distinction is
+ * needed server-side — the request stream already encodes the timing. A
+ * step-down leaves the player's existing buffer playing while the new
+ * rendition loads; a step-up will ask for the higher init straight away.
+ */
+router.get("/sabr/:id/init-:name.m4s", async (req, res) => {
+	const name = req.params.name;
+	console.log(`[sabr:req] init-${name} id=${req.params.id}`);
 	try {
-		const kind = req.params.kind === "audio" ? "audio" : "video";
 		const stream = await getSession(req.params.id);
-		const media = kind === "video" ? stream.video : stream.audio;
-		if (!media.ready) await waitForInit(stream, media);
-		if (!media.initSegment) return res.status(503).send("no init segment");
-		res.type("video/mp4").send(media.initSegment);
+		if (name === "audio") {
+			if (!stream.audio.ready) await waitForInit(stream, stream.audio);
+			if (!stream.audio.initSegment) return res.status(503).send("no init segment");
+			return res.type("video/mp4").send(stream.audio.initSegment);
+		}
+		// Legacy "video" alias = whatever is currently served.
+		const itag = name === "video" ? stream.servedVideoItag || stream.video.itag : Number(name);
+		if (!Number.isFinite(itag) || itag <= 0) return res.status(400).send("bad init name");
+		if (itag !== (stream.servedVideoItag || stream.video.itag)) {
+			stream.setVideoFormat(itag);
+		}
+		const track = stream.videoTrackFor(itag);
+		if (!track.ready) {
+			// Same pattern as waitForInit for the live track: nudge the pump so a
+			// request round goes out, then park on this track's init.
+			stream.nudge(stream.lastPlayerTimeMs);
+			await waitForInit(stream, track);
+		}
+		if (!track.initSegment) return res.status(503).send("no init segment");
+		res.type("video/mp4").send(track.initSegment);
 	} catch (e) {
 		res.status(503).send(String(e));
 	}
 });
 
+/**
+ * fMP4 media fragment.
+ *   seg-audio-<n>.m4s  -> audio
+ *   seg-<itag>-<n>.m4s -> that video rendition
+ *   seg-video-<n>.m4s  -> the served video rendition (legacy)
+ */
 router.get("/sabr/:id/seg-:kind-:n.m4s", async (req, res) => {
+	console.log(`[sabr:req] seg-${req.params.kind}-${req.params.n} id=${req.params.id}`);
 	let stream: SabrStream | undefined;
 	try {
-		const kind = req.params.kind === "audio" ? "audio" : "video";
+		const kind = req.params.kind;
 		const seq = Number(req.params.n);
 		stream = await getSession(req.params.id);
-		const media = kind === "video" ? stream.video : stream.audio;
-		if (!media.ready) await waitForInit(stream, media);
+		let media: SabrMedia;
+		if (kind === "audio") {
+			media = stream.audio;
+		} else {
+			const itag = kind === "video" ? stream.servedVideoItag || stream.video.itag : Number(kind);
+			if (!Number.isFinite(itag) || itag <= 0) return res.status(400).send("bad segment kind");
+			if (itag !== (stream.servedVideoItag || stream.video.itag)) {
+				stream.setVideoFormat(itag);
+			}
+			media = stream.videoTrackFor(itag);
+		}
+		if (!media.ready) {
+			stream.nudge(stream.lastPlayerTimeMs);
+			await waitForInit(stream, media);
+		}
 		await waitForSegment(stream, media, seq);
 		const seg = media.segments.get(seq);
 		if (!seg) return res.status(404).send("segment not found");
@@ -921,6 +1088,49 @@ router.get("/sabr/:id/seg-:kind-:n.m4s", async (req, res) => {
 		console.warn(`[sabr] seg ${req.params.kind}-${req.params.n} unavailable (${stream?.dead ? "stream dead" : "slow pump"}): ${String(e)}`);
 		res.status(503).send(String(e));
 	}
+});
+
+/**
+ * Sticky quality preference.
+ *
+ *   GET /sabr/quality?h=360   -> set the global preference (future sessions)
+ *   GET /sabr/quality?h=0     -> clear it (back to the default top rung)
+ *   GET /sabr/:id/quality?h=360 -> set it AND flip the live session now
+ *
+ * The global preference is what makes a choice "sticky across sessions": it is
+ * read by buildWatchPageStream when a new session is built. Live switches go
+ * through SabrStream.setVideoFormat, which is what the per-id form calls.
+ * Height is matched to the nearest available rung at or below the request, so
+ * asking for 480 on a video without a 480 ladder still lands somewhere sane.
+ */
+router.get("/sabr/quality", (req, res) => {
+	const h = Number(req.query.h);
+	preferredHeight = Number.isFinite(h) && h > 0 ? h : undefined;
+	console.log(`[sabr] sticky quality = ${preferredHeight ?? "auto"}`);
+	res.json({ preferredHeight: preferredHeight ?? null });
+});
+
+router.get("/sabr/:id/quality", async (req, res) => {
+	const h = Number(req.query.h);
+	if (Number.isFinite(h) && h > 0) preferredHeight = h;
+	const session = sessions.get(req.params.id);
+	if (!session || session.stream.dead) {
+		return res.json({ preferredHeight: preferredHeight ?? null, live: false });
+	}
+	const rungs = [...(session.videoFormats ?? [])].sort(
+		(a, b) => (b.height ?? 0) - (a.height ?? 0)
+	);
+	const requested = Number.isFinite(h) && h > 0 ? h : preferredHeight;
+	const target = requested !== undefined
+		? (rungs.find((f) => (f.height ?? 0) <= requested) ?? rungs[rungs.length - 1])
+		: undefined;
+	const applied = target ? session.stream.setVideoFormat(target.itag) : false;
+	res.json({
+		preferredHeight: preferredHeight ?? null,
+		live: true,
+		itag: target?.itag,
+		applied,
+	});
 });
 
 /**
@@ -975,6 +1185,233 @@ router.get("/sabr-test/:id", async (req, res) => {
 	} catch (e) {
 		res.status(500).send(String(e));
 	}
+});
+
+// ---------------------------------------------------------------------------
+// Format-switch diagnostics (see SabrStream.probeFormatSwitch)
+//
+// The IE11 webview is not debuggable, so every observation has to come from
+// this server. These endpoints drive a LIVE session through a real rendition
+// change and report what googlevideo actually did:
+//   - was the new rendition's init served (MEDIA_HEADER/MEDIA_END, plus
+//     FORMAT_INITIALIZATION_METADATA)? The target must appear in
+//     preferred_video_format_ids only — putting it in
+//     initialization_format_ids withholds its init.
+//   - are the renditions' segment timelines aligned (seq N == same time)?
+//   - does the server answer with SABR_SEEK (45), SELECTED_MEDIA_STREAM (38)
+//     or RELOAD_PLAYER_RESPONSE (46), which are ignored or fatal?
+//
+// Pair this with the [sabr:req] / [sabr:probe] server logs.
+// ---------------------------------------------------------------------------
+
+interface TimelineSummary {
+	entries: number;
+	totalMs: number;
+	first5: number[];
+	last5: number[];
+	first5Starts: number[];
+}
+
+interface TimelineEntryLike {
+	startMs: number;
+	durationMs: number;
+}
+
+/** Compare two sidx timelines (are the renditions aligned?). */
+function compareTimelines(
+	a?: TimelineEntryLike[] | null,
+	b?: TimelineEntryLike[] | null,
+): Record<string, unknown> {
+	if (!a?.length || !b?.length) return { comparable: false };
+	const mismatchedStarts: Array<{ index: number; a: number; b: number; deltaMs: number }> = [];
+	const n = Math.min(a.length, b.length, 50);
+	for (let i = 0; i < n; i++) {
+		const delta = Math.round(b[i].startMs) - Math.round(a[i].startMs);
+		if (Math.abs(delta) > 50) mismatchedStarts.push({ index: i + 1, a: Math.round(a[i].startMs), b: Math.round(b[i].startMs), deltaMs: delta });
+	}
+	const maxDriftMs = a
+		.slice(0, n)
+		.reduce((m, e, i) => Math.max(m, Math.abs(b[i].startMs - e.startMs)), 0);
+	return {
+		comparable: true,
+		comparedEntries: n,
+		aligned: mismatchedStarts.length === 0,
+		maxDriftMs: Math.round(maxDriftMs),
+		mismatchedStarts: mismatchedStarts.slice(0, 10),
+	};
+}
+
+/**
+ * Compare the live rendition's sidx timeline against the probe rendition's
+ * MEDIA_HEADER start times. This works even when the server never sends the
+ * probe rendition's init segment: if seq N starts at the same presentation time
+ * in both renditions, one timeline can be cloned onto every Representation in a
+ * multi-representation MPD.
+ */
+function compareHeaderStarts(
+	liveTimeline: TimelineEntryLike[] | undefined,
+	probeTiming: Map<number, { startMs?: number; durationMs?: number }>,
+): Record<string, unknown> {
+	if (!liveTimeline?.length || probeTiming.size === 0) return { comparable: false };
+	const rows: Array<{ seq: number; liveStartMs: number; probeStartMs: number; deltaMs: number }> = [];
+	for (const [seq, t] of [...probeTiming.entries()].sort((a, b) => a[0] - b[0])) {
+		const live = liveTimeline[seq - 1];
+		if (!live || t.startMs === undefined) continue;
+		rows.push({
+			seq,
+			liveStartMs: Math.round(live.startMs),
+			probeStartMs: Math.round(t.startMs),
+			deltaMs: Math.round(t.startMs - live.startMs),
+		});
+	}
+	if (!rows.length) return { comparable: false };
+	const maxDriftMs = rows.reduce((m, r) => Math.max(m, Math.abs(r.deltaMs)), 0);
+	return {
+		comparable: true,
+		comparedSegments: rows.length,
+		aligned: maxDriftMs <= 50,
+		maxDriftMs,
+		rows,
+	};
+}
+
+/** Baseline dump: what the live session currently holds. Call BEFORE probing. */
+router.get("/sabr/:id/dump", async (req, res) => {
+	const session = sessions.get(req.params.id);
+	if (!session || session.stream.dead) {
+		return res.status(404).json({
+			error: "no live session",
+			hint: "start playback (or fetch master.mpd) first",
+		});
+	}
+	const stream = session.stream;
+	res.json({
+		videoId: req.params.id,
+		requestNumber: stream.requestNumber,
+		liveVideoItag: stream.video.itag,
+		liveAudioItag: stream.audio.itag,
+		servedHeight: stream.videoHeight(),
+		videoEndSegment: stream.video.endSegmentNumber,
+		audioEndSegment: stream.audio.endSegmentNumber,
+		videoSegments: stream.video.availableSegments(),
+		audioSegments: stream.audio.availableSegments(),
+		videoTimeline: (stream.video.describeTimeline?.() ?? null) as TimelineSummary | null,
+		audioTimeline: (stream.audio.describeTimeline?.() ?? null) as TimelineSummary | null,
+		candidateFormats: (session.videoFormats ?? []).map((f) => ({
+			itag: f.itag,
+			height: f.height,
+			width: f.width,
+			fps: f.fps,
+			codecs: f.codecs,
+			bandwidth: f.bandwidth,
+		})),
+		servedVideoItag: stream.servedVideoItag,
+		requestedVideoItag: stream.requestedItag() ?? null,
+		videoTracks: [...stream.videoTracks.entries()].map(([itag, t]) => ({
+			itag,
+			ready: t.ready,
+			segments: t.availableSegments(),
+			initBytes: t.initSegment?.length ?? 0,
+			timeline: t.describeTimeline?.() ?? null,
+		})),
+		preferredHeight: preferredHeight ?? null,
+	});
+});
+
+/**
+ * Drive a rendition switch on the LIVE session and report what came back.
+ *
+ *   GET /sabr/:id/probe-switch?itag=134&wait=25000
+ *
+ * This goes through the same `setVideoFormat` path a user switch uses, so it
+ * exercises production behaviour rather than a parallel experiment. The
+ * rendition change is real and persists; only the captured media goes into a
+ * side bucket instead of the live track, so the report can describe it without
+ * disturbing what the player is reading.
+ *
+ * Check [sabr:req] seg-* lines afterwards to confirm the player kept fetching.
+ */
+router.get("/sabr/:id/probe-switch", async (req, res) => {
+	const session = sessions.get(req.params.id);
+	if (!session || session.stream.dead) {
+		return res.status(404).json({
+			error: "no live session",
+			hint: "start playback first, then probe",
+		});
+	}
+	const targetItag = Number(req.query.itag);
+	if (!Number.isFinite(targetItag) || targetItag <= 0) {
+		return res.status(400).json({ error: "itag query param required" });
+	}
+	const waitMs = Math.min(Math.max(Number(req.query.wait) || 20000, 1000), 60000);
+	const stream = session.stream;
+	const report: Record<string, unknown> = { videoId: req.params.id, targetItag, waitMs };
+
+	try {
+		report.liveVideoItag = stream.video.itag;
+		report.timelineBefore = (stream.video.describeTimeline?.() ?? null) as TimelineSummary | null;
+
+		stream.probeFormatSwitch(targetItag, session.videoFormats ?? [], waitMs + 15000);
+
+		const deadline = Date.now() + waitMs;
+		while (Date.now() < deadline) {
+			const p = stream.probeState;
+			if (p.init || p.segments.size >= 2) break;
+			if (stream.dead) {
+				report.streamDied = true;
+				break;
+			}
+			await new Promise((r) => setTimeout(r, 500));
+		}
+
+		const p = stream.probeState;
+		report.probe = {
+			gotInit: !!p.init,
+			initBytes: p.init?.length ?? 0,
+			segments: [...p.segments.keys()].sort((a, b) => a - b),
+			segmentBytes: [...p.segments.entries()].map(([k, v]) => [k, v.length]),
+			// MEDIA_HEADER timing needs no init segment, so this works even when
+			// the server never sends one for the target rendition.
+			segmentTiming: [...p.segmentTiming.entries()]
+				.sort((a, b) => a[0] - b[0])
+				.map(([seq, t]) => ({ seq, startMs: t.startMs, durationMs: t.durationMs })),
+			endSeg: p.endSeg,
+			endTime: p.endTime,
+			sawSeek: p.sawSeek,
+			timeline: (p.timeline ? {
+				entries: p.timeline.length,
+				totalMs: p.timeline.reduce((s, e) => s + Math.round(e.durationMs), 0),
+				first5: p.timeline.slice(0, 5).map((e) => Math.round(e.durationMs)),
+				last5: p.timeline.slice(-5).map((e) => Math.round(e.durationMs)),
+				first5Starts: p.timeline.slice(0, 5).map((e) => Math.round(e.startMs)),
+			} : null) as TimelineSummary | null,
+		};
+		// Does seq N of the target rendition cover the same time as the live one?
+		report.timelineComparison = compareTimelines(stream.videoTimeline, p.timeline);
+		report.headerAlignment = compareHeaderStarts(
+			stream.video.segmentTimeline,
+			p.segmentTiming,
+		);
+		report.streamDied = stream.dead;
+		report.currentItag = stream.video.itag;
+		report.requestNumber = stream.requestNumber;
+		// Disarm so subsequent rn requests go back to the live itag only — a
+		// refused rendition left in preferred_video_format_ids could provoke
+		// SABR_ERROR.
+		stream.probeCancel("response sent");
+		res.json(report);
+	} catch (e) {
+		stream.probeCancel("error");
+		res.status(500).json({ ...report, error: String(e) });
+	}
+});
+
+/** Disarm a probe without waiting (in case a probe is left armed). */
+router.get("/sabr/:id/probe-cancel", (req, res) => {
+	const session = sessions.get(req.params.id);
+	if (!session) return res.status(404).send("no session");
+	session.stream.probeCancel("endpoint");
+	res.sendStatus(204);
 });
 
 export default router;
