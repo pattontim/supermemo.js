@@ -27,6 +27,9 @@ export enum StorageKey {
 
   /** Report a low bandwidth_estimate to SABR so it prioritizes fast delivery */
   SLOW_NETWORK = 'SLOW_NETWORK',
+
+  /** Preferred video quality height for DASH/SABR playback (e.g. 360, 720, 1080) */
+  QUALITY = 'QUALITY',
 }
 
 /**

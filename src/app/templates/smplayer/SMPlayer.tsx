@@ -86,6 +86,15 @@ function App() {
    * SABR server so it prioritizes fast delivery over quality.
    */
   const [slowNetwork] = useLocalStorage(StorageKey.SLOW_NETWORK, false);
+
+  /**
+   * Preferred video quality height (e.g. 360, 720, 1080), shared across every
+   * video this template loads. localStorage is keyed to the 10.0.2.2 origin, so
+   * a pick on one video is re-applied on reload and on every other videoid.
+   * Stored as a number because the DASH bitrate list reports numeric heights.
+   * null means "no preference — let dash.js start low and ABR upshift".
+   */
+  const [storedQuality, setStoredQuality] = useLocalStorage<number | null>(StorageKey.QUALITY, null);
   
   // ============================================================================
   // STATE: Clip Boundary Management (HH:MM:SS format)
@@ -394,6 +403,10 @@ function App() {
   /** Monotonic counter for auto-naming extracts created from the overlay. */
   const extractNum = useRef(1)
 
+  /** One-shot guard: the stored quality preference is applied once per mount,
+   * as soon as dash.js has populated its video bitrate list. */
+  const qualityRestored = useRef(false)
+
   // // SM browser as remote component
   // useEffect(() => {
   //   setResume(queryParameters.get('resume'));
@@ -694,6 +707,9 @@ function App() {
       // (ABR upshift on start, SABR switch), and `handleProgress` is the one
       // callback that already runs continuously. `syncActiveQuality` is a no-op
       // when the value has not changed and swallows API-shape errors.
+      // Same tick is the retry point for restoring the stored preference,
+      // which cannot apply until dash.js has a video bitrate list.
+      restoreStoredQuality();
       syncActiveQuality();
     }
     // const dashjs = ref.current.getInternalPlayer('dash')
@@ -902,6 +918,9 @@ function App() {
     setPlaying(true);
     console.log('player ready');
     customDebugger();
+    // A fresh source means a fresh dash.js instance (react-player calls
+    // reset() on every load()), so the stored preference must be re-applied.
+    qualityRestored.current = false;
     refreshQualityHeights();    
 
     // Restore player position from session when returning from settings
@@ -1253,6 +1272,7 @@ function App() {
     });
     setQualityHeights(heights);
     syncActiveQuality(player);
+    restoreStoredQuality(player);
   }
 
   /**
@@ -1277,6 +1297,53 @@ function App() {
     } catch (e) {
       /* dash.js not ready — keep the previous value */
     }
+  }
+
+  /**
+   * Applies the stored quality preference once per mount, as soon as dash.js
+   * has a video bitrate list. Called from `refreshQualityHeights` and from the
+   * continuous `handleProgress` poll, so it retries until the list exists
+   * (`onReady` alone can fire before stream initialisation finishes).
+   *
+   * The preference is a height, so it survives across videos: a stored 1080 on
+   * a video that tops out at 720 lands on the nearest rung at-or-below. Auto-ABR
+   * is disabled as part of the restore, otherwise the applied pick would be a
+   * hint that ABR re-takes on the next segment download and climbs back.
+   *
+   * @param {any} [player] - dash.js instance; looked up when omitted.
+   * @returns {void}
+   */
+  function restoreStoredQuality(player?: any) {
+    if (qualityRestored.current) return;
+    const p = player || ref.current?.getInternalPlayer('dash');
+    if (!p) return;
+    let list: any[] = [];
+    try {
+      list = p.getBitrateInfoListFor('video') || [];
+    } catch (e) {
+      return; // dash.js not ready — retry on the next poll
+    }
+    if (!list.length) return; // ditto
+    qualityRestored.current = true;
+    if (storedQuality == null) return;
+
+    const heights = list.map(function (info: { height: any }) { return Number(info.height); });
+    let idx = heights.indexOf(storedQuality);
+    if (idx < 0) {
+      // Nearest rung at-or-below the preference; otherwise the lowest rung.
+      idx = heights.reduce(function (best: number, h: number, i: number) {
+        return h <= (storedQuality as number) && h > heights[best] ? i : best;
+      }, 0);
+    }
+    try {
+      p.updateSettings({
+        streaming: { abr: { autoSwitchBitrate: { video: false } } }
+      });
+      p.setQualityFor('video', idx);
+    } catch (e) {
+      /* older/newer dash.js settings shape — leave ABR alone */
+    }
+    setActiveQuality(String(heights[idx]));
   }
 
   /**
@@ -1504,10 +1571,15 @@ Description:\n${archiveInfo.description}
    * Retrieves available quality levels from dash.js player and sets the specified resolution.
    * Only works with DASH streams; shows alert for archive-only players.
    *
-   * Also records the choice server-side so SABR sessions started later begin at
-   * this height ("set once, continues across sessions"). dash.js's
+   * Also records the choice so it survives reloads: client-side in
+   * localStorage (`StorageKey.QUALITY`, per-origin, so it applies to every
+   * videoid on this template) and server-side so SABR sessions started later
+   * begin at this height ("set once, continues across sessions"). dash.js's
    * setQualityFor handles the live switch; the endpoint only matters for future
    * sessions, so a failure there must not break playback.
+   *
+   * The first manual pick also disables dash.js auto-ABR, otherwise the choice
+   * is a hint that ABR re-takes on the next segment download or seek.
    *
    * @param {string} res - Resolution height to set (e.g., "720" for 720p)
    * @returns {void}
@@ -1530,10 +1602,33 @@ Description:\n${archiveInfo.description}
       window.alert("quality not found")
       return;
     }
+
+    // Turn off dash.js auto-ABR the first time a manual rung is chosen.
+    // setQualityFor is otherwise only a hint: AbrController re-runs its rules
+    // before every segment download, so a manual pick is silently overridden
+    // when the buffer drains or after a seek (the selection jumps back to the
+    // highest sustainable rung). Disabling it here rather than at player-ready
+    // keeps the automatic 360p->1080p upshift on first load, which gives
+    // faster start-up, and only pins the rendition once the user has chosen.
+    // dash.js reset() (called by react-player on every load()) restores the
+    // default, so this does not leak into the next video.
+    try {
+      player.updateSettings({
+        streaming: { abr: { autoSwitchBitrate: { video: false } } }
+      });
+    } catch (e) {
+      /* older/newer settings shape — setQualityFor still applies for now */
+    }
+
     player.setQualityFor('video', level);
     // Reflect the choice immediately; handleProgress will correct it once
     // dash.js actually renders the new rung.
     setActiveQuality(String(wanted));
+    // Remember the pick for every other video / reload on this origin, and
+    // mark the one-shot restore as spent so the poll cannot re-apply an older
+    // stored value over the choice the user just made.
+    setStoredQuality(wanted);
+    qualityRestored.current = true;
 
     // Persist server-side. Fire-and-forget: a missing SABR session or an
     // archived clip must not surface an error to the user.
