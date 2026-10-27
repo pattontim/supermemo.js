@@ -80,6 +80,12 @@ function App() {
    * actions honour the same setting the old Archive accordion used.
    */
   const [cleanupCaptionsOnArchive] = useLocalStorage(StorageKey.CLEANUP_CAPTIONS_ON_ARCHIVE, false);
+
+  /**
+   * Slow-network flag - Reports a deliberately low bandwidth_estimate to the
+   * SABR server so it prioritizes fast delivery over quality.
+   */
+  const [slowNetwork] = useLocalStorage(StorageKey.SLOW_NETWORK, false);
   
   // ============================================================================
   // STATE: Clip Boundary Management (HH:MM:SS format)
@@ -452,6 +458,18 @@ function App() {
     url.searchParams.append('target', target);
     console.log('[SM Player] Requesting stream with target:', target);
 
+    // Slow-network mode: ask the backend for a low bandwidth_estimate. Read
+    // the raw localStorage value here so the initial request always reflects
+    // the current setting regardless of React state timing.
+    var slowNetworkEnabled = false;
+    try {
+      slowNetworkEnabled = window.localStorage.getItem(StorageKey.SLOW_NETWORK) === "true";
+    } catch (e) { /* ignore */ }
+    if (slowNetworkEnabled) {
+      url.searchParams.append('slow', '1');
+      console.log('[SM Player] Slow network mode: requesting low bandwidth estimate');
+    }
+
     const req = new XMLHttpRequest();
     req.open('GET', url.toString(), true);
     req.responseType = 'json';
@@ -504,6 +522,24 @@ function App() {
     }
     req.send();
   }, []);
+
+  /**
+   * Live-update the SABR bandwidth estimate when the slow-network switch flips.
+   * The estimate is re-encoded into client_abr_state on every SABR
+   * round-trip, so the next pump picks the new value up — no reload needed.
+   * A missing session (stream not started yet) is harmless.
+   */
+  useEffect(() => {
+    var vId = queryParameters.get('videoid');
+    if (!vId) return;
+    var bw = slowNetwork ? 1000000 : 5000000;
+    var updateUrl = new URL("http://" + ytjsHost + "/sabr/" + vId + "/network");
+    updateUrl.searchParams.append('bw', String(bw));
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', updateUrl.toString(), true);
+    xhr.onerror = function () { /* session may not exist yet */ };
+    xhr.send();
+  }, [slowNetwork]);
 
   // ============================================================================
   // EVENT HANDLERS: Core Playback Control

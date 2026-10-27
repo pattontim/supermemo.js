@@ -317,12 +317,21 @@ export class SabrMedia {
 	}
 }
 
+/** Default bandwidth estimate reported to the SABR server (bits/second). */
+export const SABR_DEFAULT_BANDWIDTH_BPS = 5_000_000;
+
+/**
+ * Bandwidth estimate reported in slow-network mode (bits/second). Deliberately
+ * low so the server prioritizes fast delivery over quality.
+ */
+export const SABR_SLOW_NETWORK_BPS = 1_000_000;
+
 export class SabrStream {
 	requestNumber = 0;
 	private playbackCookie?: Buffer;
 	private backoffUntil = 0;
 	dead = false;
-	bandwidthEstimate = 5_000_000;
+	bandwidthEstimate = SABR_DEFAULT_BANDWIDTH_BPS;
 	private playbackStartAt = Date.now();
 	/** Server-issued SABR contexts (part 57), echoed per the sending policy (59). */
 	private sabrContexts = new Map<number, { raw: Buffer; type: number; sendByDefault: boolean }>();

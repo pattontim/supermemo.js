@@ -24,6 +24,9 @@ export enum StorageKey {
 
   /** Mouse-follow zoom: magnify video 1.5x, viewport follows the cursor */
   FOLLOW_ZOOM = 'FOLLOW_ZOOM',
+
+  /** Report a low bandwidth_estimate to SABR so it prioritizes fast delivery */
+  SLOW_NETWORK = 'SLOW_NETWORK',
 }
 
 /**

@@ -422,6 +422,9 @@ router.get("/streamUrl/:v_id", async (req, res) => {
 			// #start,stop fragment is kept for other consumers; SMPlayer strips
 			// it before handing the URL to dash.js (IE11 base-URL resolution).
 			url.searchParams.set("start", String(start));
+			// Slow-network mode: report a deliberately low bandwidth_estimate to
+			// the SABR server so it prioritizes fast delivery over quality.
+			if (req.query.slow === "1") url.searchParams.set("slow", "1");
 			const responseUrl = url.href + "#" + start + "," + stop;
 			console.log(`[8/8] Sending SABR DASH response: ${responseUrl}`);
 			return res.send(responseUrl);

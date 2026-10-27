@@ -1292,6 +1292,7 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
                             <div style={menuItem} onClick={function () { setMenu("main"); }}>
                                 {"\u25C2 Quality"}
                             </div>
+                            {toggleRow(StorageKey.SLOW_NETWORK, "Slow network")}
                             {p.qualities.map(function (q) {
                                 return (
                                     <div

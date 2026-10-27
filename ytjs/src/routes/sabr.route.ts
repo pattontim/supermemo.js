@@ -15,7 +15,7 @@
  */
 
 import { Router, Request, Response } from "express";
-import { SabrStream, SabrMedia, SabrClientInfo, SabrInputFormat } from "../sabr/sabr-stream";
+import { SabrStream, SabrMedia, SabrClientInfo, SabrInputFormat, SABR_SLOW_NETWORK_BPS, SABR_DEFAULT_BANDWIDTH_BPS } from "../sabr/sabr-stream";
 import { getOrCreateSabrInputs, createInnertube, mintContentPoToken, setSabrInputs, sabrInputsFromJson, SabrInputs } from "../utils/localvideo";
 import { getWatchPageSabrInputs } from "../sabr/watchpage";
 import { cache, yti_version } from "../server";
@@ -804,6 +804,15 @@ router.get("/sabr/:id/master.mpd", async (req, res) => {
 		const stream = await getSession(req.params.id);
 		const session = sessions.get(req.params.id);
 
+		// Slow-network mode: report a low bandwidth_estimate so the server
+		// prioritizes fast delivery. The value is re-encoded into
+		// client_abr_state on every round-trip, so this takes effect on the
+		// next pump without rebuilding the session.
+		if (req.query.slow === "1") {
+			stream.bandwidthEstimate = SABR_SLOW_NETWORK_BPS;
+			console.log(`[sabr] slow network mode for ${req.params.id}: bandwidthEstimate=${SABR_SLOW_NETWORK_BPS}`);
+		}
+
 		// Only block on the very first fetch until init segments exist.
 		if (!stream.video.ready || !stream.audio.ready) {
 			await Promise.race([
@@ -912,6 +921,26 @@ router.get("/sabr/:id/seg-:kind-:n.m4s", async (req, res) => {
 		console.warn(`[sabr] seg ${req.params.kind}-${req.params.n} unavailable (${stream?.dead ? "stream dead" : "slow pump"}): ${String(e)}`);
 		res.status(503).send(String(e));
 	}
+});
+
+/**
+ * Live-update the reported bandwidth estimate for a session.
+ *
+ * client_abr_state (including bandwidth_estimate, field 23) is rebuilt and
+ * POSTed on every SABR round-trip, so mutating the field on the live session
+ * takes effect on the next pump — no reload or session rebuild needed.
+ */
+router.get("/sabr/:id/network", (req, res) => {
+	const session = sessions.get(req.params.id);
+	if (!session) return res.status(404).send("no session");
+	const bw = Number(req.query.bw);
+	if (Number.isFinite(bw) && bw > 0) {
+		session.stream.bandwidthEstimate = bw;
+		console.log(`[sabr] bandwidth estimate for ${req.params.id} set to ${bw}`);
+	} else {
+		session.stream.bandwidthEstimate = SABR_DEFAULT_BANDWIDTH_BPS;
+	}
+	res.sendStatus(204);
 });
 
 /** Smoke test: does the SABR transport accept our token/client and return media? */
