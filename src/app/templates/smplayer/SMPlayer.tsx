@@ -1890,7 +1890,7 @@ Description:\n${archiveInfo.description}
                 attributes: {
                   crossOrigin: "true",
                   autoPlay: false,
-                  poster: "/iv/images/sm.gif",
+                  poster: "/iv/images/sm_padded.gif",
                   // display:block kills the inline descender gap (~4px line-box  
                   // space below the video) so SMControls sits flush at the real  
                   // frame bottom. width/height restore react-player's own sizing  
