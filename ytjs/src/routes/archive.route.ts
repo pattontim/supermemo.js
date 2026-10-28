@@ -1,4 +1,4 @@
-import { readFileSync, existsSync, renameSync, createWriteStream, writeFileSync, mkdirSync, unlinkSync } from "fs";
+import { readFileSync, existsSync, renameSync, createWriteStream, writeFileSync, mkdirSync, unlinkSync, rmSync } from "fs";
 import path from "path";
 import { Readable } from "stream";
 import { ReadableStream as WebReadableStream } from "stream/web";
@@ -204,6 +204,27 @@ export function formatCaptionFileName(captionTrack: CaptionTrack) {
 	return capFilename;
 }
 export const captionsCodeWhitelist = ["en", "fr", "ja"];
+
+// Deletes an archive: removes the in-memory map entry first so concurrent
+// /streamUrl/ calls immediately fall through to the MPD (YouTube) branch,
+// then removes archiveDir/<v_id> recursively (video, info.json, captions/).
+router.delete("/archive/:v_id", function (req, res) {
+	const v_id = req.params.v_id;
+	if(!v_id){
+		res.status(500).send("v_id not specified");
+	}
+	if (!archive[v_id]) {
+		res.status(404).send("not archived");
+		return;
+	}
+	delete archive[v_id];
+	try {
+		rmSync(path.join(archiveDir, v_id), { recursive: true, force: true });
+		res.status(200).send("deleted");
+	} catch (e) {
+		res.status(500).send("failed to remove archive files: " + String(e));
+	}
+});
 
 router.get("/archive/:v_id", async (req, res) => {
 	const v_id = req.params.v_id;

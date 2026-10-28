@@ -1516,6 +1516,37 @@ Description:\n${archiveInfo.description}
   }
 
   /**
+   * Deletes the current video's archive after confirmation. The backend drops
+   * the in-memory archive entry first, so a page reload makes the mount-time
+   * /streamUrl/ fetch return the YouTube DASH source instead of the MP4.
+   */
+  function handleDeleteArchive() {
+    const archiveId = queryParameters.get("videoid")?.trim() ?? "";
+    if (!isValidSMId(archiveId)) {
+      alert("Invalid YouTube Video ID: " + archiveId);
+      return;
+    }
+    if (!window.confirm("Delete this archive? This cannot be undone.")) return;
+
+    const deleteReq = new XMLHttpRequest();
+    deleteReq.open('DELETE', "http://" + ytjsHost + "/archive/" + archiveId);
+    deleteReq.onload = function () {
+      if (deleteReq.status !== 200) {
+        console.log('Error: ' + deleteReq.status);
+        alert("Failed to delete archive!");
+        return;
+      }
+      // Reload so the stream URL is re-resolved from the YouTube source.
+      window.location.reload();
+    }
+    deleteReq.onerror = function () {
+      console.log('Delete request failed');
+      alert("Failed to delete archive!");
+    }
+    deleteReq.send();
+  }
+
+  /**
    * Updates styling of stop time input field based on player state.
    * Applied border styling:
    * - Blue border (2px solid blue) when: playing AND stop < duration (active playback region)
@@ -1987,6 +2018,7 @@ Description:\n${archiveInfo.description}
           onSummarize={function () { summarizeWithAI(queryParameters.get("videoid")?.trim() ?? ""); }}
           onOpenYT={function () { openInYouTube(queryParameters.get("videoid")?.trim() ?? "", start); }}
           onArchive={handleArchive}
+          onDeleteArchive={handleDeleteArchive}
           archivingId={archivingId}
           onToggleArchivePane={() => setArchivePaneOpen(!archivePaneOpen)}
         />

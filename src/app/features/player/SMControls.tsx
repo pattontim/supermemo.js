@@ -147,6 +147,8 @@ interface SMControlsProps {
     onSummarize: () => void;
     onOpenYT: () => void;
     onArchive: (quality?: string, overwrite?: boolean, captions?: boolean, video?: boolean) => void;
+    /** Deletes the current archive (caller confirms with the user first). */
+    onDeleteArchive: () => void;
     /** Key of the archive action currently in flight ("best" | "captions" | a
      *  quality_label), used to render a spinner next to exactly that button. */
     archivingId?: string | null;
@@ -1175,8 +1177,13 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
                                 {"\u25C2 Archive actions"}
                             </div>
                             {isArchived
-                                ? <div style={menuItem} onClick={function () { p.onArchive(undefined, true, true, false); }}>
-                                      Re-archive captions{archiveSpinner("captions")}
+                                ? <div>
+                                      <div style={menuItem} onClick={function () { p.onArchive(undefined, true, true, false); }}>
+                                          Re-archive captions{archiveSpinner("captions")}
+                                      </div>
+                                      <div style={{ ...menuItem, color: OFF_COLOR }} onClick={function () { p.onDeleteArchive(); }}>
+                                          Delete
+                                      </div>
                                   </div>
                                 : <div style={menuItem} onClick={function () { p.onArchive(); }}>
                                       Archive: {archiveSpinner("best")}
@@ -1215,8 +1222,13 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
                                 </div>
                             ) : null}
                             {isArchived
-                                ? <div style={menuItem} onClick={function () { p.onArchive(undefined, true, true, false); }}>
-                                      Re-archive captions{archiveSpinner("captions")}
+                                ? <div>
+                                      <div style={menuItem} onClick={function () { p.onArchive(undefined, true, true, false); }}>
+                                          Re-archive captions{archiveSpinner("captions")}
+                                      </div>
+                                      <div style={{ ...menuItem, color: OFF_COLOR }} onClick={function () { p.onDeleteArchive(); }}>
+                                          Delete archive
+                                      </div>
                                   </div>
                                 : <div style={menuItem} onClick={function () { p.onArchive(); }}>
                                       Archive: {archiveSpinner("best")}
