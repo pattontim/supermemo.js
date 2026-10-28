@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "fs";
 import path from "path";
 import { app, fullUrlForClient } from "../server";
 import { ElementInfo } from "../utils/element";
+import { isNndId } from "../utils/niconico";
 import { Router } from "express";
 
 const router = Router();
@@ -58,7 +59,11 @@ router.get("/templateUrl/:id", async (req, res) => {	const id = req.params.id;
 	const userAgent = req.headers['user-agent'] || '';
 	const bundleTarget = getBundleTarget(userAgent);
 	
-	if (id.length == 11) {
+	// Niconico Douga ids (sm|nm|so|ca + digits, or legacy numeric) are not
+	// 11 chars, so they must be accepted before the YouTube length check or
+	// they fall through to the elements-dir lookup and 404 into SM's
+	// youtube.supermemo.org fallback.
+	if (isNndId(id) || id.length == 11) {
 		console.log(`[Templates] Player request for video ID: ${id}`);
 		console.log(`[Templates] Browser detected: ${bundleTarget}, User-Agent: ${userAgent}`);
 		

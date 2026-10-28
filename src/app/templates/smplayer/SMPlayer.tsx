@@ -1440,12 +1440,26 @@ Description:\n${archiveInfo.description}
       alert('Video details copied to clipboard!');
   }
 
+  /** Niconico Douga ids: sm|nm|so|ca + digits, or a legacy bare numeric id. */
+  function isNndSMId(id: string) {
+    return /^(sm|nm|so|ca)\d+$/i.test(id.trim()) || /^\d+$/.test(id.trim());
+  }
+
   /** Validates a SuperMemo / YouTube video id (slug of the expected length). */
   function isValidSMId(id: string, expectedLen: number = 11) {
     if (id.trim().length != expectedLen) return false;
     const matching = id.trim().match(/^[a-zA-Z0-9_\-]+$/);
     if (!matching || matching.length != 1) return false;
     return matching[0].length == expectedLen;
+  }
+
+  /**
+   * Id accepted by the stream resolver: an 11-char YouTube slug or an NND id.
+   * NND ids are self-identifying (lowercase prefix + digits), so no padding
+   * into the YouTube 11-char slot is needed; the server dispatches on shape.
+   */
+  function isValidStreamId(id: string) {
+    return isValidSMId(id) || isNndSMId(id);
   }
 
   /**
@@ -1469,8 +1483,12 @@ Description:\n${archiveInfo.description}
    */
   function handleArchive(quality?: string, overwrite: boolean = false, captions: boolean = true, video: boolean = true) {
     const archiveId = queryParameters.get("videoid")?.trim() ?? "";
-    if (!isValidSMId(archiveId)) {
+    if (!isValidStreamId(archiveId)) {
       alert("Invalid YouTube Video ID: " + archiveId);
+      return;
+    }
+    if (isNndSMId(archiveId)) {
+      alert("Archiving is not supported for Niconico Douga videos yet.");
       return;
     }
 
@@ -1522,8 +1540,12 @@ Description:\n${archiveInfo.description}
    */
   function handleDeleteArchive() {
     const archiveId = queryParameters.get("videoid")?.trim() ?? "";
-    if (!isValidSMId(archiveId)) {
+    if (!isValidStreamId(archiveId)) {
       alert("Invalid YouTube Video ID: " + archiveId);
+      return;
+    }
+    if (isNndSMId(archiveId)) {
+      alert("No archive exists for Niconico Douga videos.");
       return;
     }
     if (!window.confirm("Delete this archive? This cannot be undone.")) return;
@@ -1918,6 +1940,13 @@ Description:\n${archiveInfo.description}
           config={{
               file: {
                 ...runtime.getPlayerConfig(),
+                // NND serves HLS (.m3u8). react-player already routes that
+                // extension to hls.js, but the flag makes it unconditional so
+                // a signed/query-string manifest cannot fall through to the
+                // native <video> path (IE11 cannot play m3u8 at all).
+                // Never set globally: shouldUseHLS() checks forceHLS before
+                // the extension, so .mpd would then get BOTH players.
+                forceHLS: /\.m3u8($|\?)/i.test(url),
                 attributes: {
                   crossOrigin: "true",
                   autoPlay: false,
@@ -2037,7 +2066,9 @@ Description:\n${archiveInfo.description}
       </div>
       }
       <div style={{ display: pseudoFullscreen ? 'none' : 'block' }}>
-        {archiveInfo ? <HitchhikerInfo info={archiveInfo} /> : null}
+        {/* Always rendered: the strip hosts the About/Comments tabs and the
+            NND import tool, all of which are useful without archive metadata. */}
+        <HitchhikerInfo info={archiveInfo} />
         <ClipExtractor 
         resume={resume} 
         start={start} 

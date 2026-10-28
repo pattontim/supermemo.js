@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ArchiveInfo } from '../../../../ytjs/src/utils/archive';
 import { formatPublished } from '../../utils/published';
+import NndTool from './NndTool';
 
 // IE11 (build targets ['web','es5']):
 //  - No grid / gap / aspect-ratio / flexbox / -webkit-line-clamp.
@@ -24,28 +25,33 @@ const CONTENT_WIDTH = 754;
 const DESC_LINE_HEIGHT = 18; // px
 const DESC_COLLAPSED_H = DESC_LINE_HEIGHT * 2; // 36px
 
-type TabKey = 'about' | 'comments';
+type TabKey = 'about' | 'comments' | 'nnd';
 
-export default function HitchhikerInfo({ info }: { info: ArchiveInfo }) {
+export default function HitchhikerInfo({ info }: { info?: ArchiveInfo }) {
+  // Without archive metadata there is no About content, so open the tab that
+  // is still useful (the NND import tool).
   const [tab, setTab] = useState<TabKey>('about');
   const [descExpanded, setDescExpanded] = useState(false);
 
-  const description = info.description || '';
+  const description = (info && info.description) || '';
   // Only offer the toggle when there is more than ~2 lines of text.
   const isLong = description.length > 220;
 
   // One tab label: an inline-block span with a red underline when active.
-  function tabLabel(key: TabKey, label: string) {
+  // Three tabs share the strip, so labels are 3 chars and horizontal padding
+  // is squeezed; `title` keeps the full name on hover.
+  function tabLabel(key: TabKey, label: string, fullName: string) {
     var active = tab === key;
     return (
       <span
+        title={fullName}
         onClick={function () {
           setTab(key);
         }}
         style={{
-          display: 'inline-block', padding: '0 10px', cursor: 'pointer',
+          display: 'inline-block', padding: '0 5px', cursor: 'pointer',
           userSelect: 'none', fontSize: '13px', fontWeight: 'bold',
-          lineHeight: '22px',
+          lineHeight: '22px', letterSpacing: 0, whiteSpace: 'nowrap',
           color: active ? TEXT : TAB_INACTIVE,
           borderBottom: active ? '3px solid ' + HK_RED : '3px solid transparent',
         }}
@@ -79,14 +85,14 @@ export default function HitchhikerInfo({ info }: { info: ArchiveInfo }) {
         >
           <h1
             className="hk-video-title"
-            title={info.title}
+            title={info ? info.title : undefined}
             style={{
               fontSize: '17px', fontWeight: 'bold', margin: 0, lineHeight: '1.3',
               whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
               userSelect: 'text', // long titles stay selectable
             }}
           >
-            {info.title}
+            {info ? info.title : ''}
           </h1>
         </div>
 
@@ -97,8 +103,9 @@ export default function HitchhikerInfo({ info }: { info: ArchiveInfo }) {
             whiteSpace: 'nowrap', width: '150px',
           }}
         >
-          {tabLabel('about', 'About')}
-          {tabLabel('comments', 'Comments')}
+          {tabLabel('about', 'About', 'About')}
+          {tabLabel('comments', 'Comments', 'Comments')}
+          {tabLabel('nnd', 'NND', 'Niconico Douga import')}
         </div>
       </div>
 
@@ -107,6 +114,8 @@ export default function HitchhikerInfo({ info }: { info: ArchiveInfo }) {
 
         {tab === 'about' ? (
           <div className="hk-tab-about">
+            {info ? (
+            <div>
             {/* Publish date + artist on ONE line */}
             <div className="hk-video-subline" style={{ fontSize: '12px', color: SUBTLE, marginBottom: '8px' }}>
               <span
@@ -171,6 +180,12 @@ export default function HitchhikerInfo({ info }: { info: ArchiveInfo }) {
                 </span>
               ) : null}
             </div>
+            </div>
+            ) : (
+              <div style={{ fontSize: '13px', color: SUBTLE, textAlign: 'center', padding: '12px 0' }}>
+                No metadata for this video.
+              </div>
+            )}
           </div>
         ) : null}
 
@@ -181,6 +196,14 @@ export default function HitchhikerInfo({ info }: { info: ArchiveInfo }) {
               {/* TODO: wire to a backend comments route (none exists yet) */}
               Comments are disabled for now.
             </div>
+          </div>
+        ) : null}
+
+        {/* NND import tool. Same body height as the other tabs; dark theme per
+            PipePipe's dark surface palette. */}
+        {tab === 'nnd' ? (
+          <div className="hk-tab-nnd">
+            <NndTool />
           </div>
         ) : null}
 

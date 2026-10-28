@@ -6,6 +6,7 @@ import { getLocalVideoInfo } from "../utils/localvideo";
 import { Format } from "../utils/yt-types";
 import { FormatOptions } from "../utils/yt-types";
 import { latestCacheConstructor } from "../utils/archive";
+import { isNndId } from "../utils/niconico";
 import { Router } from "express";
 
 const router = Router();
@@ -380,6 +381,22 @@ router.get("/streamUrl/:v_id", async (req, res) => {
 	if (!start || !stop || !target) {
 		console.log(`[3/8] Missing required parameters`);
 		return res.status(400).send("Missing start, stop, or target");
+	}
+
+	// Niconico Douga: dispatch before any YouTube code path touches the id.
+	// An NND id is `sm|nm|so|ca` + digits (or a bare legacy numeric id) and can
+	// never collide with an 11-char YouTube id.
+	if (isNndId(v_id)) {
+		// NND always streams HLS. hls.js is pinned IE-safe (1.2.9) on IE11 and
+		// 1.5.1 on WebView2 by runtime.getPlayerConfig(); the quality ladder is
+		// resolved server-side from the watch data, so "auto" is the default.
+		const quality = (req.query.quality as string) || "auto";
+		const url = new URL(`http://${fullUrlForClient}/nnd/${v_id}/${quality}.m3u8`);
+		// Same #start,stop fragment contract as the MPD/SABR paths. SMPlayer
+		// strips it before handing the URL to the player.
+		const responseUrl = url.href + "#" + start + "," + stop;
+		console.log(`[8/8] Sending NND HLS response: ${responseUrl}`);
+		return res.send(responseUrl);
 	}
 
 	console.log(`[4/8] Checking archive for v_id: ${v_id}`);

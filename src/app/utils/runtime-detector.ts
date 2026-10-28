@@ -37,7 +37,12 @@ class RuntimeDetector {
     const supportsModernES = isWebView2 || (!isIE11 && !navigator.userAgent.includes('Trident'));
 
     const dashVersion = supportsModernES ? '4.7.4' : '4.5.2';
-    const hlsVersion = supportsModernES ? '1.5.1' : '1.2.0';
+    // IE11 parser constraints, verified from the published dist bundles:
+    // 1.2.4 is the LAST ES5-only build. 1.2.5 onward ship 88 arrow functions
+    // and 24 const/let/class tokens, which throw "Syntax error" in IE11
+    // before hls.js even runs. (IE11 support itself was dropped in 1.3.0.)
+    // The WebView2 build gets the current line.
+    const hlsVersion = supportsModernES ? '1.5.1' : '1.2.4';
 
     this.capabilities = {
       supportsClipboard,
