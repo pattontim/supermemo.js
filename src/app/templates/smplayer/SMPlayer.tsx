@@ -774,6 +774,42 @@ function App() {
   // ============================================================================
 
   /**
+   * Seeks through react-player with the InvalidStateError guard that
+   * FilePlayer.seekTo lacks.
+   *
+   * react-player's `FilePlayer.seekTo` is a bare `this.player.currentTime =
+   * seconds` (lib/players/FilePlayer.js). On IE11 that assignment throws
+   * InvalidStateError while the <video> is HAVE_NOTHING — which is the entire
+   * HLS first-load window, since react-player fires onReady at hls.js
+   * MANIFEST_PARSED before any segment is appended. An unguarded throw escapes
+   * into whichever callback issued it: inside the MANIFEST_PARSED emit hls.js
+   * re-emits it as `internalException` on `hlsManifestParsed`, and from a
+   * handleProgress tick it is an uncaught SCRIPT5022 that navigates the page to
+   * error.dlg. Every direct seekTo must go through here.
+   *
+   * @param seconds - Target position in seconds.
+   * @returns {boolean} true when the element accepted the seek.
+   */
+  function safeSeek(seconds: number): boolean {
+    if (!ref.current || !isFinite(seconds)) return false;
+    try {
+      ref.current.seekTo(seconds, 'seconds');
+      // A pending seek satisfied by any other path must be disarmed here, or
+      // resumeNndPosition re-applies a stale target later. Concretely: the
+      // clip start was armed by seekVideo, checkBoundaries then successfully
+      // seeks to that same start on an early tick, and the still-armed target
+      // fired again at readyState >= 2, yanking playback backwards mid-play.
+      if (nndResumeAt.current != null && Math.abs(nndResumeAt.current - seconds) < 0.5) {
+        nndResumeAt.current = null;
+      }
+      return true;
+    } catch (e) {
+      console.log('seekTo deferred (element not seekable yet):', e);
+      return false;
+    }
+  }
+
+  /**
    * Seeks video to specified time position.
    * Converts HH:MM:SS format to seconds and uses ReactPlayer's seekTo method.
    * @param {string | null} to - Target time in HH:MM:SS format. If null or invalid, operation is skipped.
@@ -789,11 +825,14 @@ function App() {
     // and aborts handlePlayerReady before setPlaying(true) runs — which is why
     // the poster stayed up until the user clicked play.
     if (seconds === 0) return;
-    try {
-      ref.current.seekTo(seconds);
-    } catch (e) {
-      console.log('seekVideo skipped (element not seekable yet):', e);
-    }
+    if (safeSeek(seconds)) return;
+    // Arm the pending seek instead of dropping the clip start. On the HLS
+    // path onReady fires at MANIFEST_PARSED with readyState HAVE_NOTHING, so
+    // this fails on every first load. handleProgress pumps
+    // resumeNndPosition() until readyState >= HAVE_CURRENT_DATA, which is the
+    // same mechanism the quality-switch resume uses. A later quality switch
+    // overwrites the ref with its own captured position, as intended.
+    nndResumeAt.current = seconds;
   }
 
   /**
@@ -807,10 +846,14 @@ function App() {
   function checkBoundaries() {
     if(!repeat) return;
     if (ref.current) {
+        // safeSeek, not ref.seekTo: during the HLS first load currentTime is 0
+        // and start is non-zero, so this branch fires on the very first
+        // progress tick while the element is still HAVE_NOTHING. An unguarded
+        // throw here is the uncaught SCRIPT5022 that sends IE11 to error.dlg.
         if (ref.current.getCurrentTime() < convertHHMMSS2Seconds(start)) {
-            ref.current.seekTo(convertHHMMSS2Seconds(start));
+            safeSeek(convertHHMMSS2Seconds(start));
         } else if (ref.current.getCurrentTime() > convertHHMMSS2Seconds(stop)) {
-            ref.current.seekTo(convertHHMMSS2Seconds(start));
+            safeSeek(convertHHMMSS2Seconds(start));
         }
     }
   }
@@ -987,7 +1030,18 @@ function App() {
     // Restore player position from session when returning from settings
     if (sessionRestored && session && ref.current) {
       console.log('Restoring session - seeking to', session.played);
-      ref.current.seekTo(session.played);
+      // Guarded: this runs inside hls.js's MANIFEST_PARSED emit, so an
+      // unguarded throw is re-emitted as `internalException` on
+      // hlsManifestParsed. A seek to 0 is a no-op on a fresh element anyway.
+      if (session.played > 0) {
+        if (!safeSeek(session.played)) {
+          // Same HLS timing problem as the clip start: arm the retry instead of
+          // dropping the session position. Overwrites an armed clip start on
+          // purpose — a restored session is the more specific intent, and the
+          // two targets would otherwise race on the same ref.
+          nndResumeAt.current = session.played;
+        }
+      }
       setPlayed(session.played);
     }
     refreshTracks();
@@ -1006,16 +1060,17 @@ function App() {
   }
 
   /**
-   * Seeks to the position captured just before an NND quality switch.
+   * Applies a pending seek once the media element can accept one.
    *
-   * The seek has to survive onReady firing at hls.js MANIFEST_PARSED, when the
-   * <video> is still HAVE_NOTHING and no segment has been appended: assigning
-   * currentTime there throws InvalidStateError on IE11 and aborts
-   * handlePlayerReady before setPlaying(true) runs, which is the same
-   * poster-stays-up / first-frame-never-renders failure that the seekVideo
-   * guard fixed. Swallow the throw, keep the target, and retry once the element
-   * reports data (loadeddata), with a timed fallback in case that event has
-   * already fired before the listener is attached.
+   * Used for two cases sharing the same HLS timing problem: the position
+   * captured just before an NND quality switch, and a clip start that
+   * seekVideo could not apply because onReady fired at hls.js
+   * MANIFEST_PARSED while the <video> was still HAVE_NOTHING.
+   *
+   * The target lives in nndResumeAt.current and is only cleared once the seek
+   * actually succeeds — a single failed attempt must never discard it, or the
+   * playhead silently falls back to the clip start. handleProgress calls this
+   * on every tick, so the retry loop needs no timer or event listener.
    *
    * @returns {void}
    */
@@ -1036,13 +1091,21 @@ function App() {
     }
 
     const target = nndResumeAt.current;
-    try {
-      ref.current.seekTo(target, 'seconds');
+    // Playback may already be past the target because another path (e.g.
+    // checkBoundaries) landed the seek first. Re-applying it there would rewind
+    // the user, so treat "already there or beyond" as satisfied.
+    const current = ref.current.getCurrentTime ? ref.current.getCurrentTime() : 0;
+    if (current >= target - 0.5) {
+      nndResumeAt.current = null;
+      return;
+    }
+    if (safeSeek(target)) {
       nndResumeAt.current = null;
       console.log('NND resume seek applied at', target);
-    } catch (e) {
-      console.log('NND resume seek deferred (element not seekable yet):', e);
+      return;
     }
+    // Still not seekable; keep the target so the next handleProgress tick
+    // retries.
   }
 
   // ============================================================================
@@ -1461,7 +1524,7 @@ function App() {
    */
   function seekToSec(sec: number) {
     setPlayed(sec);
-    if (ref.current) ref.current.seekTo(sec, 'seconds');
+    if (ref.current) safeSeek(sec);
     handleSeek(sec);
   }
 
@@ -1957,13 +2020,13 @@ Description:\n${archiveInfo.description}
     // }, 100);
     if (e.key === 'right' || e.key === 'ArrowRight') {
       if(arrowFrameMode){
-        ref?.current?.seekTo(played + (1 / 30), 'seconds');
+        safeSeek(played + (1 / 30));
       } else {
         seekVideo(formatTime(played + 1, duration));
       }
     } else if (e.key === 'left' || e.key === 'ArrowLeft') {
       if(arrowFrameMode){
-        ref?.current?.seekTo(played - (1 / 30), 'seconds');
+        safeSeek(played - (1 / 30));
       } else {
         seekVideo(formatTime(played - 1, duration));
       }
@@ -1976,10 +2039,10 @@ Description:\n${archiveInfo.description}
       return;
     } else if (e.key === '>') {
       // seek forward one frame assuming 30fps
-      ref?.current?.seekTo(played + (1 / 30), 'seconds');
+      safeSeek(played + (1 / 30));
     } else if (e.key === '<') {
       // seek backward one frame assuming 30fps
-      ref?.current?.seekTo(played - (1 / 30), 'seconds');
+      safeSeek(played - (1 / 30));
     }
     e.preventDefault();
     e.stopPropagation();
@@ -2116,6 +2179,18 @@ Description:\n${archiveInfo.description}
                   // dash.js equivalent: streaming.bufferToKeep — seconds of
                   // already-played media retained behind the playhead.
                   backBufferLength: 30,
+                  // enableWorker left at the hls.js default (true). Disabling
+                  // it moves transmuxing onto the main thread, which stalls the
+                  // IE11 UI on every segment load — measured as severe lag
+                  // whenever new chunks arrive.
+                  //
+                  // It was disabled briefly to rule out the fatal
+                  // `demuxerWorker internalException` / error.dlg crash, but that
+                  // crash was the unguarded seekTo throwing inside hls.js's
+                  // MANIFEST_PARSED emit and being re-emitted through the worker
+                  // error path. safeSeek now defers that seek instead, so the
+                  // worker runs fine and must stay enabled.
+                  // enableWorker: runtime.getStreamTarget() !== "IE",
                 },
                 attributes: {
                   crossOrigin: "true",
@@ -2156,6 +2231,21 @@ Description:\n${archiveInfo.description}
             console.log('onError', e, data);
             if (data) {
               console.log('  fatal:', data.fatal, 'type:', data.type, 'details:', data.details);
+              // IE11 cannot expand nested objects in the console, so pull the
+              // inner exception out as strings. An empty message means the
+              // worker blob failed to execute; a real message ("container is
+              // not supported", "Audio is malformed") means a transmux failure
+              // on the NND segments themselves.
+              const inner: any = (data as any).error || {};
+              console.log('hlsError inner:',
+                'msg=' + (inner.message || String(inner)),
+                'name=' + (inner.name || ''),
+                'code=' + (inner.code || ''),
+                'stack=' + String(inner.stack || '').split('\n').slice(0, 5).join(' | '));
+              console.log('hlsError ctx:',
+                'event=' + ((data as any).event || ''),
+                'frag=' + ((data as any).frag ? (data as any).frag.sn + '@' + (data as any).frag.start : 'none'),
+                'level=' + ((data as any).level !== undefined ? (data as any).level : 'n/a'));
             }
           }}
           onProgress={handleProgress}
