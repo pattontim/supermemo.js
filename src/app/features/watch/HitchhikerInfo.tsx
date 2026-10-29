@@ -42,9 +42,9 @@ const HK_THEME: InfoTheme = {
 // PipePipe dark surfaces. Primary accent #ff5252 stays on the tab underline;
 // cyan marks the channel bar and blue carries links.
 const NND_THEME: InfoTheme = {
-  pageBg: '#222222', fadeFrom: 'rgba(34,34,34,0)', text: '#ffffff',
+  pageBg: '#263238', fadeFrom: 'rgba(34,34,34,0)', text: '#ffffff',
   subtle: '#aaaaaa', tabInactive: '#777777',
-  tabAccent: '#ff5252', chanAccent: '#00ffff', link: '#008fd6',
+  tabAccent: '#008fd6', chanAccent: '#00ffff', link: '#008fd6',
   border: 'rgba(255,255,255,0.20)',
 };
 

@@ -139,9 +139,18 @@ router.get("/nnd/:id/:quality.m3u8", async (req, res) => {
 				.type("application/vnd.apple.mpegurl")
 				.send(rewritePlaylist(playlistText, proxyBase, id, hls.contentUrl));
 		} catch (e) {
-			// 403 on the access-rights POST means the key rotated: refetch once.
-			if (e instanceof NndError && e.kind === "http" && e.status === 403 && attempt === 0) {
-				console.warn(`[nnd] ${id} access-rights 403, refreshing watch data`);
+			// A 4xx on the access-rights POST / playlist fetch (observed: 400
+			// and 403) means the accessRightKey rotated or expired: drop the
+			// session and refetch watch data once. A genuinely unavailable
+			// quality never reaches here (resolveVideoQuality 404s early).
+			if (
+				e instanceof NndError &&
+				e.kind === "http" &&
+				e.status >= 400 &&
+				e.status < 500 &&
+				attempt === 0
+			) {
+				console.warn(`[nnd] ${id} access-rights ${e.status}, refreshing watch data`);
 				if (session) sessions.delete(id);
 				continue;
 			}
