@@ -1357,7 +1357,7 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
                                             p.setResolution(q);
                                         }}
                                     >
-                                        {p.activeQuality === q ? "\u2713 " : ""}{q + "p"}
+                                        {p.activeQuality === q ? "\u2713 " : ""}{q.indexOf("video-") === 0 ? (q.match(/\d+p/) || [q])[0] : q + "p"}
                                     </div>
                                 );
                             })}

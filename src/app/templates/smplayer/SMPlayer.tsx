@@ -407,6 +407,31 @@ function App() {
    * as soon as dash.js has populated its video bitrate list. */
   const qualityRestored = useRef(false)
 
+  /** NND: available domand video ids (e.g. "video-h264-720p"). Empty for YouTube. */
+  const [nndQualities, setNndQualities] = useState<string[]>([]);
+  /** NND: the domand id the user pinned; "auto" = server-picked default. */
+  const [nndActiveQuality, setNndActiveQuality] = useState<string>("auto");
+  /** Position (seconds) to resume at after an NND quality reload. */
+  const nndResumeAt = useRef<number | null>(null);
+
+  // ============================================================================
+  // EFFECT: NND quality menu population
+  // ============================================================================
+  /**
+   * The watch XHR resolves AFTER handlePlayerReady has already called
+   * refreshQualityHeights(), so at that point nndQualities was still empty and
+   * the menu stayed blank (SMControls gates the Quality row on
+   * qualities.length > 0). Fill the menu whenever the ladder lands instead of
+   * calling refreshQualityHeights() from the XHR: that closure would read the
+   * pre-update nndQualities and skip the NND early-return.
+   */
+  useEffect(function () {
+    if (nndQualities.length) {
+      setQualityHeights(nndQualities);
+      setActiveQuality(nndActiveQuality);
+    }
+  }, [nndQualities]);
+
   // // SM browser as remote component
   // useEffect(() => {
   //   setResume(queryParameters.get('resume'));
@@ -711,6 +736,10 @@ function App() {
       // which cannot apply until dash.js has a video bitrate list.
       restoreStoredQuality();
       syncActiveQuality();
+      // NND quality switches reload the whole HLS session, and the resume seek
+      // cannot land until the new playlist has decodable data. Retrying here
+      // keeps it alive without a timer; it is a no-op once applied.
+      resumeNndPosition();
     }
     // const dashjs = ref.current.getInternalPlayer('dash')
     // if (dashjs) {
@@ -918,6 +947,23 @@ function App() {
   function handlePlayerReady( player: ReactPlayer ) {
     fetchArchiveInfo(queryParameters.get('videoid') as string);
 
+    // NND: the served .m3u8 is a single-variant playlist (one output pair per
+    // access-rights request, PipePipe-style), so the quality ladder comes from
+    // the watch endpoint, not from the player. Fetch once per mount.
+    const vId = queryParameters.get('videoid') || "";
+    if (isNndSMId(vId) && !nndQualities.length) {
+      const wreq = new XMLHttpRequest();
+      wreq.open('GET', "http://" + ytjsHost + "/nnd/" + vId + "/watch");
+      wreq.responseType = 'json';
+      wreq.onload = function () {
+        if (wreq.status !== 200 || !wreq.response) return;
+        const body = typeof wreq.response === 'string'
+          ? JSON.parse(wreq.response) : wreq.response;
+        setNndQualities(body.qualities || []);
+      };
+      wreq.send();
+    }
+
     const videoElement = document.getElementsByTagName('video')[0];
     if(videoElement) {
       videoElement.addEventListener('volumechange', volume => {
@@ -926,6 +972,10 @@ function App() {
     }
 
     seekVideo(start);
+    // A quality reload re-fired onReady; override the clip-start seek with the
+    // position captured just before the URL swap. Must come after seekVideo()
+    // so it wins.
+    resumeNndPosition();
     setPlaying(true);
     console.log('player ready');
     customDebugger();
@@ -953,6 +1003,46 @@ function App() {
    */
   function handlePlayerStart() {
     console.log('player start');
+  }
+
+  /**
+   * Seeks to the position captured just before an NND quality switch.
+   *
+   * The seek has to survive onReady firing at hls.js MANIFEST_PARSED, when the
+   * <video> is still HAVE_NOTHING and no segment has been appended: assigning
+   * currentTime there throws InvalidStateError on IE11 and aborts
+   * handlePlayerReady before setPlaying(true) runs, which is the same
+   * poster-stays-up / first-frame-never-renders failure that the seekVideo
+   * guard fixed. Swallow the throw, keep the target, and retry once the element
+   * reports data (loadeddata), with a timed fallback in case that event has
+   * already fired before the listener is attached.
+   *
+   * @returns {void}
+   */
+  function resumeNndPosition() {
+    if (nndResumeAt.current == null || !ref.current) return;
+
+    // hls.js fires onReady at MANIFEST_PARSED, so this often runs while the
+    // element is still HAVE_NOTHING and every currentTime assignment throws
+    // InvalidStateError. HAVE_METADATA alone is not enough either: right after
+    // a source swap IE11 reports it before any frame is decodable and the seek
+    // still throws. Wait for HAVE_CURRENT_DATA. The target stays in the ref
+    // until it actually applies — clearing it on a failed attempt sends the
+    // playhead back to the clip start, which is the reported bug. handleProgress
+    // calls this on every tick, so the retry loop needs no timer.
+    const videoElement = document.getElementsByTagName('video')[0];
+    if (videoElement && videoElement.readyState < 2) {
+      return;
+    }
+
+    const target = nndResumeAt.current;
+    try {
+      ref.current.seekTo(target, 'seconds');
+      nndResumeAt.current = null;
+      console.log('NND resume seek applied at', target);
+    } catch (e) {
+      console.log('NND resume seek deferred (element not seekable yet):', e);
+    }
   }
 
   // ============================================================================
@@ -1272,6 +1362,12 @@ function App() {
    * @returns {void}
    */
   function refreshQualityHeights() {
+    // NND has no dash.js ladder; the menu lists domand ids from /nnd/:id/watch.
+    if (nndQualities.length) {
+      setQualityHeights(nndQualities);
+      setActiveQuality(nndActiveQuality);
+      return;
+    }
     const player = ref.current?.getInternalPlayer('dash');
     if (!player) {
       setQualityHeights([]);
@@ -1657,6 +1753,45 @@ Description:\n${archiveInfo.description}
    * @returns {void}
    */
   function setResolution(res: string){
+    // NND: each quality is a separate access-rights request server-side, so
+    // switching means loading a new .m3u8, not a dash.js rung switch.
+    const nndVId = queryParameters.get('videoid') || "";
+    if (isNndSMId(nndVId)) {
+      const el = ref.current && (ref.current.getInternalPlayer() as HTMLVideoElement);
+      nndResumeAt.current = el ? el.currentTime : null;
+
+      // Same request shape as the mount fetch: startSec, stopSec,
+      // runtime-detected target, optional slow=1 — plus quality.
+      const qUrl = new URL("http://" + ytjsHost + "/streamUrl/" + nndVId);
+      qUrl.searchParams.append('startSec', convertHHMMSS2Seconds(start).toString());
+      qUrl.searchParams.append('stopSec', convertHHMMSS2Seconds(stop).toString());
+      qUrl.searchParams.append('target', runtime.getStreamTarget());
+      try {
+        if (window.localStorage.getItem(StorageKey.SLOW_NETWORK) === "true") {
+          qUrl.searchParams.append('slow', '1');
+        }
+      } catch (e) { /* ignore */ }
+      qUrl.searchParams.append('quality', res);
+
+      const qreq = new XMLHttpRequest();
+      qreq.open('GET', qUrl.toString(), true);
+      qreq.responseType = 'json';
+      qreq.onload = function () {
+        if (qreq.status !== 200) {
+          window.alert("quality not found");
+          nndResumeAt.current = null;
+          return;
+        }
+        const streamUrl = (qreq.response ?? qreq.responseURL) as string;
+        setNndActiveQuality(res);
+        setActiveQuality(res);
+        // Strip the #start,stop fragment like the mount path does.
+        setUrl(streamUrl.split('#')[0]);
+      };
+      qreq.send();
+      return;
+    }
+
     const player = ref.current?.getInternalPlayer('dash');
     if (!player) {
       window.alert("dash player not found (archive?)")
