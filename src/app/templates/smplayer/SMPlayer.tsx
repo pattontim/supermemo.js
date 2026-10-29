@@ -1966,6 +1966,22 @@ Description:\n${archiveInfo.description}
                 // Never set globally: shouldUseHLS() checks forceHLS before
                 // the extension, so .mpd would then get BOTH players.
                 forceHLS: /\.m3u8($|\?)/i.test(url),
+                // hls.js buffer tuning, mirroring dash.js's stable buffer
+                // behaviour. react-player 2.12.0 destructures
+                // config.file.hlsOptions and passes it verbatim to
+                // `new Hls(hlsOptions)`, so this always applies to NND's
+                // forced-HLS playback.
+                hlsOptions: {
+                  // dash.js equivalent: streaming.stableBufferTime — the
+                  // forward buffer target in seconds. hls.js default is 30.
+                  maxBufferLength: 20,
+                  // Upper ceiling hls.js may grow toward when bandwidth
+                  // allows; keeps parity with dash.js bufferTimeAtTopQuality.
+                  maxMaxBufferLength: 60,
+                  // dash.js equivalent: streaming.bufferToKeep — seconds of
+                  // already-played media retained behind the playhead.
+                  backBufferLength: 30,
+                },
                 attributes: {
                   crossOrigin: "true",
                   autoPlay: false,
@@ -1978,23 +1994,6 @@ Description:\n${archiveInfo.description}
                   // polyfill. The 16:9 box locks the height regardless; vertical
                   // shorts simply stretch to fill it on IE11.
                   style: { display: "block", verticalAlign: "bottom", width: "100%", height: "100%" },  
-                  streaming: {
-                    manifestRequestTimeout: 20000,
-                    abandonLoadTimeout: 20000,
-                    timeoutIntervals: {
-                      MPD: 20000,
-                      XHRMPDTimeout: 20000,
-                    }
-                  }
-                },
-                // @ts-expect-error test
-                streaming: {
-                    manifestRequestTimeout: 20000,
-                    abandonLoadTimeout: 20000,
-                    timeoutIntervals: {
-                      MPD: 20000,
-                      XHRMPDTimeout: 20000,
-                    }
                 }
               }
           }}
