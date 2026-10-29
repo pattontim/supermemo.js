@@ -27,16 +27,44 @@ import { stripPublishedLabel } from "../../utils/published";
 
 // Hitchhiker reconstruction tokens. These are replaceable defaults, not verified
 // historical values (see the reconstruction notes); keep them in one place.
-var STRIP_BG = "#555";
-var STRIP_BUFFER = "#888";
-var STRIP_PLAYED = "#cc181e";
-var EXTRACT_TICK = "#f80";
-var SELECTION = "#167ac6";
-var BAR_BG = "rgba(20,20,20,0.65)";
-var FG = "#eeeeee";
-var HOVER_TICK = "#ffffff";
+//
+// Two palettes now: the Hitchhiker default, and a PipePipe-derived dark one used
+// when the player is showing a Niconico Douga video (see isNndId below). Only
+// the values differ — every layout in this file is palette-agnostic.
+var HK_STRIP_BG = "#555";
+var HK_STRIP_BUFFER = "#888";
+var HK_STRIP_PLAYED = "#cc181e";
+var HK_EXTRACT_TICK = "#f80";
+var HK_SELECTION = "#167ac6";
+var HK_BAR_BG = "rgba(20,20,20,0.65)";
+var HK_FG = "#eeeeee";
+var HK_HOVER_TICK = "#ffffff";
+
+// PipePipe dark palette (PipePipeClient/app/src/main/res/values/colors.xml:
+// dark_background_color #222222, dark_card_item_background_color #313131,
+// dark_settings_accent_color #ff5252, dark_border_color #33FFFFFF). Secondaries
+// keep the strip from reading as plain grey: orange extract ticks (#FF9900),
+// blue clip selection (#008FD6).
+var NND_STRIP_BG = "#313131";
+var NND_STRIP_BUFFER = "#555555";
+var NND_STRIP_PLAYED = "#ff5252";
+var NND_EXTRACT_TICK = "#ff9900";
+var NND_SELECTION = "#008fd6";
+var NND_BAR_BG = "rgba(34,34,34,0.85)";
+var NND_FG = "#ffffff";
+var NND_HOVER_TICK = "#ffffff";
+
 var ON_COLOR = "#4CAF50";
 var OFF_COLOR = "#f44336";
+
+/** Niconico Douga ids: sm|nm|so|ca + digits, or a legacy bare numeric id.
+ * Duplicated from SMPlayer.isNndSMId / ytjs isNndId so this component stays
+ * self-contained (it only receives v_id). */
+function isNndId(id: string | undefined | null): boolean {
+    if (!id) return false;
+    var s = id.replace(/^\s+|\s+$/g, "");
+    return /^(sm|nm|so|ca)\d+$/i.test(s) || /^\d+$/.test(s);
+}
 
 /** Player-behaviour settings surfaced as on/off toggles in the Settings menu.
  * Keys map 1:1 to StorageKey enum values (the same localStorage contract the
@@ -159,6 +187,19 @@ var IDLE_MS = 2000;
 var HOLD_MIN_SECONDS = 0.4;
 
 var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMControls(p, ref) {
+    // Palette selection: NND ids get the PipePipe dark tokens, everything else
+    // keeps the Hitchhiker light-on-dark reconstruction. These locals shadow the
+    // module-level HK_*/NND_* names so every style below stays unchanged.
+    var nnd = isNndId(p.v_id);
+    var STRIP_BG = nnd ? NND_STRIP_BG : HK_STRIP_BG;
+    var STRIP_BUFFER = nnd ? NND_STRIP_BUFFER : HK_STRIP_BUFFER;
+    var STRIP_PLAYED = nnd ? NND_STRIP_PLAYED : HK_STRIP_PLAYED;
+    var EXTRACT_TICK = nnd ? NND_EXTRACT_TICK : HK_EXTRACT_TICK;
+    var SELECTION = nnd ? NND_SELECTION : HK_SELECTION;
+    var BAR_BG = nnd ? NND_BAR_BG : HK_BAR_BG;
+    var FG = nnd ? NND_FG : HK_FG;
+    var HOVER_TICK = nnd ? NND_HOVER_TICK : HK_HOVER_TICK;
+
     var [visible, setVisible] = useState(true);
     var [hoverSec, setHoverSec] = useState<number | null>(null);
     var [scrubbing, setScrubbing] = useState(false);

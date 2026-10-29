@@ -1412,7 +1412,15 @@ function App() {
         return;
       }
       console.log("Metadata:" + archiveReq.response);
-      setArchiveInfo(JSON.parse(archiveReq.response) as ArchiveInfo);
+      // IE11 ignores responseType='json' and leaves the raw string, while
+      // WebView2/Chromium already parsed it into an object. Parsing the
+      // object would throw ("[object Object]") and skip setArchiveInfo, so
+      // only parse strings.
+      setArchiveInfo(
+        typeof archiveReq.response === 'string'
+          ? JSON.parse(archiveReq.response) as ArchiveInfo
+          : archiveReq.response as ArchiveInfo
+      );
     }
     archiveReq.send();
   }
@@ -1884,7 +1892,7 @@ Description:\n${archiveInfo.description}
 
     { !pseudoFullscreen && !archiveInfo &&
       <div className='row' style={{ height: '35px' }}>
-        <div className='col' style={{ marginTop: '5px' }}>Loading metadata...</div>
+        <div className='col' style={{ marginTop: '5px', color: isNndSMId(queryParameters.get('videoid') || '') ? '#aaaaaa' : '#666' }}>Loading metadata...</div>
       </div>
     }
     { (url != "" && isMpdLoaded) ? 
@@ -2083,8 +2091,10 @@ Description:\n${archiveInfo.description}
       }
       <div style={{ display: pseudoFullscreen ? 'none' : 'block' }}>
         {/* Always rendered: the strip hosts the About/Comments tabs and the
-            NND import tool, all of which are useful without archive metadata. */}
-        <HitchhikerInfo info={archiveInfo} />
+            NND import tool, all of which are useful without archive metadata.
+            NND ids get the PipePipe dark palette so the strip reads as a
+            Niconico surface rather than a Hitchhiker one; layout is identical. */}
+        <HitchhikerInfo info={archiveInfo} nnd={isNndSMId(queryParameters.get('videoid') || '')} />
         <ClipExtractor 
         resume={resume} 
         start={start} 

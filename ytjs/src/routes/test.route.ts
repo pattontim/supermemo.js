@@ -6,6 +6,8 @@ import { FormatOptions } from "../utils/yt-types";
 import { VideoInfo } from "../utils/yt-types";
 import { PlayerCaptionsTracklist } from "../utils/yt-types";
 import { Router } from "express";
+import { isNndId } from "../utils/niconico";
+import { getSession } from "./nnd.route";
 
 const router = Router();
 
@@ -294,6 +296,43 @@ router.get("/mpd/invalidate/:v_id", async (req, res) => {
  */
 router.get("/archiveInfo/:v_id", async (req, res) => {
 	const v_id = req.params.v_id;
+
+	// NND ids never exist in the YouTube cache (archiving NND is not
+	// supported), so getCacheWait would just block ~10s and 404. Serve an
+	// ArchiveInfo-shaped object from the watch data instead, so the SMPlayer
+	// info strip and the About tab render.
+	if (isNndId(v_id)) {
+		try {
+			const w = (await getSession(v_id)).watch as any;
+			const video = w.video || {};
+			// Uploader: current nvapi payload puts it in metadata.jsonLd.owner
+			// ({ id, type: "user"|"channel", name }); older payloads used
+			// top-level owner/channel, kept as fallbacks.
+			const ldOwner = (w.metadata && w.metadata.jsonLd && w.metadata.jsonLd.owner) || {};
+			const owner = w.owner || ldOwner;
+			const channel = w.channel || (ldOwner.type === "channel" ? ldOwner : null);
+			const isChannel = ldOwner.type === "channel" || channel != null;
+			res.send({
+				title: video.title || "",
+				published: formatNndDate(video.registeredAt || video.postedAt),
+				relative_date: "",
+				author_name: (owner && owner.nickname) || (owner && owner.name) ||
+					(channel && channel.name) || "Niconico",
+				author_channel_url: owner && owner.id
+					? (isChannel
+						? "https://ch.nicovideo.jp/" + owner.id
+						: "https://www.nicovideo.jp/user/" + owner.id)
+					: "",
+				description: plainText(video.description),
+			});
+		} catch (e) {
+			// Also covers NndError for paid/geo/login-gated/gone videos.
+			console.error(`[archiveInfo] NND fetch failed for ${v_id}:`, e);
+			res.status(404).send({});
+		}
+		return;
+	}
+
 	const archiveInfo = await getCacheWait(v_id);
 	if (archiveInfo) {
 		res.send(archiveInfo);
@@ -301,6 +340,40 @@ router.get("/archiveInfo/:v_id", async (req, res) => {
 		res.status(404).send({});
 	}
 });
+
+/**
+ * NND `video.description` is HTML (`<br>`, `<a href>`), but HitchhikerInfo
+ * renders it as plain text with white-space: pre-wrap, so tags would show up
+ * literally. Turn line breaks into real newlines, drop every other tag, and
+ * decode the handful of entities NND emits.
+ */
+function plainText(html: unknown): string {
+	if (typeof html !== "string") return "";
+	return html
+		.replace(/<br\s*\/?>/gi, "\n")
+		.replace(/<[^>]*>/g, "")
+		.replace(/&nbsp;/g, " ")
+		.replace(/&lt;/g, "<")
+		.replace(/&gt;/g, ">")
+		.replace(/&quot;/g, '"')
+		.replace(/&#39;/g, "'")
+		.replace(/&amp;/g, "&")
+		.trim();
+}
+
+/**
+ * NND `video.registeredAt` is an ISO timestamp with a JST offset
+ * (e.g. "2026-01-13T17:00:00+09:00"); render it like YouTube's archived
+ * dates ("Jan 13, 2026"). Unparseable values degrade to "".
+ */
+function formatNndDate(iso: unknown): string {
+	if (typeof iso !== "string" || !iso) return "";
+	const d = new Date(iso);
+	if (isNaN(d.getTime())) return "";
+	const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+		"Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+	return months[d.getUTCMonth()] + " " + d.getUTCDate() + ", " + d.getUTCFullYear();
+}
 
 router.get("/archivei/", async (req, res) => {
 	res.send(archive);

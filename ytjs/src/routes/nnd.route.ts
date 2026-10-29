@@ -27,7 +27,7 @@ import { fullUrlForClient, useOnline } from "../server";
 
 const router = Router();
 
-interface NndSession {
+export interface NndSession {
 	watch: NndWatchData;
 	domandBid: string;
 	fetchedAt: number;
@@ -40,7 +40,8 @@ const sessions = new Map<string, NndSession>();
 /** Watch data goes stale when the access-right key rotates; refetch after 30 min. */
 const SESSION_TTL_MS = 30 * 60 * 1000;
 
-async function getSession(id: string, forceRefresh = false): Promise<NndSession> {
+/** Exported so /archiveInfo (test.route.ts) reuses the same 30-min watch cache. */
+export async function getSession(id: string, forceRefresh = false): Promise<NndSession> {
 	const cached = sessions.get(id);
 	if (!forceRefresh && cached && Date.now() - cached.fetchedAt < SESSION_TTL_MS) {
 		return cached;

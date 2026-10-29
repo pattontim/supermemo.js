@@ -9,16 +9,49 @@ import NndTool from './NndTool';
 //  - 2-line clamp via fixed-height box + gradient overlay (not CSS clamp).
 //  - No native <button>/<input>/<select>/<option> in SM's DOM scan path.
 
-// Hitchhiker accent tokens (mirror SMControls.tsx).
-const HK_RED = '#cc181e';   // active-tab underline + channel accent
-const HK_BLUE = '#167ac6';  // link / divider labels
-const BORDER = '#e2e2e2';
-const TEXT = '#0f0f0f';
-const TAB_INACTIVE = '#888';
-const SUBTLE = '#666';
-const PAGE_BG = '#fff';
+// Theme tokens. Two palettes: the default Hitchhiker (light) one, and a
+// PipePipe-derived dark one used when the player is showing a Niconico Douga
+// video. Markup/layout is identical in both — only these values change.
+//
+// PipePipe values verified against PipePipeClient/app/src/main/res/values/
+// colors.xml: dark_background_color #222222, dark_dialog_background_color
+// #424242, dark_settings_accent_color #ff5252, dark_border_color #33FFFFFF,
+// dark_card_item_background_color #313131. The cyan/orange/blue secondaries
+// (#00FFFF / #FF9900 / #008FD6) are the same family PipePipe carries; they are
+// split per element so the strip is not monochrome grey.
+interface InfoTheme {
+  pageBg: string;    // container background + description fade target
+  fadeFrom: string;  // transparent stop matching pageBg (IE11 interpolates)
+  text: string;      // title / channel name
+  subtle: string;    // secondary text
+  tabInactive: string;
+  tabAccent: string; // active tab underline
+  chanAccent: string;// channel accent bar
+  link: string;      // "Show more" / link color
+  border: string;
+}
 
-// Must match the player's minWidth so left edges line up exactly.
+// Hitchhiker tokens (mirror SMControls.tsx).
+const HK_THEME: InfoTheme = {
+  pageBg: '#fff', fadeFrom: 'rgba(255,255,255,0)', text: '#0f0f0f',
+  subtle: '#666', tabInactive: '#888',
+  tabAccent: '#cc181e', chanAccent: '#cc181e', link: '#167ac6',
+  border: '#e2e2e2',
+};
+
+// PipePipe dark surfaces. Primary accent #ff5252 stays on the tab underline;
+// cyan marks the channel bar and blue carries links.
+const NND_THEME: InfoTheme = {
+  pageBg: '#222222', fadeFrom: 'rgba(34,34,34,0)', text: '#ffffff',
+  subtle: '#aaaaaa', tabInactive: '#777777',
+  tabAccent: '#ff5252', chanAccent: '#00ffff', link: '#008fd6',
+  border: 'rgba(255,255,255,0.20)',
+};
+
+// The player's 16:9 box is width:100% with this same floor (SMPlayer.tsx
+// minWidth on the player container). The strip's BACKGROUND must span that full
+// width so its edges line up with the player, but the CONTENT stays in the
+// original 754px column, centred.
 const CONTENT_WIDTH = 754;
 
 // Collapsed description: 2 lines at the line-height below.
@@ -27,7 +60,9 @@ const DESC_COLLAPSED_H = DESC_LINE_HEIGHT * 2; // 36px
 
 type TabKey = 'about' | 'comments' | 'nnd';
 
-export default function HitchhikerInfo({ info }: { info?: ArchiveInfo }) {
+export default function HitchhikerInfo({ info, nnd }: { info?: ArchiveInfo; nnd?: boolean }) {
+  // NND gets the PipePipe dark palette; everything else keeps Hitchhiker light.
+  const t: InfoTheme = nnd ? NND_THEME : HK_THEME;
   // Without archive metadata there is no About content, so open the tab that
   // is still useful (the NND import tool).
   const [tab, setTab] = useState<TabKey>('about');
@@ -52,8 +87,8 @@ export default function HitchhikerInfo({ info }: { info?: ArchiveInfo }) {
           display: 'inline-block', padding: '0 5px', cursor: 'pointer',
           userSelect: 'none', fontSize: '13px', fontWeight: 'bold',
           lineHeight: '22px', letterSpacing: 0, whiteSpace: 'nowrap',
-          color: active ? TEXT : TAB_INACTIVE,
-          borderBottom: active ? '3px solid ' + HK_RED : '3px solid transparent',
+          color: active ? t.text : t.tabInactive,
+          borderBottom: active ? '3px solid ' + t.tabAccent : '3px solid transparent',
         }}
       >
         {label}
@@ -65,12 +100,21 @@ export default function HitchhikerInfo({ info }: { info?: ArchiveInfo }) {
     <div
       className="hk-video-page"
       style={{
-        width: CONTENT_WIDTH, maxWidth: '100%', margin: '0 auto',
-        fontFamily: 'Arial, sans-serif', color: TEXT, background: PAGE_BG,
+        // Outer shell: full width (floored at the player's minWidth) so the
+        // background and bottom border reach the player's left/right edges.
+        // All layout lives in the inner column.
+        width: '100%', minWidth: CONTENT_WIDTH, margin: 0,
+        fontFamily: 'Arial, sans-serif', color: t.text, background: t.pageBg,
         // Attached to the player: no top gap, no rounded corners, no side borders.
-        borderBottom: '1px solid ' + BORDER,
+        borderBottom: '1px solid ' + t.border,
+        boxSizing: 'border-box',
       }}
     >
+      {/* Content column: original fixed width, centred in the wider shell. */}
+      <div
+        className="hk-video-content"
+        style={{ width: CONTENT_WIDTH, maxWidth: '100%', margin: '0 auto' }}
+      >
       {/* Title row — title left (truncated), tabs top-right, same line */}
       <div
         className="hk-title-row"
@@ -117,16 +161,16 @@ export default function HitchhikerInfo({ info }: { info?: ArchiveInfo }) {
             {info ? (
             <div>
             {/* Publish date + artist on ONE line */}
-            <div className="hk-video-subline" style={{ fontSize: '12px', color: SUBTLE, marginBottom: '8px' }}>
+            <div className="hk-video-subline" style={{ fontSize: '12px', color: t.subtle, marginBottom: '8px' }}>
               <span
-                style={{ display: 'inline-block', width: '3px', height: '11px', background: HK_RED, verticalAlign: 'middle', marginRight: '6px' }}
+                style={{ display: 'inline-block', width: '3px', height: '11px', background: t.chanAccent, verticalAlign: 'middle', marginRight: '6px' }}
               />
               <a
                 className="hk-channel-link"
                 href={info.author_channel_url || '#'}
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{ color: TEXT, fontWeight: 'bold', textDecoration: 'none', verticalAlign: 'middle' }}
+                style={{ color: t.text, fontWeight: 'bold', textDecoration: 'none', verticalAlign: 'middle' }}
               >
                 {info.author_name}
               </a>
@@ -160,7 +204,7 @@ export default function HitchhikerInfo({ info }: { info?: ArchiveInfo }) {
                     style={{
                       position: 'absolute', left: 0, right: 0, bottom: 0,
                       height: DESC_LINE_HEIGHT + 'px',
-                      background: 'linear-gradient(rgba(255,255,255,0), ' + PAGE_BG + ')',
+                      background: 'linear-gradient(' + t.fadeFrom + ', ' + t.pageBg + ')',
                     }}
                   />
                 ) : null}
@@ -173,7 +217,7 @@ export default function HitchhikerInfo({ info }: { info?: ArchiveInfo }) {
                   style={{
                     display: 'inline-block', marginTop: '4px', cursor: 'pointer',
                     userSelect: 'none', fontSize: '12px', fontWeight: 'bold',
-                    color: HK_BLUE, textTransform: 'uppercase', letterSpacing: '0.5px',
+                    color: t.link, textTransform: 'uppercase', letterSpacing: '0.5px',
                   }}
                 >
                   {descExpanded ? 'Show less' : 'Show more'}
@@ -182,7 +226,7 @@ export default function HitchhikerInfo({ info }: { info?: ArchiveInfo }) {
             </div>
             </div>
             ) : (
-              <div style={{ fontSize: '13px', color: SUBTLE, textAlign: 'center', padding: '12px 0' }}>
+              <div style={{ fontSize: '13px', color: t.subtle, textAlign: 'center', padding: '12px 0' }}>
                 No metadata for this video.
               </div>
             )}
@@ -192,7 +236,7 @@ export default function HitchhikerInfo({ info }: { info?: ArchiveInfo }) {
         {tab === 'comments' ? (
           <div className="hk-tab-comments">
             {/* Load triggers on tab click; feature disabled for now. */}
-            <div style={{ fontSize: '13px', color: SUBTLE, textAlign: 'center', padding: '12px 0' }}>
+            <div style={{ fontSize: '13px', color: t.subtle, textAlign: 'center', padding: '12px 0' }}>
               {/* TODO: wire to a backend comments route (none exists yet) */}
               Comments are disabled for now.
             </div>
@@ -207,6 +251,7 @@ export default function HitchhikerInfo({ info }: { info?: ArchiveInfo }) {
           </div>
         ) : null}
 
+      </div>
       </div>
     </div>
   );
