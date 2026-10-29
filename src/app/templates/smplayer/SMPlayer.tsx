@@ -751,8 +751,19 @@ function App() {
    * @returns {void}
    */
   function seekVideo(to: string | null) {
-    if (ref.current) {
-        ref.current.seekTo(convertHHMMSS2Seconds(to));
+    if (!ref.current) return;
+    const seconds = convertHHMMSS2Seconds(to);
+    // A seek to 0 is a no-op for a fresh element; skip it so we never touch
+    // currentTime while the <video> is still HAVE_NOTHING. The NND/HLS path
+    // fires onReady on hls.js MANIFEST_PARSED (before any segment is
+    // appended), so setting currentTime then throws InvalidStateError on IE11
+    // and aborts handlePlayerReady before setPlaying(true) runs — which is why
+    // the poster stayed up until the user clicked play.
+    if (seconds === 0) return;
+    try {
+      ref.current.seekTo(seconds);
+    } catch (e) {
+      console.log('seekVideo skipped (element not seekable yet):', e);
     }
   }
 
@@ -1999,7 +2010,12 @@ Description:\n${archiveInfo.description}
           onPlaybackRateChange={handleOnPlaybackRateChange}
           onSeek={handleSeek}
           onEnded={handleEnded}
-          onError={e => console.log('onError', e)}
+          onError={(e, data) => {
+            console.log('onError', e, data);
+            if (data) {
+              console.log('  fatal:', data.fatal, 'type:', data.type, 'details:', data.details);
+            }
+          }}
           onProgress={handleProgress}
           onDuration={handleDuration}>
         </ReactPlayer>
