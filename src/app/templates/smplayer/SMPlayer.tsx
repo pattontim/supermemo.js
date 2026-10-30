@@ -1666,8 +1666,13 @@ Description:\n${archiveInfo.description}
       return;
     }
     if (isNndSMId(archiveId)) {
-      alert("Archiving is not supported for Niconico Douga videos yet.");
-      return;
+      // NND archives go through the server's yt-dlp strategy; "current" has no
+      // dash.js ladder to resolve from — use the pinned domand quality or "best".
+      if (quality === "current") {
+        const m = /^video-h264-(\d+)p$/.exec(nndActiveQuality);
+        quality = m ? m[1] + "p" : "best";
+      }
+      captions = false; // no caption_tracks on NND
     }
 
     // Key identifying which archive menu item was pressed, so SMControls can
@@ -1686,6 +1691,13 @@ Description:\n${archiveInfo.description}
     archiveUrl.searchParams.append("captions", `${captions}`);
     overwrite && archiveUrl.searchParams.append("overwrite", "true");
     cleanupCaptionsOnArchive && archiveUrl.searchParams.append("cleanup", "true");
+    // Slow-network mode: same flag the stream/SABR requests send. The backend
+    // widens yt-dlp's socket timeout so a stalled link is not a hard failure.
+    try {
+      if (window.localStorage.getItem(StorageKey.SLOW_NETWORK) === "true") {
+        archiveUrl.searchParams.append("slow", "1");
+      }
+    } catch (e) { /* ignore */ }
     archiveReq.open('GET', archiveUrl.toString());
     archiveReq.responseType = 'json';
     archiveReq.onload = function () {
@@ -1722,12 +1734,7 @@ Description:\n${archiveInfo.description}
       alert("Invalid YouTube Video ID: " + archiveId);
       return;
     }
-    if (isNndSMId(archiveId)) {
-      alert("No archive exists for Niconico Douga videos.");
-      return;
-    }
     if (!window.confirm("Delete this archive? This cannot be undone.")) return;
-
     const deleteReq = new XMLHttpRequest();
     deleteReq.open('DELETE', "http://" + ytjsHost + "/archive/" + archiveId);
     deleteReq.onload = function () {
@@ -2293,7 +2300,14 @@ Description:\n${archiveInfo.description}
           onCopyCue={function (ctx?: number) { copyCue(ctx); }}
           onTranslateCue={function (ctx?: number) { translateCue(ctx); }}
           onSummarize={function () { summarizeWithAI(queryParameters.get("videoid")?.trim() ?? ""); }}
-          onOpenYT={function () { openInYouTube(queryParameters.get("videoid")?.trim() ?? "", start); }}
+          onOpenYT={function () {
+            const openId = queryParameters.get("videoid")?.trim() ?? "";
+            if (isNndSMId(openId)) {
+              window.open("microsoft-edge:https://www.nicovideo.jp/watch/" + openId);
+              return;
+            }
+            openInYouTube(openId, start);
+          }}
           onArchive={handleArchive}
           onDeleteArchive={handleDeleteArchive}
           archivingId={archivingId}

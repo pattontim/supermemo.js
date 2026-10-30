@@ -18,6 +18,8 @@ import { FFmpegService } from "../services/ffmpeg.service";
 import { normalizeCaptions } from "../utils/caption-cleanup";
 import { acquireSabrDownloadStream } from "./sabr.route";
 import type { SabrStream } from "../sabr/sabr-stream";
+import { isNndId, nndCookie, NndError } from "../utils/niconico";
+import { getSession } from "./nnd.route";
 
 const router = Router();
 
@@ -228,14 +230,26 @@ router.delete("/archive/:v_id", function (req, res) {
 
 router.get("/archive/:v_id", async (req, res) => {
 	const v_id = req.params.v_id;
+	// NND ids have no YouTube cache entry and no SABR/standard path, so yt-dlp
+	// is the only (and therefore default) strategy for them.
+	const nnd = isNndId(v_id);
 	const shouldArchiveVideo = req.query.video === 'true';
-	const shouldArchiveCaptions = req.query.captions === 'true';
+	const shouldArchiveCaptions = !nnd && req.query.captions === 'true';
 	const shouldOverwrite = req.query.overwrite === 'true';
 	const cleanupCaptions = req.query.cleanup === 'true';
 	const shouldArchive = shouldArchiveVideo || shouldArchiveCaptions;
-	const downloadStrategy = (req.query.strategy as string) || "standard"; // 'standard' or 'ytdlp'
+	const downloadStrategy = (req.query.strategy as string) || (nnd ? "ytdlp" : "standard"); // 'standard' or 'ytdlp'
+	// Slow-network mode (same flag the SABR manifest honours): widen the
+	// downloader's per-socket budget so a stalled link is not mistaken for a
+	// dead one.
+	const slowNetwork = req.query.slow === "1";
 
 	console.log(`archive request for ${v_id} (video: ${shouldArchiveVideo}, captions: ${shouldArchiveCaptions}, overwrite: ${shouldOverwrite}, cleanup: ${cleanupCaptions})`);
+
+	if (nnd && downloadStrategy !== "ytdlp") {
+		res.status(400).send(`Error: strategy '${downloadStrategy}' is not supported for NND videos. Only 'ytdlp' is supported.`);
+		return;
+	}
 
 	// Return existing format if just querying and video exists
 	if (shouldArchive === false && archive[v_id]?.file_formats) {
@@ -255,9 +269,40 @@ router.get("/archive/:v_id", async (req, res) => {
 	}
 
 
-	let videoInfoFull = ((await getCacheWait(v_id)) as CacheInfoV3 | undefined)?.ytiVidInfo;
-	if (!videoInfoFull) {
-		videoInfoFull = await getLocalVideoInfo(v_id);
+	let videoInfoFull: any;
+	if (nnd) {
+		// No YouTube cache for NND ids: build a minimal basic_info-shaped object
+		// from the watch data so latestArchiveConstructor produces a valid info.json.
+		let watch: any;
+		try {
+			watch = (await getSession(v_id)).watch;
+		} catch (error) {
+			const status = error instanceof NndError
+				? (error.kind === "gone" ? 404 : 403)
+				: 503;
+			console.log(`[NND] watch fetch failed for ${v_id}: ${error}`);
+			res.status(status).send(`Error: ${error}`);
+			return;
+		}
+		videoInfoFull = {
+			basic_info: {
+				id: v_id,
+				title: watch?.video?.title ?? "",
+				duration: watch?.video?.duration ?? 0,
+				channel: {
+					name: watch?.owner?.nickname ?? watch?.channel?.name ?? "",
+					id: watch?.owner?.id ?? watch?.channel?.id ?? "",
+				},
+				short_description: watch?.video?.description ?? "",
+				publish_date: watch?.video?.registeredAt ?? "",
+				thumbnail: watch?.video?.thumbnail?.ogp ?? "",
+			},
+		};
+	} else {
+		videoInfoFull = ((await getCacheWait(v_id)) as CacheInfoV3 | undefined)?.ytiVidInfo;
+		if (!videoInfoFull) {
+			videoInfoFull = await getLocalVideoInfo(v_id);
+		}
 	}
 
 	let newInfo: ArchiveInfoLatest;
@@ -343,7 +388,7 @@ router.get("/archive/:v_id", async (req, res) => {
 		const verifyIE11 = async (filePath: string): Promise<boolean> =>
 			!ffprobeAvailable || (await FFmpegService.isIE11Compatible(filePath));
 
-		if (sabrEnabled && downloadStrategy !== "ytdlp") {
+		if (sabrEnabled && downloadStrategy !== "ytdlp" && !nnd) {
 			const heightByQuality: Record<string, number> = {
 				"360p": 360, "480p": 480, "720p": 720, "1080p": 1080,
 			};
@@ -428,17 +473,29 @@ router.get("/archive/:v_id", async (req, res) => {
 				console.log(`[Video] Using yt-dlp strategy for download with quality ${quality}`);
 				
 				const ytdlpService = new YtdlpService();
-				const videoUrl = `https://www.youtube.com/watch?v=${v_id}`;
+				const videoUrl = nnd
+					? `https://www.nicovideo.jp/watch/${v_id}`
+					: `https://www.youtube.com/watch?v=${v_id}`;
 				
 				const options = {
 					quality: quality,
 					includeAudio: true,
 					includeVideo: true,
+					forceOverwrite: shouldOverwrite,
+					...(nnd
+						? {
+							platform: "niconico" as const,
+							cookies: nndCookie() || undefined,
+							// nvapi.nicovideo.jp read timeouts are the common failure on
+							// slow links; give yt-dlp a full minute per socket.
+							socketTimeoutSec: slowNetwork ? 60 : 30,
+						  }
+						: {}),
 				};
 
 				const formatSpec = ytdlpService.buildFormatSpec(options);
 
-				const fileNameItag = formatSpec + "." + archiveContainer;
+				const fileNameItag = ytdlpService.formatSpecToFilenameLabel(options) + "." + archiveContainer;
 				const outputPath = path.join(archiveEntryDir, fileNameItag);
 		
 				console.log(`[Video] Downloading to: ${outputPath}`);
@@ -626,7 +683,7 @@ router.get("/archive/:v_id", async (req, res) => {
 					if (stream) stream.cancel();
 				}
 			} else {
-				res.status(400).send(`Error: Unknown download strategy '${downloadStrategy}'. Use 'standard' or 'ytdlp'`);
+				res.status(400).send(`Error: Unknown download strategy '${downloadStrategy}'. Use 'standard' or 'ytdlp' (NND ids only support 'ytdlp')`);
 				return;
 			}
 		} catch (error) {

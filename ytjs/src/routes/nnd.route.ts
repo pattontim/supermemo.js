@@ -107,7 +107,11 @@ router.get("/nnd/:id/:quality.m3u8", async (req, res) => {
 	const quality = req.params.quality;
 	if (!isNndId(id)) return res.status(400).send("not an NND id");
 
-	const proxyBase = `http://${fullUrlForClient}/nnd/proxy/`;
+	// Slow-network mode is carried into every rewritten URI so segment/key
+	// requests inherit the same widened long-request budget as the playlist.
+	const slow = req.query.slow === "1";
+	const proxyBase =
+		`http://${fullUrlForClient}/nnd/proxy/` + (slow ? "?slow=1" : "");
 	const started = Date.now();
 
 	// One retry with fresh watch data covers the expired access-right key.

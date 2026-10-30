@@ -117,10 +117,23 @@ export class YtdlpService extends VideoDownloadService {
         formatSpec,
         "--merge-output-format",
         "mp4",
-        "-o",
-        outputPath,
-        videoUrl,
       ];
+      if (options.cookies) {
+        args.push("--add-headers", `Cookie:${options.cookies}`);
+      }
+      if (options.socketTimeoutSec) {
+        // Slow links: yt-dlp's default 20s read timeout aborts the metadata
+        // fetch (nvapi.nicovideo.jp) before a single segment is requested.
+        args.push("--socket-timeout", String(options.socketTimeoutSec));
+        args.push("--retries", "10", "--fragment-retries", "10");
+      }
+      if (options.forceOverwrite) {
+        // Without this yt-dlp sees the existing output file and exits 0
+        // without downloading anything, so a re-archive silently keeps the
+        // old bytes.
+        args.push("--force-overwrites");
+      }
+      args.push("-o", outputPath, videoUrl);
 
       console.log(
         `[yt-dlp] Starting download: ${path.basename(outputPath)}`
@@ -182,10 +195,15 @@ export class YtdlpService extends VideoDownloadService {
         formatSpec,
         "--merge-output-format",
         "mp4",
-        "-o",
-        "-",
-        videoUrl,
       ];
+      if (options.cookies) {
+        args.push("--add-headers", `Cookie:${options.cookies}`);
+      }
+      if (options.socketTimeoutSec) {
+        args.push("--socket-timeout", String(options.socketTimeoutSec));
+        args.push("--retries", "10", "--fragment-retries", "10");
+      }
+      args.push("-o", "-", videoUrl);
 
       console.log(
         `[yt-dlp] Starting video stream download from: ${videoUrl.substring(0, 50)}...`
@@ -262,6 +280,21 @@ export class YtdlpService extends VideoDownloadService {
       return options.format;
     }
 
+    // Niconico does not use YouTube itags; select by height instead.
+    if (options.platform === "niconico") {
+      const q = options.quality || "720p";
+      if (q === "best") return "best";
+      if (q === "worst") return "worst";
+      const heightMap: Record<string, number> = {
+        "360p": 360,
+        "480p": 480,
+        "720p": 720,
+        "1080p": 1080,
+      };
+      const h = heightMap[q] ?? 720;
+      return `bv*[height<=${h}]+ba/b[height<=${h}]/best`;
+    }
+
     const quality = (options.quality || "720p") as IE11Quality;
 
     // Check if it's a valid IE11 preset
@@ -290,6 +323,18 @@ export class YtdlpService extends VideoDownloadService {
     // Default to 720p
     const defaultPreset = IE11_ITAG_PRESETS["720p"];
     return `${defaultPreset.video}+${defaultPreset.audio}`;
+  }
+
+  /**
+   * Filesystem-safe label for a format spec (used in archive filenames).
+   * The raw spec contains characters (`/`, `*`, `[`, `]`) that are illegal or
+   * ugly in paths, so NND archives are labelled by quality instead.
+   */
+  public formatSpecToFilenameLabel(options: VideoDownloadOptions): string {
+    if (options.platform === "niconico") {
+      return (options.quality || "720p").replace(/[^a-zA-Z0-9._-]/g, "");
+    }
+    return this.buildFormatSpec(options).replace(/[^a-zA-Z0-9._+-]/g, "");
   }
 
   /**

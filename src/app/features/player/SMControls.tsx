@@ -518,9 +518,13 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
      * Quality selector row for archiving: "current" plus the fixed IE11 rungs.
      * Each button is a best-effort attempt — the backend tries SABR, then
      * yt-dlp, and alerts on failure so the user can pick another quality.
+     * NND has no dash.js ladder ("current" is meaningless) and no itag presets,
+     * so it gets the plain height rungs plus "best".
      */
     function archiveQualityButtons(): JSX.Element {
-        var qualities = ["current", "360p", "480p", "720p", "1080p"];
+        var qualities = nnd
+            ? ["best", "360p", "480p", "720p", "1080p"]
+            : ["current", "360p", "480p", "720p", "1080p"];
         return (
             <div style={{ display: "flex", flexWrap: "wrap", padding: "2px 8px 4px" }}>
                 {qualities.map(function (q) {
@@ -1177,7 +1181,7 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
                                 {"\uD83E\uDD16 Summarize with AI"}
                             </div>
                             <div style={menuItem} onClick={function () { p.onOpenYT(); }}>
-                                {"\uD83C\uDF0E Open in YouTube"}
+                                {nnd ? "\uD83C\uDF0E Open on nicovideo" : "\uD83C\uDF0E Open in YouTube"}
                             </div>
                             {/* test-only: appends the unstyled Archive accordion to the page end */}
                             <div style={menuItem} onClick={function () { p.onToggleArchivePane(); p.setSettingsOpen(false); }}>
@@ -1219,9 +1223,9 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
                             </div>
                             {isArchived
                                 ? <div>
-                                      <div style={menuItem} onClick={function () { p.onArchive(undefined, true, true, false); }}>
+                                      {nnd ? null : <div style={menuItem} onClick={function () { p.onArchive(undefined, true, true, false); }}>
                                           Re-archive captions{archiveSpinner("captions")}
-                                      </div>
+                                      </div>}
                                       <div style={{ ...menuItem, color: OFF_COLOR }} onClick={function () { p.onDeleteArchive(); }}>
                                           Delete
                                       </div>
@@ -1264,9 +1268,9 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
                             ) : null}
                             {isArchived
                                 ? <div>
-                                      <div style={menuItem} onClick={function () { p.onArchive(undefined, true, true, false); }}>
+                                      {nnd ? null : <div style={menuItem} onClick={function () { p.onArchive(undefined, true, true, false); }}>
                                           Re-archive captions{archiveSpinner("captions")}
-                                      </div>
+                                      </div>}
                                       <div style={{ ...menuItem, color: OFF_COLOR }} onClick={function () { p.onDeleteArchive(); }}>
                                           Delete archive
                                       </div>

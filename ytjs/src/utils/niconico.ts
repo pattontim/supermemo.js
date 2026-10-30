@@ -84,7 +84,7 @@ const STREAM_UA =
  * ServiceList.NicoNico.hasTokens() is true. Only channel-member-only /
  * login-required / region-locked videos need it.
  */
-function nndCookie(): string {
+export function nndCookie(): string {
 	return process.env.NND_COOKIE ?? "";
 }
 

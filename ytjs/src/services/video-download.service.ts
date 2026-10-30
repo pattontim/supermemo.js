@@ -29,6 +29,14 @@ export interface CaptionStream {
 export interface VideoDownloadOptions {
   quality?: "best" | "worst" | string;
   format?: string;
+  /** Source platform; selects the format-selector dialect. Defaults to "youtube". */
+  platform?: "youtube" | "niconico";
+  /** Raw Cookie header value (e.g. NND_COOKIE) forwarded to the downloader. */
+  cookies?: string;
+  /** Per-socket read timeout in seconds (maps to yt-dlp --socket-timeout). */
+  socketTimeoutSec?: number;
+  /** Re-download even when the output file already exists (--force-overwrites). */
+  forceOverwrite?: boolean;
   includeAudio?: boolean;
   includeVideo?: boolean;
   preferredQuality?: string;

@@ -165,9 +165,14 @@ function loadJsonFilesIntoArchive(archiveDir: string, archive: Archive) {
 }
 
 const longRunningRequestMiddleware = (threshold: number = 5000) => {
-	return (req: Request, res: EResponse, next: NextFunction) => {
+	return (req: express.Request, res: EResponse, next: NextFunction) => {
 		const start = Date.now();
 		let requestEnded = false;
+
+		// Slow-network mode asks the client to tolerate up to a minute per
+		// request, so the warning threshold follows the same flag instead of
+		// flagging every deliberately slow transfer.
+		const effectiveThreshold = req.query.slow === "1" ? 60000 : threshold;
 
 		// Function to log long-running request
 		const logLongRunningRequest = () => {
@@ -180,7 +185,7 @@ const longRunningRequestMiddleware = (threshold: number = 5000) => {
 		};
 
 		// Set a timeout to check if the request is still running after the threshold
-		const timeoutId = setTimeout(logLongRunningRequest, threshold);
+		const timeoutId = setTimeout(logLongRunningRequest, effectiveThreshold);
 
 		// Capture when the response finishes
 		res.on("finish", () => {

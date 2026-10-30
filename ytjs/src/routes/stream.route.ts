@@ -392,6 +392,9 @@ router.get("/streamUrl/:v_id", async (req, res) => {
 		// resolved server-side from the watch data, so "auto" is the default.
 		const quality = (req.query.quality as string) || "auto";
 		const url = new URL(`http://${fullUrlForClient}/nnd/${v_id}/${quality}.m3u8`);
+		// Carry slow-network mode into the playlist request so it (and every
+		// proxied segment it rewrites) gets the widened long-request budget.
+		if (req.query.slow === "1") url.searchParams.set("slow", "1");
 		// Same #start,stop fragment contract as the MPD/SABR paths. SMPlayer
 		// strips it before handing the URL to the player.
 		const responseUrl = url.href + "#" + start + "," + stop;
