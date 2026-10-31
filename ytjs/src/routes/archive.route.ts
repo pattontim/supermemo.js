@@ -18,7 +18,7 @@ import { FFmpegService } from "../services/ffmpeg.service";
 import { normalizeCaptions } from "../utils/caption-cleanup";
 import { acquireSabrDownloadStream } from "./sabr.route";
 import type { SabrStream } from "../sabr/sabr-stream";
-import { isNndId, nndCookie, NndError } from "../utils/niconico";
+import { isNndId, nndCookie, NndError, fetchNndComments } from "../utils/niconico";
 import { getSession } from "./nnd.route";
 
 const router = Router();
@@ -695,6 +695,23 @@ router.get("/archive/:v_id", async (req, res) => {
 		if (!videoDownloadSuccess) {
 			res.status(503).send("Error: Video download failed");
 			return;
+		}
+	}
+
+	// Archive bullet comments alongside the video. Best-effort: a missing
+	// nvComment must not fail an otherwise-good archive. Served automatically
+	// by express.static(archiveDir) at /archive/<id>/comments.json.
+	if (nnd) {
+		try {
+			const session = await getSession(v_id);
+			const comments = await fetchNndComments(session.watch);
+			writeFileSync(
+				path.join(archiveEntryDir, "comments.json"),
+				JSON.stringify({ id: v_id, comments }, null, 2)
+			);
+			console.log(`[NND] archived ${comments.length} bullet comments for ${v_id}`);
+		} catch (e) {
+			console.warn(`[Video] comment archive failed for ${v_id}: ${e}`);
 		}
 	}
 

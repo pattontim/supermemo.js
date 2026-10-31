@@ -392,3 +392,98 @@ export async function requestHlsStream(
 
 	return { contentUrl, domandBid };
 }
+
+// ---------------------------------------------------------------------------
+// Bullet comments (danmaku)
+// ---------------------------------------------------------------------------
+
+export interface NndComment {
+	no: number;
+	/** Playback position in centiseconds (vpos * 10 = milliseconds). */
+	vpos: number;
+	content: string;
+	commands: string[];
+	score: number;
+	userId?: string;
+	postedAt?: string;
+}
+
+/**
+ * Port of NiconicoCommentsCache: POST the watch payload's `comment.nvComment`
+ * object (server + params + threadKey) to the nvComment threads API and
+ * flatten every thread's comments into one list.
+ *
+ * `comment.nvComment` is not part of the typed NndWatchData shape — it rides
+ * along on the normalized root's index signature.
+ *
+ * Field names differ between API revisions, so both are accepted:
+ *   older / PPE:  { content, vpos }        (vpos in centiseconds)
+ *   current:      { body,    vposMs }      (vposMs in milliseconds)
+ * Everything is normalized to `content` + `vpos` (centiseconds) so callers
+ * only ever see one shape.
+ */
+export async function fetchNndComments(watch: NndWatchData): Promise<NndComment[]> {
+	const nvComment = (watch as any)?.comment?.nvComment;
+	if (!nvComment || !nvComment.server || !nvComment.params || !nvComment.threadKey) {
+		throw new NndError("gone", "watch payload has no nvComment");
+	}
+
+	const headers: Record<string, string> = {
+		"Content-Type": "text/plain;charset=UTF-8",
+		"x-frontend-id": "6",
+		Origin: "https://www.nicovideo.jp",
+		Referer: "https://www.nicovideo.jp/",
+	};
+	const cookie = nndCookie();
+	if (cookie) headers["Cookie"] = cookie;
+
+	const res = await fetch(`${nvComment.server}/v1/threads`, {
+		method: "POST",
+		headers,
+		body: JSON.stringify({
+			additionals: {},
+			params: nvComment.params,
+			threadKey: nvComment.threadKey,
+		}),
+	});
+	if (res.status >= 400) {
+		throw new NndError("http", `nvComment ${res.status}`, res.status);
+	}
+
+	let data: any;
+	try {
+		data = await res.json();
+	} catch (e) {
+		throw new NndError("http", "nvComment returned non-JSON", res.status);
+	}
+
+	const out: NndComment[] = [];
+	const threads = (data && data.data && data.data.threads) || [];
+	for (const thread of threads) {
+		const comments = (thread && thread.comments) || [];
+		for (const c of comments) {
+			// vposMs (current) wins over vpos (legacy); both -> centiseconds.
+			const vpos =
+				typeof c.vposMs === "number"
+					? Math.round(c.vposMs / 10)
+					: typeof c.vpos === "number"
+						? c.vpos
+						: 0;
+			const content =
+				typeof c.body === "string" ? c.body : typeof c.content === "string" ? c.content : "";
+			out.push({
+				no: c.no ?? 0,
+				vpos,
+				content,
+				commands: c.commands ?? [],
+				score: c.score ?? 0,
+				userId: c.userId,
+				postedAt: c.postedAt,
+			});
+		}
+	}
+	// Threads are concatenated in API order, which is not chronological across
+	// multiple threads (owner / easy / community), so sort by vpos.
+	out.sort((a, b) => a.vpos - b.vpos);
+	return out;
+}

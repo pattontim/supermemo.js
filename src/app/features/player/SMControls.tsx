@@ -107,6 +107,11 @@ var SETTINGS_ARCHIVE: { key: string; label: string }[] = [
     { key: StorageKey.CLEANUP_CAPTIONS_ON_ARCHIVE, label: "Cleanup captions on archive" }
 ];
 
+/** Niconico-only settings. Rendered only when the current id is an NND id. */
+var SETTINGS_NND: { key: string; label: string }[] = [
+    { key: StorageKey.NND_COMMENTS, label: "Bullet comments" }
+];
+
 /**
  * Best-guess quality label of an archive, taken from the first available
  * download format (same approximation the old Archive accordion used). Written
@@ -1299,6 +1304,14 @@ var SMControls = forwardRef<SMControlsHandle, SMControlsProps>(function SMContro
                                     </div>
                                 );
                             })}
+                            {nnd ? (
+                                <div>
+                                    <div style={{ padding: "8px 8px 2px", color: STRIP_BUFFER, fontWeight: "bold" }}>
+                                        Niconico
+                                    </div>
+                                    {SETTINGS_NND.map(function (s) { return toggleRow(s.key, s.label); })}
+                                </div>
+                            ) : null}
                         </div>
                     ) : null}
 

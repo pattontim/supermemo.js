@@ -28,6 +28,9 @@ export enum StorageKey {
   /** Report a low bandwidth_estimate to SABR so it prioritizes fast delivery */
   SLOW_NETWORK = 'SLOW_NETWORK',
 
+  /** Render Niconico Douga bullet comments (danmaku) over the player. Opt-in. */
+  NND_COMMENTS = 'NND_COMMENTS',
+
   /** Preferred video quality height for DASH/SABR playback (e.g. 360, 720, 1080) */
   QUALITY = 'QUALITY',
 }

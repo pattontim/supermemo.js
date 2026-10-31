@@ -15,6 +15,7 @@ import { Router } from "express";
 import { Readable } from "stream";
 import {
 	fetchWatchData,
+	fetchNndComments,
 	requestHlsStream,
 	streamHeaders,
 	resolveVideoQuality,
@@ -91,6 +92,22 @@ router.get("/nnd/:id/watch", async (req, res) => {
 				.filter((v) => v.isAvailable)
 				.map((v) => v.id),
 		});
+	} catch (e) {
+		res.status(statusFor(e)).send(errorText(e));
+	}
+});
+
+// ---------------------------------------------------------------------------
+// Bullet comments: /nnd/sm45831835/comments -> { id, comments: NndComment[] }
+// ---------------------------------------------------------------------------
+
+router.get("/nnd/:id/comments", async (req, res) => {
+	const id = req.params.id;
+	if (!isNndId(id)) return res.status(400).send("not an NND id");
+	try {
+		const session = await getSession(id);
+		const comments = await fetchNndComments(session.watch);
+		res.json({ id, comments });
 	} catch (e) {
 		res.status(statusFor(e)).send(errorText(e));
 	}
@@ -222,9 +239,14 @@ router.get("/nnd/proxy/", async (req, res) => {
 		const text = await upstream.text();
 		if (upstream.status >= 400) return res.status(upstream.status).send(text);
 		res.set("Cache-Control", "no-store");
+		// Nested playlists (media variant / audio rendition) are rewritten here,
+		// not by the /nnd/:id/:quality.m3u8 handler, so slow-network mode has to
+		// be re-attached or every segment URI below loses it.
+		const nestedProxyBase =
+			`http://${fullUrlForClient}/nnd/proxy/` + (req.query.slow === "1" ? "?slow=1" : "");
 		return res
 			.type("application/vnd.apple.mpegurl")
-			.send(rewritePlaylist(text, `http://${fullUrlForClient}/nnd/proxy/`, id, url));
+			.send(rewritePlaylist(text, nestedProxyBase, id, url));
 	}
 
 	res.status(upstream.status);

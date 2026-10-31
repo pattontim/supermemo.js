@@ -414,6 +414,17 @@ function App() {
   /** Position (seconds) to resume at after an NND quality reload. */
   const nndResumeAt = useRef<number | null>(null);
 
+  /** NND bullet comments (danmaku) overlay: DOM node the spans are appended to. */
+  const nndOverlayRef = useRef<HTMLDivElement | null>(null);
+  /** Comments sorted by vpos (centiseconds), fetched once per mount. */
+  const nndCommentsRef = useRef<{ vpos: number; content: string; commands: any }[]>([]);
+  /** Index of the next comment to spawn. */
+  const nndNextIdx = useRef(0);
+  /** Per-row collision state, mirroring PipePipe's rowsRegular. */
+  const nndRows = useRef<{ lastStart: number; lastLen: number }[]>([]);
+  /** One-shot guard so the comments XHR is not repeated on quality reloads. */
+  const nndCommentsFetched = useRef(false);
+
   // ============================================================================
   // EFFECT: NND quality menu population
   // ============================================================================
@@ -595,6 +606,7 @@ function App() {
    */
   const handlePlay = () => {
     console.log('onPlay')
+    resumeNndComments();
     // Only allow playing if mouse is over player
     if (isMouseOverPlayer) {
       if(isShortClip){
@@ -614,6 +626,7 @@ function App() {
    */
   const handlePause = () => {
     console.log('onPause')
+    pauseNndComments();
     setPlaying(false)
   }
 
@@ -1012,7 +1025,17 @@ function App() {
       videoElement.addEventListener('volumechange', volume => {
         setVolume(videoElement.volume);
       }); 
+      // NND bullet comments: pump off the element's own timeupdate (~4x/sec)
+      // rather than react-player's 1000ms progressInterval, so comments spawn
+      // on time and also after a seek. onReady re-fires on quality reloads, so
+      // the listener is attached once per element.
+      if (isNndSMId(vId) && !(videoElement as any).__nndCommentsBound) {
+        (videoElement as any).__nndCommentsBound = true;
+        videoElement.addEventListener('timeupdate', onNndTimeUpdate);
+      }
     }
+
+    fetchNndCommentsOnce(vId);
 
     seekVideo(start);
     // A quality reload re-fired onReady; override the clip-start seek with the
@@ -1106,6 +1129,281 @@ function App() {
     }
     // Still not seekable; keep the target so the next handleProgress tick
     // retries.
+  }
+
+  // ============================================================================
+  // NND BULLET COMMENTS (danmaku) OVERLAY
+  // ============================================================================
+  /**
+   * Port of PipePipe's BulletCommentsView, reduced to what IE11 can do well:
+   * absolutely-positioned spans animated with a CSS transition on transform
+   * (compositor-driven, no per-frame layout). Comments are fetched once from
+   * /nnd/:id/comments (or the archived comments.json) and spawned as the
+   * playhead passes their vpos.
+   */
+
+  /** Rows the overlay is divided into; PipePipe uses ~11. */
+  const NND_ROW_COUNT = 11;
+  /** Base scroll duration in ms; longer comments get proportionally longer. */
+  const NND_SCROLL_MS = 5000;
+  /** Hard cap on live spans so a dense thread cannot bloat the DOM. */
+  const NND_MAX_SPANS = 60;
+
+  /** Normalizes `commands` (array or space-separated string) to an array. */
+  function nndCommands(c: { commands: any }): string[] {
+    if (!c || c.commands == null) return [];
+    if (Object.prototype.toString.call(c.commands) === "[object Array]") {
+      return c.commands as string[];
+    }
+    return String(c.commands).split(/\s+/);
+  }
+
+  /** True when the user has opted into the bullet-comments overlay. Read from
+   * localStorage on every check so the settings toggle takes effect without a
+   * reload (the same raw "true"/"false" contract useLocalStorage writes). */
+  function nndCommentsEnabled(): boolean {
+    try {
+      return window.localStorage.getItem(StorageKey.NND_COMMENTS) === "true";
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /**
+   * Fetches the bullet comments once per mount. Archived videos are served by
+   * express.static at /archive/<id>/comments.json; live ones by the nvComment
+   * proxy route.
+   */
+  function fetchNndCommentsOnce(id: string) {
+    if (!isNndSMId(id) || nndCommentsFetched.current) return;
+    if (!nndCommentsEnabled()) return;
+    nndCommentsFetched.current = true;
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("GET", "http://" + ytjsHost + "/nnd/" + id + "/comments");
+    xhr.responseType = "json";
+    xhr.onload = function () {
+      if (xhr.status !== 200) {
+        console.log('NND comments unavailable:', xhr.status);
+        return;
+      }
+      const body = typeof xhr.response === 'string'
+        ? JSON.parse(xhr.response) : xhr.response;
+      const list = (body && body.comments) || [];
+      // Threads are concatenated in API order, not chronological order.
+      list.sort(function (a: any, b: any) { return a.vpos - b.vpos; });
+      nndCommentsRef.current = list;
+      nndNextIdx.current = 0;
+      console.log('NND comments loaded:', list.length);
+    };
+    xhr.onerror = function () { console.log('NND comments request failed'); };
+    xhr.send();
+  }
+
+  /** Removes every live span (used on seek and on unmount). */
+  function clearNndComments() {
+    const overlay = nndOverlayRef.current;
+    if (!overlay) return;
+    while (overlay.firstChild) overlay.removeChild(overlay.firstChild);
+    nndRows.current = [];
+  }
+
+  /**
+   * Spawns one comment. Row allocation mirrors PipePipe's tryToDrawComment:
+   * a row is usable when the previous comment's tail has cleared the right
+   * edge, or when this comment cannot catch up to it before it exits.
+   */
+  function spawnNndComment(c: { vpos: number; content: string; commands: any }) {
+    const overlay = nndOverlayRef.current;
+    if (!overlay || !c.content) return;
+    if (overlay.children.length >= NND_MAX_SPANS) return;
+
+    const now = performance.now();
+    const w = overlay.clientWidth;
+    const h = overlay.clientHeight;
+    if (!w || !h) return;
+
+    if (nndRows.current.length === 0) {
+      for (let i = 0; i < NND_ROW_COUNT; i++) {
+        nndRows.current.push({ lastStart: 0, lastLen: 0 });
+      }
+    }
+
+    const cmds = nndCommands(c);
+    const isTop = cmds.indexOf("ue") >= 0;
+    const isBottom = cmds.indexOf("shita") >= 0;
+    const fixed = isTop ? "top" : isBottom ? "bottom" : null;
+
+    let row = -1;
+    if (isTop) {
+      row = 0;
+    } else if (isBottom) {
+      row = NND_ROW_COUNT - 1;
+    } else {
+      for (let i = 1; i < NND_ROW_COUNT - 1; i++) {
+        const r = nndRows.current[i];
+        const t = now - r.lastStart;
+        const tAll = NND_SCROLL_MS;
+        // PipePipe: lx/ly are (len/25 + 1) * width; vx/vy are those over tAll.
+        const lx = (r.lastLen / 25.0 + 1) * w;
+        const ly = (c.content.length / 25.0 + 1) * w;
+        const vx = lx / tAll;
+        const vy = ly / tAll;
+        if ((vy - vx) * (tAll - t) < t * vx - (r.lastLen / 25.0) * w &&
+            t * vx - (r.lastLen / 25.0) * w > 0) {
+          row = i;
+          break;
+        }
+      }
+    }
+    if (row < 0) return; // every row busy — drop, same as PipePipe
+    nndRows.current[row] = { lastStart: now, lastLen: c.content.length };
+
+    const span = document.createElement("span");
+    span.textContent = c.content;
+    span.style.cssText =
+      "position:absolute;white-space:nowrap;font-weight:bold;line-height:1;" +
+      "color:#fff;font-family:sans-serif;" +
+      "text-shadow:1px 1px 0 #000,-1px 1px 0 #000,1px -1px 0 #000,-1px -1px 0 #000;";
+
+    if (cmds.indexOf("big") >= 0) span.style.fontSize = "28px";
+    else if (cmds.indexOf("small") >= 0) span.style.fontSize = "14px";
+    else span.style.fontSize = "20px";
+
+    const colorMap: { [k: string]: string } = {
+      red: "#ff0000", blue: "#0000ff", green: "#00ff00", yellow: "#ffff00",
+      orange: "#ff8800", pink: "#ff88ff", purple: "#aa00ff", cyan: "#00ffff",
+      white: "#ffffff", black: "#000000",
+    };
+    for (const k in colorMap) {
+      if (cmds.indexOf(k) >= 0) { span.style.color = colorMap[k]; break; }
+    }
+
+    overlay.appendChild(span);
+
+    const rowH = h / NND_ROW_COUNT;
+    span.style.top = Math.round(row * rowH + (rowH - span.offsetHeight) / 2) + "px";
+
+    if (fixed) {
+      // ue/shita: pinned centre, no scroll — a short pin like PipePipe's
+      // zero-velocity animator.
+      span.style.left = "50%";
+      span.style.transform = "translateX(-50%)";
+      setTimeout(function () {
+        if (span.parentNode) span.parentNode.removeChild(span);
+      }, 3000);
+      return;
+    }
+
+    const tw = span.offsetWidth;
+    const total = w + tw;
+    const dur = NND_SCROLL_MS + c.content.length * 30;
+
+    span.style.left = w + "px";
+    // Stash what pause/resume needs (dataset is IE11-safe in standards mode).
+    span.setAttribute("data-nnd-total", String(total));
+    span.setAttribute("data-nnd-dur", String(dur));
+
+    // Force a reflow so the transition registers from the start position.
+    void span.offsetWidth;
+    span.style.transition = "transform " + dur + "ms linear";
+    span.style.transform = "translateX(-" + total + "px)";
+
+    const cleanup = function () {
+      if (span.parentNode) span.parentNode.removeChild(span);
+    };
+    span.addEventListener("transitionend", cleanup);
+    // Belt-and-suspenders: IE11 occasionally drops transitionend.
+    setTimeout(cleanup, dur + 500);
+  }
+
+  /**
+   * Freezes in-flight comments. CSS transitions have no pause API in IE11, so
+   * snapshot the computed matrix, kill the transition, and store the remaining
+   * duration for resumeNndComments().
+   */
+  function pauseNndComments() {
+    const overlay = nndOverlayRef.current;
+    if (!overlay) return;
+    for (let i = 0; i < overlay.children.length; i++) {
+      const span = overlay.children[i] as HTMLElement;
+      if (span.getAttribute("data-nnd-paused")) continue;
+      const total = parseFloat(span.getAttribute("data-nnd-total") || "0");
+      const dur = parseFloat(span.getAttribute("data-nnd-dur") || "0");
+      if (!total || !dur) continue; // fixed (ue/shita) pins are not animated
+
+      const t = getComputedStyle(span).transform;
+      const m = /matrix\(([^)]+)\)/.exec(t);
+      const travelled = m ? Math.abs(parseFloat(m[1].split(",")[4])) : 0;
+
+      span.style.transition = "none";
+      span.style.transform = t === "none" ? "translateX(0px)" : t;
+      span.setAttribute("data-nnd-remain", String(dur * Math.max(0, 1 - travelled / total)));
+      span.setAttribute("data-nnd-paused", "1");
+    }
+  }
+
+  /** Re-applies the remaining scroll distance after a pause. */
+  function resumeNndComments() {
+    const overlay = nndOverlayRef.current;
+    if (!overlay) return;
+    for (let i = 0; i < overlay.children.length; i++) {
+      const span = overlay.children[i] as HTMLElement;
+      if (!span.getAttribute("data-nnd-paused")) continue;
+      const remain = parseFloat(span.getAttribute("data-nnd-remain") || "0");
+      const total = parseFloat(span.getAttribute("data-nnd-total") || "0");
+      span.removeAttribute("data-nnd-paused");
+      // Reflow so clearing the transition does not animate the jump back.
+      void span.offsetWidth;
+      span.style.transition = "transform " + remain + "ms linear";
+      span.style.transform = "translateX(-" + total + "px)";
+    }
+  }
+
+  /**
+   * Spawns every comment whose vpos has been passed. Called from the <video>
+   * element's own timeupdate (~4x/sec) so it is independent of react-player's
+   * 1000ms progressInterval and also fires on seeks.
+   */
+  function onNndTimeUpdate() {
+    // Gate on the setting every tick: toggling off stops new spawns at once
+    // (in-flight spans finish their scroll, same as PipePipe).
+    if (!nndCommentsEnabled()) {
+      if (nndOverlayRef.current && nndOverlayRef.current.children.length) {
+        clearNndComments();
+      }
+      return;
+    }
+    // Enabled after the player was already ready: fetch lazily on first tick.
+    if (!nndCommentsRef.current.length && !nndCommentsFetched.current) {
+      fetchNndCommentsOnce(queryParameters.get('videoid') || '');
+      return;
+    }
+    const list = nndCommentsRef.current;
+    if (!list.length) return;
+    const el = ref.current && (ref.current.getInternalPlayer() as HTMLVideoElement);
+    if (!el || typeof el.currentTime !== "number") return;
+
+    const tMs = el.currentTime * 1000; // vpos is centiseconds
+
+    // Backward seek: rewind the index and drop the spans already on screen.
+    if (nndNextIdx.current > 0 && list[nndNextIdx.current - 1].vpos * 10 > tMs + 500) {
+      clearNndComments();
+      nndNextIdx.current = 0;
+    }
+
+    // First tick after a late enable / fetch: skip past everything already
+    // behind the playhead instead of burst-spawning the whole backlog.
+    if (nndNextIdx.current === 0 && list[0].vpos * 10 < tMs - 2000) {
+      while (nndNextIdx.current < list.length && list[nndNextIdx.current].vpos * 10 < tMs) {
+        nndNextIdx.current++;
+      }
+    }
+
+    while (nndNextIdx.current < list.length && list[nndNextIdx.current].vpos * 10 <= tMs) {
+      spawnNndComment(list[nndNextIdx.current]);
+      nndNextIdx.current++;
+    }
   }
 
   // ============================================================================
@@ -2258,6 +2556,18 @@ Description:\n${archiveInfo.description}
           onProgress={handleProgress}
           onDuration={handleDuration}>
         </ReactPlayer>
+        {/* NND bullet comments overlay. Sits between the video and SMControls
+            so DOM order keeps the control bar on top; pointerEvents:none lets
+            every click through to the player. */}
+        {isNndSMId(queryParameters.get('videoid') || '') && (
+          <div
+            ref={nndOverlayRef}
+            style={{
+              position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+              overflow: 'hidden', pointerEvents: 'none',
+            }}
+          />
+        )}
         <SMControls
           ref={smControlsRef}
           playing={playing}
