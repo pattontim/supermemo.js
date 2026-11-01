@@ -312,7 +312,7 @@ export async function getLocalVideoInfo(id: string) {
 	console.timeEnd("createInnertube withPlayer = true locally = false")
 
 	// based on the videoId
-	let contentPoToken: string;
+	let contentPoToken: string | undefined;
 
 	//   if (process.env.IS_ELECTRON) {
 	try {
@@ -324,8 +324,9 @@ export async function getLocalVideoInfo(id: string) {
 
 		webInnertube.session!.player!.po_token = contentPoToken;
 	} catch (error) {
+		// Degrade instead of crashing: callers already tolerate a missing token
+		// (cold-start fallback), and an unhandled rejection kills the process.
 		console.error("Local API, poToken generation failed", error);
-		throw error;
 	}
 	//   }
 	let clientName = webInnertube.session.context.client.clientName;

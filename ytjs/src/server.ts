@@ -7,6 +7,7 @@ import {
 	readFileSync,
 	createReadStream,
 	unlinkSync,
+	rmSync,
 } from "fs";
 import path from "path";
 // import fetch, { Response } from 'node-fetch';
@@ -37,6 +38,7 @@ import Innertube, {
 import { Utils } from "youtubei.js";
 import { InnerTubeClient } from "./utils/yt-types";
 import { Types } from "youtubei.js/web";
+import { setGlobalDispatcher, Agent } from "undici";
 import { warmUpPoTokenMinter } from "./utils/poToken";
 import { cacheDir } from "./utils/constants";
 
@@ -442,6 +444,14 @@ async function connectInnertube(videoId?: string) {
 }
 
 function startServer() {
+	// YouTube can answer with well over 16KB of response headers (large CSP
+	// report-only and connection-allowlist blocks; measured ~17KB). Undici's
+	// default cap is 16KB and lives on the dispatcher — `--max-http-header-size`
+	// only affects llhttp (http.request), not fetch(). Raising it here keeps the
+	// Node path working so the browser fallback in poToken.ts stays a rare
+	// safety net rather than the normal route.
+	setGlobalDispatcher(new Agent({ maxHeaderSize: 64 * 1024 }));
+
 	app.listen(port, async () => {
 		console.log(
 			`Server started at http://${fullUrl}, client need to see: ${fullUrlForClient}`
@@ -502,6 +512,22 @@ function startServer() {
 				if (Date.now() - stats.mtimeMs > 30 * 60 * 1000) {
 					unlinkSync(filePath);
 					console.log(`Deleted ${filePath} [OLD CACHE DATA]`);
+				}
+			}
+
+			// Clear the Camoufox persistent profile once a day. A stale profile grows
+			// without bound (cookies, cache2, tracking DBs) and eventually makes
+			// YouTube reject the BotGuard response with [null, ttl, null, fallback]
+			// instead of an integrity token. Must run before the runtime launches the
+			// browser, which locks the profile directory for its lifetime.
+			const profilePath = path.join(cacheDir, "camoufox-profile");
+			if (existsSync(profilePath)) {
+				const profileStats = statSync(profilePath);
+				if (Date.now() - profileStats.mtimeMs > 24 * 60 * 60 * 1000) {
+					rmSync(profilePath, { recursive: true, force: true });
+					console.log(
+						`Deleted ${profilePath} [PROFILE OLDER THAN 24H] - will be recreated on first use`,
+					);
 				}
 			}
 		}

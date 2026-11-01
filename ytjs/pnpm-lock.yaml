@@ -59,6 +59,9 @@ importers:
       typescript:
         specifier: ^5.8.0
         version: 5.9.3
+      undici:
+        specifier: ^7.30.0
+        version: 7.30.0
       youtubei.js:
         specifier: ^18.2.0
         version: 18.2.0

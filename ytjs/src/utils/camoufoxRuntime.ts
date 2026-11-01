@@ -13,8 +13,10 @@
  *   2. ZERO network inside the sandbox. `page.route` serves the navigation
  *      itself and aborts everything else, exactly like
  *      `settings.setBlockNetworkLoads(true)`. All real HTTP (homepage scrape,
- *      interpreter fetch, GenerateIT) happens in Node, like PipePipe's
- *      DownloaderImpl.
+ *      interpreter fetch, GenerateIT) runs on a separate, un-routed page in
+ *      the same context — see `fetchViaBrowser`. Node-side HTTP clients
+ *      (unconfigure undici, and Playwright's APIRequestContext) both reject YouTube's
+ *      oversized response headers, so the browser process must do the fetch.
  *
  * Every mint-related evaluation uses the `mw:` prefix, which camoufox
  * (main_world_eval: true) replays in the page's own world — the equivalent of
@@ -56,6 +58,8 @@ export class SharedCamoufoxRuntime {
 
 	private context?: BrowserContext;
 	private page?: Page;
+	/** One page per origin, parked there for same-origin fetches. */
+	private fetchPages = new Map<string, Page>();
 	private userAgent: string = FALLBACK_UA;
 	private startPromise?: Promise<void>;
 	private closed = false;
@@ -115,10 +119,130 @@ export class SharedCamoufoxRuntime {
 		);
 	}
 
+	/**
+	 * Real HTTP executed inside the Firefox process on a dedicated page.
+	 *
+	 * `context.request` (APIRequestContext) is still a Node-side HTTP client and
+	 * hits the same response-header size cap as undici, so it cannot be used for
+	 * YouTube's oversized Set-Cookie chains. Only requests issued by the actual
+	 * browser process dodge that parser entirely.
+	 *
+	 * `fetch()` is subject to CORS, and the URLs we need span several origins
+	 * (www.youtube.com for the homepage, www.google.com for the BotGuard
+	 * interpreter). So one page is parked per origin: the navigation is
+	 * fulfilled with a blank document (giving the page that origin without
+	 * YouTube's CSP), and every other request is allowed through. Fetches are
+	 * then same-origin and never CORS-blocked.
+	 *
+	 * The sandbox page's route-abort rule is per-page, so these pages see the
+	 * real network and carry the real browser fingerprint + profile cookies.
+	 */
+	async fetchViaBrowser(
+		url: string,
+		init: {
+			method?: string;
+			headers?: Record<string, string>;
+			body?: string;
+			/** Defaults to "include". Use "omit" to send no profile cookies. */
+			credentials?: "include" | "omit";
+		} = {},
+	): Promise<{
+		status: number;
+		ok: boolean;
+		json: () => Promise<any>;
+		text: () => Promise<string>;
+	}> {
+		await this.ensureReady();
+
+		const origin = new URL(url).origin;
+		const fetchPage = await this.getFetchPage(origin);
+
+		let result: { status: number; ok: boolean; text: string };
+		try {
+			result = await fetchPage.evaluate(
+				async ({ url, init }) => {
+					const response = await fetch(url, {
+						method: init.method ?? "GET",
+						headers: init.headers,
+						body: init.body,
+						credentials: init.credentials ?? "include",
+					});
+					return { status: response.status, ok: response.ok, text: await response.text() };
+				},
+				{ url, init },
+			);
+		} catch (error) {
+			const landed = fetchPage.isClosed() ? "<closed>" : new URL(fetchPage.url()).origin;
+			throw new Error(
+				`fetchViaBrowser failed for ${url} (page origin ${landed}): ${(error as Error).message}`,
+			);
+		}
+
+		return {
+			status: result.status,
+			ok: result.ok,
+			json: async () => JSON.parse(result.text),
+			text: async () => result.text,
+		};
+	}
+
+	/**
+	 * Get (or create) the page parked on `origin`. The navigation is fulfilled
+	 * with a blank document so the page gets that origin without YouTube's CSP;
+	 * all other requests are allowed through to the real network.
+	 */
+	private async getFetchPage(origin: string): Promise<Page> {
+		const existing = this.fetchPages.get(origin);
+		if (existing && !existing.isClosed()) return existing;
+
+		const fetchPage = await this.context!.newPage();
+		fetchPage.setDefaultTimeout(INIT_TIMEOUT_MS);
+		await fetchPage.route("**/*", async (route) => {
+			const request = route.request();
+			if (request.isNavigationRequest() && request.frame() === fetchPage.mainFrame()) {
+				try {
+					await route.fulfill({
+						status: 200,
+						contentType: "text/html; charset=utf-8",
+						body: RUNTIME_DOCUMENT,
+					});
+					return;
+				} catch {
+					/* fall through to continue */
+				}
+			}
+			try {
+				await route.continue();
+			} catch {
+				/* already handled */
+			}
+		});
+		await fetchPage.goto(`${origin}/`, { waitUntil: "domcontentloaded", timeout: 60_000 });
+
+		const landed = new URL(fetchPage.url()).origin;
+		if (landed !== origin) {
+			console.warn(
+				`[camoufox] fetch page for ${origin} landed on ${landed}; ` +
+					"same-origin fetches may fail",
+			);
+		}
+		this.fetchPages.set(origin, fetchPage);
+		return fetchPage;
+	}
+
 	async close(): Promise<void> {
 		this.closed = true;
 		this.startPromise = undefined;
 		this.page = undefined;
+		const fetchPages = [...this.fetchPages.values()];
+		this.fetchPages.clear();
+		for (const fetchPage of fetchPages) {
+			try {
+				await fetchPage.close();
+			} catch {
+				/* shutting down anyway */
+			}
+		}
 		const context = this.context;
 		this.context = undefined;
 		if (context) {

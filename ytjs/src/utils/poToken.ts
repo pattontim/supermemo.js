@@ -57,8 +57,15 @@ async function generateIntegrityToken(
 	botguardResponse: string,
 	userAgent: string,
 ): Promise<{ integrityToken: string; ttlSeconds: number }> {
+	// Posted from Node, inspired by PipePipe's DownloaderImpl (outside the
+	// WebView). This endpoint returns ~172 bytes of headers, so undici's cap is
+	// not a concern here - and keeping it out of the browser avoids sending the
+	// profile's cookies/Origin, which makes YouTube reject the BotGuard
+	// response and answer [null, ttl, null, fallback] instead of a token.
 	const response = await fetch("https://www.youtube.com/api/jnn/v1/GenerateIT", {
 		method: "POST",
+		// getHeaders() already sets content-type: application/json+protobuf.
+		// Do NOT override it - the endpoint rejects application/json with 400.
 		headers: {
 			...getHeaders(),
 			"user-agent": userAgent,
@@ -70,9 +77,19 @@ async function generateIntegrityToken(
 		throw new SabrProtocolError(`Local DOM BotGuard request failed: ${response.status}`);
 	}
 
-	const body = await response.json();
+	const raw = await response.text();
+	let body: any;
+	try {
+		body = JSON.parse(raw);
+	} catch {
+		throw new SabrProtocolError(
+			`GenerateIT returned non-JSON (${response.status}): ${raw.slice(0, 300)}`,
+		);
+	}
 	if (typeof body?.[0] !== "string") {
-		throw new SabrProtocolError("Could not get integrity token");
+		throw new SabrProtocolError(
+			`Could not get integrity token: ${JSON.stringify(body).slice(0, 300)}`,
+		);
 	}
 	const ttlSeconds = typeof body[1] === "number" ? body[1] : 43_200;
 	return { integrityToken: uint8Literal(base64ToBytes(body[0])), ttlSeconds };
@@ -97,22 +114,66 @@ function jsonString(value: string): string {
 	return JSON.stringify(value);
 }
 
+/**
+ * GET a URL from Node, falling back to the browser when undici rejects the
+ * response.
+ *
+ * Node is preferred because it is cookieless and cheap. YouTube's homepage
+ * normally returns ~11KB of headers, but some responses (CSP report-only +
+ * allowlist headers, or a bloated Set-Cookie chain) exceed undici's hard 16KB
+ * cap and fail with UND_ERR_HEADERS_OVERFLOW. Only then do we pay for a
+ * browser round-trip, which has no such cap.
+ */
+async function fetchText(
+	url: string,
+	headers: Record<string, string>,
+	label: string,
+): Promise<string> {
+	try {
+		const response = await fetch(url, { headers });
+		if (!response.ok) {
+			throw new SabrProtocolError(`${label} failed: ${response.status}`);
+		}
+		return await response.text();
+	} catch (error) {
+		const code = (error as { cause?: { code?: string } }).cause?.code;
+		if (code !== "UND_ERR_HEADERS_OVERFLOW") throw error;
+		console.warn(`[potoken] ${label}: Node header overflow, retrying via browser`);
+		const runtime = SharedCamoufoxRuntime.get();
+		const response = await runtime.fetchViaBrowser(url, { headers });
+		if (!response.ok) {
+			throw new SabrProtocolError(`${label} failed: ${response.status}`);
+		}
+		return await response.text();
+	}
+}
+
 async function fetchHomeBootstrap(): Promise<YoutubePageAttestationBootstrap> {
 	const runtime = SharedCamoufoxRuntime.get();
-	// Make sure the UA is known before the Node-side fetch (PipePipe sends
+	// Make sure the UA is known before the fetch (PipePipe sends
 	// SharedWebViewRuntime.USER_AGENT on this request for the same reason).
 	await runtime.ensureReady();
-	const response = await fetch(YOUTUBE_HOME, {
-		headers: {
-			"Accept-Language": "en-US",
-			"Cookie": ANONYMOUS_COOKIE,
-			"User-Agent": runtime.getUserAgent(),
-		},
-	});
-	if (!response.ok) {
-		throw new SabrProtocolError(`YouTube home initialization failed: ${response.status}`);
+
+	// Retry a couple of times: the oversized-header response is intermittent.
+	let lastError: unknown;
+	for (let attempt = 1; attempt <= 3; attempt++) {
+		try {
+			const html = await fetchText(
+				YOUTUBE_HOME,
+				{
+					"Accept-Language": "en-US",
+					"Cookie": ANONYMOUS_COOKIE,
+					"User-Agent": runtime.getUserAgent(),
+				},
+				"YouTube home initialization",
+			);
+			return parseYoutubePageAttestationBootstrap(html);
+		} catch (error) {
+			lastError = error;
+			console.error(`[potoken] home bootstrap attempt ${attempt} failed`, error);
+		}
 	}
-	return parseYoutubePageAttestationBootstrap(await response.text());
+	throw lastError;
 }
 
 /** Fetch the interpreter script when the challenge carries only a URL. */
@@ -122,13 +183,11 @@ async function fetchInterpreter(challenge: SabrAttChallengeData): Promise<string
 		throw new SabrProtocolError("Attestation challenge has no interpreter script or URL");
 	}
 	const runtime = SharedCamoufoxRuntime.get();
-	const response = await fetch(challenge.interpreterUrl, {
-		headers: { "User-Agent": runtime.getUserAgent(), Accept: "*/*" },
-	});
-	if (!response.ok) {
-		throw new SabrProtocolError(`Local DOM BotGuard GET failed: ${response.status}`);
-	}
-	return await response.text();
+	return await fetchText(
+		challenge.interpreterUrl,
+		{ "User-Agent": runtime.getUserAgent(), Accept: "*/*" },
+		"Local DOM BotGuard GET",
+	);
 }
 
 /**
@@ -215,6 +274,14 @@ export class PersistentMintSession {
 		);
 		if (typeof botguardResponse !== "string" || !botguardResponse) {
 			throw new SabrProtocolError("Local DOM BotGuard execution returned no response");
+		}
+		if (process.env.YTJS_POTOKEN_DEBUG === "1") {
+			console.log(
+				`[potoken] botguardResponse len=${botguardResponse.length} ` +
+					`head=${botguardResponse.slice(0, 80)} eventId=${this.bootstrap.eventId} ` +
+					`globalName=${challenge.globalName} programLen=${challenge.program?.length ?? 0} ` +
+					`interpLen=${interpreterJavascript.length}`,
+			);
 		}
 
 		const { integrityToken, ttlSeconds } = await generateIntegrityToken(
